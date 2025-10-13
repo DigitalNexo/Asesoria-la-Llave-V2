@@ -1,0 +1,278 @@
+// Prisma Schema para MariaDB - Asesoría La Llave
+// Provider: MySQL (compatible con MariaDB 10.11+)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ==================== ENUMS ====================
+enum UserRole {
+  ADMIN
+  GESTOR
+  LECTURA
+}
+
+enum ClientType {
+  AUTONOMO
+  EMPRESA
+}
+
+enum TaskPriority {
+  BAJA
+  MEDIA
+  ALTA
+}
+
+enum TaskStatus {
+  PENDIENTE
+  EN_PROGRESO
+  COMPLETADA
+}
+
+enum TaskVisibility {
+  GENERAL
+  PERSONAL
+}
+
+enum TaxStatus {
+  PENDIENTE
+  CALCULADO
+  REALIZADO
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+}
+
+// ==================== USERS & AUTH ====================
+model User {
+  id        String   @id @default(uuid()) @db.VarChar(36)
+  username  String   @unique @db.VarChar(191)
+  email     String   @unique @db.VarChar(191)
+  password  String   @db.Text
+  role      UserRole @default(LECTURA)
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+
+  // Relations
+  clientsManaged  Client[]        @relation("ClientManager")
+  tasksAssigned   Task[]          @relation("TaskAssignee")
+  manualsAuthored Manual[]        @relation("ManualAuthor")
+  activityLogs    ActivityLog[]
+  auditTrails     AuditTrail[]
+  taxFilesUploaded TaxFile[]      @relation("FileUploader")
+
+  @@map("users")
+}
+
+// ==================== CLIENTS ====================
+model Client {
+  id                  String   @id @default(uuid()) @db.VarChar(36)
+  razonSocial         String   @map("razon_social") @db.Text
+  nifCif              String   @unique @map("nif_cif") @db.VarChar(191)
+  tipo                ClientType
+  email               String?  @db.Text
+  telefono            String?  @db.Text
+  direccion           String?  @db.Text
+  fechaAlta           DateTime @default(now()) @map("fecha_alta") @db.DateTime(3)
+  responsableAsignado String?  @map("responsable_asignado") @db.VarChar(36)
+
+  // Relations
+  responsable User?      @relation("ClientManager", fields: [responsableAsignado], references: [id], onDelete: SetNull)
+  clientTaxes ClientTax[]
+  tasks       Task[]
+
+  @@index([responsableAsignado])
+  @@index([tipo])
+  @@map("clients")
+}
+
+// ==================== TAX MODELS ====================
+model TaxModel {
+  id          String   @id @default(uuid()) @db.VarChar(36)
+  nombre      String   @db.VarChar(191)
+  descripcion String?  @db.Text
+
+  // Relations
+  taxPeriods TaxPeriod[]
+
+  @@map("tax_models")
+}
+
+// ==================== TAX PERIODS ====================
+model TaxPeriod {
+  id                  String   @id @default(uuid()) @db.VarChar(36)
+  modeloId            String   @map("modelo_id") @db.VarChar(36)
+  anio                Int
+  trimestre           Int?
+  mes                 Int?
+  inicioPresentacion  DateTime @map("inicio_presentacion") @db.DateTime(3)
+  finPresentacion     DateTime @map("fin_presentacion") @db.DateTime(3)
+
+  // Relations
+  modelo     TaxModel    @relation(fields: [modeloId], references: [id], onDelete: Cascade)
+  clientTaxes ClientTax[]
+
+  @@index([modeloId])
+  @@index([anio])
+  @@map("tax_periods")
+}
+
+// ==================== CLIENT TAX ====================
+model ClientTax {
+  id                  String    @id @default(uuid()) @db.VarChar(36)
+  clientId            String    @map("client_id") @db.VarChar(36)
+  taxPeriodId         String    @map("tax_period_id") @db.VarChar(36)
+  estado              TaxStatus @default(PENDIENTE)
+  notas               String?   @db.Text
+  fechaCreacion       DateTime  @default(now()) @map("fecha_creacion") @db.DateTime(3)
+  fechaActualizacion  DateTime  @updatedAt @map("fecha_actualizacion") @db.DateTime(3)
+
+  // Relations
+  client    Client     @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  taxPeriod TaxPeriod  @relation(fields: [taxPeriodId], references: [id], onDelete: Cascade)
+  files     TaxFile[]
+
+  @@index([clientId, taxPeriodId])
+  @@index([estado])
+  @@index([fechaCreacion])
+  @@map("client_tax")
+}
+
+// ==================== TAX FILES (S3 STORAGE) ====================
+model TaxFile {
+  id            String   @id @default(uuid()) @db.VarChar(36)
+  clientTaxId   String   @map("client_tax_id") @db.VarChar(36)
+  nombreArchivo String   @map("nombre_archivo") @db.Text
+  s3Url         String   @map("s3_url") @db.Text
+  s3Key         String   @map("s3_key") @db.Text
+  tipo          String?  @db.VarChar(50)
+  tamanio       Int?
+  fechaSubida   DateTime @default(now()) @map("fecha_subida") @db.DateTime(3)
+  subidoPor     String?  @map("subido_por") @db.VarChar(36)
+
+  // Relations
+  clientTax ClientTax @relation(fields: [clientTaxId], references: [id], onDelete: Cascade)
+  uploader  User?     @relation("FileUploader", fields: [subidoPor], references: [id], onDelete: SetNull)
+
+  @@index([clientTaxId])
+  @@map("tax_files")
+}
+
+// ==================== TASKS ====================
+model Task {
+  id                  String         @id @default(uuid()) @db.VarChar(36)
+  titulo              String         @db.Text
+  descripcion         String?        @db.Text
+  clienteId           String?        @map("cliente_id") @db.VarChar(36)
+  asignadoA           String?        @map("asignado_a") @db.VarChar(36)
+  prioridad           TaskPriority   @default(MEDIA)
+  estado              TaskStatus     @default(PENDIENTE)
+  visibilidad         TaskVisibility @default(GENERAL)
+  fechaVencimiento    DateTime?      @map("fecha_vencimiento") @db.DateTime(3)
+  fechaCreacion       DateTime       @default(now()) @map("fecha_creacion") @db.DateTime(3)
+  fechaActualizacion  DateTime       @updatedAt @map("fecha_actualizacion") @db.DateTime(3)
+
+  // Relations
+  cliente  Client? @relation(fields: [clienteId], references: [id], onDelete: SetNull)
+  asignado User?   @relation("TaskAssignee", fields: [asignadoA], references: [id], onDelete: SetNull)
+
+  @@index([visibilidad])
+  @@index([asignadoA])
+  @@index([clienteId, estado])
+  @@index([fechaVencimiento])
+  @@map("tasks")
+}
+
+// ==================== MANUALS ====================
+model Manual {
+  id                  String   @id @default(uuid()) @db.VarChar(36)
+  titulo              String   @db.Text
+  contenidoHtml       String   @map("contenido_html") @db.LongText
+  autorId             String   @map("autor_id") @db.VarChar(36)
+  etiquetas           String?  @db.Text // JSON array stored as text
+  categoria           String?  @db.VarChar(191)
+  publicado           Boolean  @default(false)
+  fechaCreacion       DateTime @default(now()) @map("fecha_creacion") @db.DateTime(3)
+  fechaActualizacion  DateTime @updatedAt @map("fecha_actualizacion") @db.DateTime(3)
+
+  // Relations
+  autor User @relation("ManualAuthor", fields: [autorId], references: [id], onDelete: Cascade)
+
+  @@index([publicado])
+  @@index([categoria])
+  @@index([autorId])
+  @@map("manuals")
+}
+
+// ==================== ACTIVITY LOGS ====================
+model ActivityLog {
+  id        String   @id @default(uuid()) @db.VarChar(36)
+  usuarioId String   @map("usuario_id") @db.VarChar(36)
+  accion    String   @db.Text
+  modulo    String   @db.VarChar(191)
+  detalles  String?  @db.Text
+  fecha     DateTime @default(now()) @db.DateTime(3)
+
+  // Relations
+  usuario User @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  @@index([usuarioId, modulo, fecha])
+  @@map("activity_logs")
+}
+
+// ==================== AUDIT TRAIL ====================
+model AuditTrail {
+  id             String      @id @default(uuid()) @db.VarChar(36)
+  usuarioId      String      @map("usuario_id") @db.VarChar(36)
+  accion         AuditAction
+  tabla          String      @db.VarChar(191)
+  registroId     String      @map("registro_id") @db.VarChar(36)
+  valorAnterior  String?     @map("valor_anterior") @db.Text
+  valorNuevo     String?     @map("valor_nuevo") @db.Text
+  cambios        String?     @db.Text
+  requestId      String?     @map("request_id") @db.VarChar(191)
+  fecha          DateTime    @default(now()) @db.DateTime(3)
+
+  // Relations
+  usuario User @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  @@index([usuarioId])
+  @@index([tabla, registroId])
+  @@index([fecha])
+  @@map("audit_trail")
+}
+
+// ==================== SMTP CONFIG ====================
+model SmtpConfig {
+  id       String  @id @default(uuid()) @db.VarChar(36)
+  host     String  @db.VarChar(191)
+  port     Int
+  user     String  @db.VarChar(191)
+  password String  @db.Text
+  secure   Boolean @default(false)
+
+  @@map("smtp_config")
+}
+
+// ==================== JOB RUNS (CRON TRACKING) ====================
+model JobRun {
+  id             String   @id @default(uuid()) @db.VarChar(36)
+  jobName        String   @map("job_name") @db.VarChar(191)
+  startedAt      DateTime @map("started_at") @db.DateTime(3)
+  completedAt    DateTime? @map("completed_at") @db.DateTime(3)
+  status         String   @db.VarChar(50) // SUCCESS, FAILED, RUNNING
+  recordsProcessed Int?   @map("records_processed")
+  errorMessage   String?  @map("error_message") @db.Text
+  metadata       String?  @db.Text // JSON metadata
+
+  @@index([jobName, startedAt])
+  @@index([status])
+  @@map("job_runs")
+}

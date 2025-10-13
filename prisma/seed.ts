@@ -1,0 +1,420 @@
+import { PrismaClient } from '@prisma/client';
+import bcrypt from 'bcrypt';
+import { randomUUID } from 'crypto';
+
+const prisma = new PrismaClient();
+
+async function main() {
+  console.log('🌱 Iniciando seed de la base de datos...\n');
+
+  // 1. Crear usuarios
+  console.log('👤 Creando usuarios...');
+  const password = await bcrypt.hash('admin123', 10);
+
+  const admin = await prisma.user.upsert({
+    where: { username: 'admin' },
+    update: {},
+    create: {
+      id: randomUUID(),
+      username: 'admin',
+      email: 'admin@asesoriallave.com',
+      password,
+      role: 'ADMIN',
+    },
+  });
+
+  const gestor = await prisma.user.upsert({
+    where: { username: 'gestor' },
+    update: {},
+    create: {
+      id: randomUUID(),
+      username: 'gestor',
+      email: 'gestor@asesoriallave.com',
+      password,
+      role: 'GESTOR',
+    },
+  });
+
+  const lectura = await prisma.user.upsert({
+    where: { username: 'lectura' },
+    update: {},
+    create: {
+      id: randomUUID(),
+      username: 'lectura',
+      email: 'lectura@asesoriallave.com',
+      password,
+      role: 'LECTURA',
+    },
+  });
+
+  console.log(`✅ Usuarios creados: admin, gestor, lectura\n`);
+
+  // 2. Crear clientes
+  console.log('🏢 Creando clientes...');
+  
+  const cliente1 = await prisma.client.create({
+    data: {
+      id: randomUUID(),
+      razonSocial: 'Juan Pérez García',
+      nifCif: '12345678A',
+      tipo: 'AUTONOMO',
+      email: 'juan.perez@email.com',
+      telefono: '666111222',
+      direccion: 'Calle Mayor 1, Madrid',
+      responsableAsignado: gestor.id,
+    },
+  });
+
+  const cliente2 = await prisma.client.create({
+    data: {
+      id: randomUUID(),
+      razonSocial: 'Tech Solutions SL',
+      nifCif: 'B87654321',
+      tipo: 'EMPRESA',
+      email: 'info@techsolutions.com',
+      telefono: '911234567',
+      direccion: 'Polígono Industrial Norte 45, Barcelona',
+      responsableAsignado: gestor.id,
+    },
+  });
+
+  const cliente3 = await prisma.client.create({
+    data: {
+      id: randomUUID(),
+      razonSocial: 'María López Martínez',
+      nifCif: '87654321B',
+      tipo: 'AUTONOMO',
+      email: 'maria.lopez@email.com',
+      telefono: '677222333',
+      direccion: 'Avenida Principal 23, Valencia',
+      responsableAsignado: admin.id,
+    },
+  });
+
+  const cliente4 = await prisma.client.create({
+    data: {
+      id: randomUUID(),
+      razonSocial: 'Consultoría Global SA',
+      nifCif: 'A12345678',
+      tipo: 'EMPRESA',
+      email: 'contacto@consultoriaglobal.es',
+      telefono: '912345678',
+      direccion: 'Torre Empresarial, Piso 12, Madrid',
+      responsableAsignado: gestor.id,
+    },
+  });
+
+  const cliente5 = await prisma.client.create({
+    data: {
+      id: randomUUID(),
+      razonSocial: 'Carlos Rodríguez Sánchez',
+      nifCif: '23456789C',
+      tipo: 'AUTONOMO',
+      email: 'carlos.rodriguez@email.com',
+      telefono: '688333444',
+      direccion: 'Plaza España 8, Sevilla',
+      responsableAsignado: null,
+    },
+  });
+
+  console.log(`✅ ${5} clientes creados\n`);
+
+  // 3. Crear modelos fiscales
+  console.log('📋 Creando modelos fiscales...');
+  
+  const modelo303 = await prisma.taxModel.create({
+    data: {
+      id: randomUUID(),
+      nombre: '303',
+      descripcion: 'IVA - Declaración trimestral/mensual',
+    },
+  });
+
+  const modelo390 = await prisma.taxModel.create({
+    data: {
+      id: randomUUID(),
+      nombre: '390',
+      descripcion: 'IVA - Resumen anual',
+    },
+  });
+
+  const modelo130 = await prisma.taxModel.create({
+    data: {
+      id: randomUUID(),
+      nombre: '130',
+      descripcion: 'IRPF - Pago fraccionado autónomos',
+    },
+  });
+
+  const modelo131 = await prisma.taxModel.create({
+    data: {
+      id: randomUUID(),
+      nombre: '131',
+      descripcion: 'IRPF - Estimación objetiva',
+    },
+  });
+
+  console.log(`✅ ${4} modelos fiscales creados\n`);
+
+  // 4. Crear periodos tributarios 2024 y 2025
+  console.log('📅 Creando periodos tributarios...');
+  
+  const periodos: Array<{ id: string }> = [];
+
+  // Fechas de presentación por trimestre
+  const fechasPresentacion = [
+    { inicio: '04-01', fin: '04-20' }, // T1: abril
+    { inicio: '07-01', fin: '07-20' }, // T2: julio
+    { inicio: '10-01', fin: '10-20' }, // T3: octubre
+    { inicio: '01-01', fin: '01-30' }, // T4: enero del año siguiente
+  ];
+
+  // Periodos 303 (IVA trimestral) 2024
+  for (let trimestre = 1; trimestre <= 4; trimestre++) {
+    const fechas = fechasPresentacion[trimestre - 1];
+    const anioInicio = trimestre === 4 ? 2025 : 2024;
+    periodos.push(
+      await prisma.taxPeriod.create({
+        data: {
+          id: randomUUID(),
+          modeloId: modelo303.id,
+          anio: 2024,
+          trimestre,
+          inicioPresentacion: new Date(`${anioInicio}-${fechas.inicio}`),
+          finPresentacion: new Date(`${anioInicio}-${fechas.fin}`),
+        },
+      })
+    );
+  }
+
+  // Periodos 130 (IRPF trimestral) 2024
+  for (let trimestre = 1; trimestre <= 4; trimestre++) {
+    const fechas = fechasPresentacion[trimestre - 1];
+    const anioInicio = trimestre === 4 ? 2025 : 2024;
+    periodos.push(
+      await prisma.taxPeriod.create({
+        data: {
+          id: randomUUID(),
+          modeloId: modelo130.id,
+          anio: 2024,
+          trimestre,
+          inicioPresentacion: new Date(`${anioInicio}-${fechas.inicio}`),
+          finPresentacion: new Date(`${anioInicio}-${fechas.fin}`),
+        },
+      })
+    );
+  }
+
+  // Periodos 303 (IVA trimestral) 2025
+  for (let trimestre = 1; trimestre <= 4; trimestre++) {
+    const fechas = fechasPresentacion[trimestre - 1];
+    const anioInicio = trimestre === 4 ? 2026 : 2025;
+    periodos.push(
+      await prisma.taxPeriod.create({
+        data: {
+          id: randomUUID(),
+          modeloId: modelo303.id,
+          anio: 2025,
+          trimestre,
+          inicioPresentacion: new Date(`${anioInicio}-${fechas.inicio}`),
+          finPresentacion: new Date(`${anioInicio}-${fechas.fin}`),
+        },
+      })
+    );
+  }
+
+  console.log(`✅ ${periodos.length} periodos tributarios creados\n`);
+
+  // 5. Asignar algunos impuestos a clientes
+  console.log('🧾 Asignando impuestos a clientes...');
+
+  const clientTaxes = [
+    {
+      clientId: cliente1.id,
+      taxPeriodId: periodos[0].id, // 303 Q1 2024
+      estado: 'REALIZADO' as const,
+      notas: 'Presentado correctamente',
+    },
+    {
+      clientId: cliente1.id,
+      taxPeriodId: periodos[1].id, // 303 Q2 2024
+      estado: 'CALCULADO' as const,
+      notas: 'Pendiente de presentación',
+    },
+    {
+      clientId: cliente2.id,
+      taxPeriodId: periodos[0].id, // 303 Q1 2024
+      estado: 'REALIZADO' as const,
+    },
+    {
+      clientId: cliente2.id,
+      taxPeriodId: periodos[1].id, // 303 Q2 2024
+      estado: 'PENDIENTE' as const,
+    },
+    {
+      clientId: cliente3.id,
+      taxPeriodId: periodos[4].id, // 130 Q1 2024
+      estado: 'REALIZADO' as const,
+    },
+  ];
+
+  for (const ct of clientTaxes) {
+    await prisma.clientTax.create({
+      data: {
+        id: randomUUID(),
+        ...ct,
+      },
+    });
+  }
+
+  console.log(`✅ ${clientTaxes.length} impuestos asignados\n`);
+
+  // 6. Crear tareas
+  console.log('📋 Creando tareas...');
+
+  const tareas = [
+    {
+      titulo: 'Revisar documentación trimestral cliente Tech Solutions',
+      descripcion: 'Verificar facturas emitidas y recibidas del Q3 2024',
+      clienteId: cliente2.id,
+      asignadoA: gestor.id,
+      prioridad: 'ALTA' as const,
+      estado: 'PENDIENTE' as const,
+      visibilidad: 'GENERAL' as const,
+      fechaVencimiento: new Date('2025-01-15'),
+    },
+    {
+      titulo: 'Preparar modelo 303 para Juan Pérez',
+      descripcion: 'Calcular IVA trimestral Q4 2024',
+      clienteId: cliente1.id,
+      asignadoA: gestor.id,
+      prioridad: 'ALTA' as const,
+      estado: 'EN_PROGRESO' as const,
+      visibilidad: 'GENERAL' as const,
+      fechaVencimiento: new Date('2025-01-20'),
+    },
+    {
+      titulo: 'Actualizar manual de procedimientos fiscales',
+      descripcion: 'Incluir nuevas normativas 2025',
+      clienteId: null,
+      asignadoA: admin.id,
+      prioridad: 'MEDIA' as const,
+      estado: 'PENDIENTE' as const,
+      visibilidad: 'GENERAL' as const,
+      fechaVencimiento: new Date('2025-02-01'),
+    },
+    {
+      titulo: 'Llamar a María López para documentación pendiente',
+      descripcion: null,
+      clienteId: cliente3.id,
+      asignadoA: gestor.id,
+      prioridad: 'BAJA' as const,
+      estado: 'COMPLETADA' as const,
+      visibilidad: 'PERSONAL' as const,
+      fechaVencimiento: new Date('2024-12-15'),
+    },
+    {
+      titulo: 'Reunión con Consultoría Global SA - Planificación fiscal 2025',
+      descripcion: 'Estrategia de optimización fiscal para el próximo ejercicio',
+      clienteId: cliente4.id,
+      asignadoA: admin.id,
+      prioridad: 'ALTA' as const,
+      estado: 'PENDIENTE' as const,
+      visibilidad: 'GENERAL' as const,
+      fechaVencimiento: new Date('2025-01-10'),
+    },
+  ];
+
+  for (const tarea of tareas) {
+    await prisma.task.create({
+      data: {
+        id: randomUUID(),
+        ...tarea,
+      },
+    });
+  }
+
+  console.log(`✅ ${tareas.length} tareas creadas\n`);
+
+  // 7. Crear manuales
+  console.log('📚 Creando manuales...');
+
+  const manuales = [
+    {
+      titulo: 'Procedimiento de presentación del modelo 303',
+      contenidoHtml: `
+        <h1>Modelo 303 - IVA</h1>
+        <h2>Introducción</h2>
+        <p>El modelo 303 es la declaración trimestral/mensual del IVA que deben presentar los empresarios y profesionales.</p>
+        <h2>Plazos de presentación</h2>
+        <ul>
+          <li>Primer trimestre: Del 1 al 20 de abril</li>
+          <li>Segundo trimestre: Del 1 al 20 de julio</li>
+          <li>Tercer trimestre: Del 1 al 20 de octubre</li>
+          <li>Cuarto trimestre: Del 1 al 30 de enero del año siguiente</li>
+        </ul>
+        <h2>Documentación necesaria</h2>
+        <ol>
+          <li>Libro de facturas emitidas</li>
+          <li>Libro de facturas recibidas</li>
+          <li>Declaraciones trimestrales anteriores</li>
+        </ol>
+      `,
+      autorId: admin.id,
+      etiquetas: JSON.stringify(['IVA', 'Trimestral', 'Modelo303']),
+      categoria: 'Impuestos',
+      publicado: true,
+    },
+    {
+      titulo: 'Guía de comunicación con clientes',
+      contenidoHtml: `
+        <h1>Comunicación con Clientes</h1>
+        <h2>Principios básicos</h2>
+        <p>La comunicación efectiva con nuestros clientes es fundamental para ofrecer un servicio de calidad.</p>
+        <h2>Canales de comunicación</h2>
+        <ul>
+          <li><strong>Email:</strong> Para comunicaciones formales y envío de documentación</li>
+          <li><strong>Teléfono:</strong> Para consultas urgentes y seguimiento</li>
+          <li><strong>Reuniones:</strong> Planificación fiscal y casos complejos</li>
+        </ul>
+        <h2>Tiempos de respuesta</h2>
+        <p>Se debe responder a las consultas de los clientes en un plazo máximo de 24 horas laborables.</p>
+      `,
+      autorId: gestor.id,
+      etiquetas: JSON.stringify(['Clientes', 'Comunicación', 'Procedimientos']),
+      categoria: 'Gestión',
+      publicado: true,
+    },
+  ];
+
+  for (const manual of manuales) {
+    await prisma.manual.create({
+      data: {
+        id: randomUUID(),
+        ...manual,
+      },
+    });
+  }
+
+  console.log(`✅ ${manuales.length} manuales creados\n`);
+
+  console.log('🎉 Seed completado exitosamente!\n');
+  console.log('Datos creados:');
+  console.log(`  - ${3} usuarios (admin, gestor, lectura) - password: admin123`);
+  console.log(`  - ${5} clientes`);
+  console.log(`  - ${4} modelos fiscales`);
+  console.log(`  - ${periodos.length} periodos tributarios`);
+  console.log(`  - ${clientTaxes.length} impuestos asignados`);
+  console.log(`  - ${tareas.length} tareas`);
+  console.log(`  - ${manuales.length} manuales\n`);
+}
+
+main()
+  .then(async () => {
+    await prisma.$disconnect();
+  })
+  .catch(async (e) => {
+    console.error('❌ Error durante el seed:', e);
+    await prisma.$disconnect();
+    process.exit(1);
+  });

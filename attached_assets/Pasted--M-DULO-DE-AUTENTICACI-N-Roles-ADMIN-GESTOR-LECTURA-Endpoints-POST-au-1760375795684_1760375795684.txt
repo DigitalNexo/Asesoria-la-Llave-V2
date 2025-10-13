@@ -1,0 +1,188 @@
+---
+
+## 🔐 MÓDULO DE AUTENTICACIÓN
+
+**Roles:**
+- ADMIN
+- GESTOR
+- LECTURA
+
+**Endpoints:**
+- POST /auth/register
+- POST /auth/login
+- POST /auth/logout
+- GET /auth/profile (requiere token)
+
+Usa bcrypt para hash de contraseñas y JWT con expiración 24h.
+
+---
+
+## 👥 MÓDULO DE CLIENTES
+
+**Campos:**
+id, razón_social, NIF_CIF, tipo (autónomo/empresa), email, teléfono, dirección, fecha_alta, responsable_asignado.
+
+**Funciones:**
+- CRUD completo.
+- Filtros por tipo o gestor.
+- Exportación CSV o Excel.
+- Relación: un gestor puede tener varios clientes.
+
+---
+
+## 🧾 MÓDULO DE IMPUESTOS
+
+**Tablas:**
+- tax_models (id, nombre, descripción)
+- tax_periods (id, modelo_id, año, trimestre o mes, inicio_presentacion, fin_presentacion)
+- client_tax (id, client_id, tax_period_id, estado, notas, fecha_creacion, fecha_actualizacion)
+- tax_files (id, client_tax_id, nombre_archivo, ruta, tipo, fecha_subida, subido_por)
+
+**Estados:**
+PENDIENTE | CALCULADO | REALIZADO
+
+**Funciones:**
+- CRUD de impuestos.
+- Subida/descarga de archivos.
+- Cambiar estado con registro histórico.
+- Dashboard de resumen por estado y modelo.
+
+---
+
+## 🧠 MÓDULO DE TAREAS (GENERALES Y PERSONALES)
+
+**Campos:**
+id, título, descripción, cliente_id (nullable), asignado_a (nullable), prioridad (BAJA|MEDIA|ALTA), estado (PENDIENTE|EN_PROGRESO|COMPLETADA), visibilidad (GENERAL|PERSONAL), fecha_vencimiento, fecha_creación, fecha_actualización.
+
+**Reglas:**
+- GENERAL: visible a todos los usuarios autenticados.
+- PERSONAL: visible solo al usuario asignado y al admin.
+- Recordatorios automáticos por email 3 días antes del vencimiento.
+
+**UI:**
+- Vista tabla + vista kanban.
+- Colores por estado.
+- Badge con candado 🔒 para tareas personales.
+
+---
+
+## 📚 MÓDULO DE MANUALES (BUILDER VISUAL)
+
+**Objetivo:** crear manuales internos con texto, imágenes y formato.
+
+**Usa:** editor WYSIWYG (TipTap, Quill o TinyMCE).
+
+**Campos:**
+id, título, contenido_html, autor_id, etiquetas, categoría, fecha_creación, publicado.
+
+**Funciones:**
+- CRUD completo.
+- Inserción de imágenes (drag & drop).
+- Exportar a PDF.
+- Permisos: admin y gestor pueden crear, lectura solo ver.
+
+---
+
+## 🧑‍💻 PANEL ADMINISTRATIVO
+
+**Funciones:**
+- CRUD de usuarios (crear, editar, roles, reset password).
+- Configuración SMTP y logo.
+- Logs de actividad (fecha, usuario, acción, módulo).
+- Dashboard con:
+  - Tareas generales vs personales.
+  - Impuestos por estado.
+  - Clientes activos.
+  - Manuales publicados.
+- Gráficas: Chart.js o Recharts.
+
+---
+
+## 📩 NOTIFICACIONES AUTOMÁTICAS
+
+- Envío de correos automáticos con Nodemailer:
+  - Tareas que vencen en ≤3 días.
+  - Impuestos que vencen en ≤7 días.
+- Plantillas HTML en carpeta `/emails`.
+- Log de envíos guardado en `/logs/email.log`.
+
+---
+
+## 🧱 BASE DE DATOS
+
+- Usa Prisma o Sequelize.
+- Genera todas las migraciones y el script SQL en `/database/schema.sql`.
+- No conectes a ninguna base real, solo crea los archivos necesarios.
+- El usuario (yo) configurará las credenciales manualmente en `.env`.
+
+Incluye semillas iniciales:
+- 3 usuarios (admin, gestor, lectura)
+- 5 clientes
+- 4 modelos fiscales (303, 390, 130, 131)
+- 4 periodos del año actual
+- 5 tareas de ejemplo
+- 2 manuales de prueba
+
+---
+
+## 🎨 INTERFAZ DE USUARIO (REACT + TAILWIND)
+
+**Diseño visual:**
+- Profesional, limpio y moderno (inspirado en SeRanking / Notion).
+- Paleta:
+  - Azul marino #1E3A8A
+  - Naranja #F97316
+  - Gris oscuro #374151
+  - Blanco #FFFFFF
+- Sidebar con secciones: Clientes / Impuestos / Tareas / Manuales / Administración.
+- Header con nombre del usuario y logout.
+- Dashboard con gráficas y métricas.
+- Animaciones suaves, modo claro/oscuro, toasts y loaders.
+
+---
+
+## 🔒 SEGURIDAD
+
+- Sanitización de entradas.
+- Rate limiting (login).
+- JWT con expiración.
+- Hash bcrypt.
+- Middleware de permisos por rol.
+- Validación de inputs.
+
+---
+
+## 🧰 DESPLIEGUE (ARCHIVOS EXTRA)
+
+Genera también:
+- `docker-compose.yml` con servicios:
+  - backend (Node)
+  - frontend (Nginx)
+  - db (Postgres o MariaDB)
+- `Dockerfile.backend` y `Dockerfile.frontend`
+- `nginx.conf` con redirección HTTPS.
+- `backup.sh` (dump diario + compresión + rotación 14 días)
+- `README_DEPLOY.md` con instrucciones VPS.
+
+---
+
+## ✅ OBJETIVO FINAL
+
+Deja el proyecto 100 % funcional **dentro de Replit**:
+- El backend debe poder ejecutarse con `npm run dev` y responder en `/api`.
+- El frontend debe mostrarse correctamente.
+- Ningún error en consola.
+- Debes probar la app, corregir cualquier error automáticamente y dejarla lista para descargar.
+- Incluye en el README pasos claros para:
+  1. Instalar dependencias.
+  2. Configurar .env.
+  3. Crear la base de datos (usando el archivo schema.sql).
+  4. Levantar el servidor y el frontend.
+  5. Desplegar con Docker.
+
+Cuando termines, muestra:
+- Estructura completa de carpetas.
+- Comandos principales (`npm run dev`, `npm run build`, etc.).
+- Confirmación de que la aplicación se ejecuta correctamente dentro de Replit.
+
+Genera todo el proyecto completo en este entorno, ejecútalo, corrige cualquier error automáticamente y déjalo listo para descargar.

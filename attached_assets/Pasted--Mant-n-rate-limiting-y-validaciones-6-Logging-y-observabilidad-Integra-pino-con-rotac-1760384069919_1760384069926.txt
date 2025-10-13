@@ -1,0 +1,61 @@
+- Mantén rate limiting y validaciones.
+
+### 6) Logging y observabilidad
+- Integra **pino** con rotación diaria a `/logs`, añade `request-id` por petición (async_hooks) y propágalo a `activity_logs` y a emails.
+- Endpoints `/health` y `/ready`.
+
+### 7) Docker + Nginx + Backups (MariaDB)
+- Genera `/docker/docker-compose.yml` con servicios:
+- `api` (Node)
+- `web` (Nginx sirviendo build del frontend; proxy `/api` → api:5000; HSTS, gzip, rate-limit 30 r/s)
+- `db` (MariaDB 10.11+; volumen `./db_data`)
+- `jobs` (cron de notificaciones)
+- Crea `Dockerfile.api`, `Dockerfile.web`, `docker/nginx.conf`.
+- **Backups**: `scripts/backup.sh` con `mysqldump` diario (03:00), gzip y rotación 14 días a `/backups`; y `scripts/restore.sh`.
+- Crea `README_DEPLOY.md` con pasos para VPS (Ubuntu): Docker, .env, `docker compose up -d`, DNS/SSL (puedes dejar plantilla para certbot o nginx-proxy).
+
+### 8) Tests E2E
+- Añade `@playwright/test` con casos mínimos:
+- Auth (login/roles)
+- CRUD clientes
+- Tareas (GENERAL/PERSONAL)
+- Subida/descarga de tax_files (simular S3 con MinIO local en dev si quieres)
+- Manuales (crear/editar con TipTap)
+- Scripts:
+- `npm run e2e` para ejecutar los tests.
+- Si procede, añade workflow de CI simple (GitHub Actions).
+
+### 9) Frontend (ajustes por auth y CORS)
+- Actualiza el frontend para usar cookies (no localStorage) y flujo con `/auth/profile`.
+- Asegura CORS para `FRONTEND_URL` y cookies cross-site si el dominio difiere (SameSite apropiado/secure en prod).
+
+### 10) Entrega final
+- Ejecuta migraciones y seed con MariaDB **dentro de Replit** usando un contenedor o MariaDB remoto temporal (si no puede, simula conexión pero deja todo el SQL y migraciones listas).
+- **Genera**:
+- `/prisma/schema.prisma` (provider mysql).
+- `/prisma/migrations/*`
+- `/database/schema_mariadb.sql` con TODAS las tablas.
+- `.env.example` con `DATABASE_URL` de MySQL.
+- Scripts `db:*` en package.json.
+- `/docker/*` (compose, Dockerfiles, nginx.conf).
+- `/scripts/backup.sh` y `/scripts/restore.sh`.
+- `README_DEPLOY.md` con instrucciones VPS.
+- Al terminar, **ejecuta los tests**, muestra:
+- Árbol de carpetas,
+- Comandos de despliegue,
+- Cómo conectar a mi propia MariaDB (`mysql://user:pass@host:3306/db`),
+- Y prepara el **ZIP final** para descargar.
+
+### Además, aplica estos cambios exactos (copiar/pegar):
+
+Realiza estos cambios en mi proyecto actual:
+
+1) Autenticación con cookies httpOnly + SameSite=Lax; añade CSRF tokens y actualiza frontend para usar /auth/profile.
+2) Refuerza Helmet con una CSP estricta (default-src 'self'; img data/blob; style 'self' 'unsafe-inline'; script 'self'; connect 'self'; font 'self'; frame-ancestors 'none').
+3) Sustituye /uploads locales por S3-compatible (env S3_*) con validación MIME real (file-type) y límite de tipos PDF/PNG/JPG/XLSX/DOCX; guarda solo URLs en BD.
+4) Reemplaza setInterval por node-cron: tareas (3 días antes) e impuestos (7 días antes), logueando ejecuciones.
+5) Añade pino con rotación en /logs, request-id por petición, endpoints /health y /ready.
+6) Crea /docker/docker-compose.yml, Dockerfile.api, Dockerfile.web y nginx.conf con reverse proxy /api, HSTS, gzip y rate-limit. Genera scripts/backup.sh y restore.sh, y README_DEPLOY.md con pasos del VPS.
+7) Añade @playwright/test con pruebas e2e mínimas (auth, clientes, tareas, archivos, manuales) y npm run e2e.
+
+Cuando termines, ejecuta los tests, muestra los comandos de despliegue y prepara el ZIP final para descargar.

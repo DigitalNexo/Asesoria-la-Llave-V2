@@ -1,0 +1,94 @@
+# =====================================================
+# Asesoría La Llave - API Dockerfile
+# Multi-stage build para optimizar tamaño
+# =====================================================
+
+FROM node:20-alpine AS base
+
+# Instalar dependencias del sistema
+RUN apk add --no-cache \
+    python3 \
+    make \
+    g++ \
+    cairo-dev \
+    jpeg-dev \
+    pango-dev \
+    giflib-dev \
+    pixman-dev \
+    mysql-client
+
+WORKDIR /app
+
+# =====================================================
+# Stage 1: Dependencies
+# =====================================================
+FROM base AS deps
+
+COPY package*.json ./
+COPY prisma ./prisma
+
+RUN npm ci --only=production && \
+    npm cache clean --force
+
+# =====================================================
+# Stage 2: Builder
+# =====================================================
+FROM base AS builder
+
+COPY package*.json ./
+COPY prisma ./prisma
+
+RUN npm ci
+
+COPY . .
+
+# Generar Prisma Client
+RUN npx prisma generate
+
+# Build frontend
+RUN npm run build
+
+# =====================================================
+# Stage 3: Runner (Production)
+# =====================================================
+FROM base AS runner
+
+ENV NODE_ENV=production \
+    PORT=5000
+
+WORKDIR /app
+
+# Copiar dependencias de producción
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/prisma ./prisma
+
+# Copiar código compilado
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/client/dist ./client/dist
+COPY --from=builder /app/package.json ./package.json
+
+# Copiar scripts necesarios
+COPY --from=builder /app/server ./server
+COPY --from=builder /app/shared ./shared
+COPY --from=builder /app/prisma ./prisma
+
+# Crear directorios necesarios
+RUN mkdir -p /app/logs /app/backups
+
+# Usuario no-root para seguridad
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S nodejs -u 1001
+
+# Cambiar permisos
+RUN chown -R nodejs:nodejs /app
+
+USER nodejs
+
+EXPOSE 5000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:5000/health || exit 1
+
+# Start the application
+CMD ["node", "dist/index.js"]

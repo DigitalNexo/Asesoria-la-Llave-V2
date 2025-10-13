@@ -1,0 +1,116 @@
+version: '3.8'
+
+services:
+  # MariaDB Database
+  db:
+    image: mariadb:10.11
+    container_name: asesoria-mariadb
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-root_change_this}
+      MYSQL_DATABASE: asesoria_llave
+      MYSQL_USER: asesoria_user
+      MYSQL_PASSWORD: ${DB_PASSWORD:-change_this_password}
+      MARIADB_AUTO_UPGRADE: "1"
+      MARIADB_INITDB_SKIP_TZINFO: "1"
+    volumes:
+      - ./db_data:/var/lib/mysql
+      - ./backups:/backups
+      - ./database/schema_mariadb.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+    ports:
+      - "3306:3306"
+    networks:
+      - asesoria-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+
+  # Node.js API Application
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: asesoria-api
+    environment:
+      NODE_ENV: production
+      PORT: 5000
+      DATABASE_URL: mysql://asesoria_user:${DB_PASSWORD:-change_this_password}@db:3306/asesoria_llave?socket_timeout=60&connect_timeout=60
+      JWT_SECRET: ${JWT_SECRET:-change_this_in_production}
+      SESSION_SECRET: ${SESSION_SECRET:-change_this_in_production}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_BUCKET: ${S3_BUCKET:-asesoria-llave}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+    volumes:
+      - ./logs:/app/logs
+      - ./backups:/app/backups
+    ports:
+      - "5000:5000"
+    networks:
+      - asesoria-network
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Cron Jobs Service
+  jobs:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: asesoria-jobs
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: mysql://asesoria_user:${DB_PASSWORD:-change_this_password}@db:3306/asesoria_llave?socket_timeout=60&connect_timeout=60
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - asesoria-network
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    command: ["npm", "run", "jobs:start"]
+
+  # Nginx Reverse Proxy
+  web:
+    image: nginx:alpine
+    container_name: asesoria-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+      - ./client/dist:/usr/share/nginx/html:ro
+    networks:
+      - asesoria-network
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  db_data:
+    driver: local
+
+networks:
+  asesoria-network:
+    driver: bridge

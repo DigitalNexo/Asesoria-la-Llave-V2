@@ -1,0 +1,85 @@
+# Crontab para Backups Automáticos
+# Asesoría La Llave - MariaDB/MySQL Backup Schedule
+
+# Formato del crontab:
+# ┌───────────── minuto (0 - 59)
+# │ ┌───────────── hora (0 - 23)
+# │ │ ┌───────────── día del mes (1 - 31)
+# │ │ │ ┌───────────── mes (1 - 12)
+# │ │ │ │ ┌───────────── día de la semana (0 - 6) (0 = Domingo)
+# │ │ │ │ │
+# * * * * * comando a ejecutar
+
+# ========================================
+# BACKUPS AUTOMÁTICOS
+# ========================================
+
+# Backup diario a las 2:00 AM
+0 2 * * * cd /opt/asesoria-la-llave && docker-compose exec -T app /app/scripts/backup.sh >> /var/log/asesoria/backup.log 2>&1
+
+# Backup cada 6 horas (más frecuente para datos críticos)
+# 0 */6 * * * cd /opt/asesoria-la-llave && docker-compose exec -T app /app/scripts/backup.sh >> /var/log/asesoria/backup.log 2>&1
+
+# Backup semanal los domingos a las 3:00 AM (con retención mayor)
+# 0 3 * * 0 cd /opt/asesoria-la-llave && docker-compose exec -T app /app/scripts/backup_weekly.sh >> /var/log/asesoria/backup_weekly.log 2>&1
+
+# ========================================
+# IMPORTANTE: CRON JOBS YA IMPLEMENTADOS
+# ========================================
+#
+# La aplicación ya incluye cron jobs automáticos con node-cron:
+# - Backups diarios (3am)
+# - Recordatorios de tareas (9am)
+# - Recordatorios fiscales (8am)
+# - Limpieza de sesiones (cada hora)
+#
+# Este archivo es solo referencia para backups manuales
+# adicionales desde el sistema operativo.
+#
+# ========================================
+# INSTALACIÓN
+# ========================================
+
+# 1. Editar el crontab del usuario:
+#    crontab -e
+
+# 2. Copiar la línea de backup deseada
+
+# 3. Crear directorio de logs:
+#    sudo mkdir -p /var/log/asesoria
+#    sudo chown $USER:$USER /var/log/asesoria
+
+# 4. Verificar que el cron esté activo:
+#    crontab -l
+
+# 5. Ver logs de backup:
+#    tail -f /var/log/asesoria/backup.log
+
+# ========================================
+# EJEMPLOS DE CONFIGURACIÓN
+# ========================================
+
+# Backup cada hora
+# 0 * * * * cd /opt/asesoria-la-llave && docker-compose exec -T app /app/scripts/backup.sh
+
+# Backup a medianoche
+# 0 0 * * * cd /opt/asesoria-la-llave && docker-compose exec -T app /app/scripts/backup.sh
+
+# Backup de lunes a viernes a las 9 AM
+# 0 9 * * 1-5 cd /opt/asesoria-la-llave && docker-compose exec -T app /app/scripts/backup.sh
+
+# Backup el primer día de cada mes
+# 0 2 1 * * cd /opt/asesoria-la-llave && docker-compose exec -T app /app/scripts/backup.sh
+
+# ========================================
+# MONITOREO
+# ========================================
+
+# Verificar último backup
+# ls -lh /path/to/backups | tail -1
+
+# Contar backups disponibles
+# ls -1 /path/to/backups/asesoria_backup_*.sql* | wc -l
+
+# Espacio usado por backups
+# du -sh /path/to/backups
