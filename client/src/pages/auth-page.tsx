@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/auth-context";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,7 +11,7 @@ import { useLocation } from "wouter";
 
 export default function AuthPage() {
   const [, setLocation] = useLocation();
-  const { login, register } = useAuth();
+  const { login, register, logout, user } = useAuth();
   const { toast } = useToast();
   const [loginData, setLoginData] = useState({ username: "", password: "" });
   const [registerData, setRegisterData] = useState({ 
@@ -19,6 +20,17 @@ export default function AuthPage() {
     password: "", 
     confirmPassword: "" 
   });
+
+  const { data: systemSettings } = useQuery<{ registrationEnabled: boolean }>({
+    queryKey: ["/api/admin/system-settings"],
+  });
+
+  // Auto-logout if already authenticated (must be in useEffect to avoid render-time state updates)
+  useEffect(() => {
+    if (user) {
+      logout();
+    }
+  }, [user, logout]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -77,9 +89,11 @@ export default function AuthPage() {
         </CardHeader>
         <CardContent>
           <Tabs defaultValue="login" className="w-full">
-            <TabsList className="grid w-full grid-cols-2 mb-6">
+            <TabsList className={`grid w-full ${systemSettings?.registrationEnabled ?? true ? 'grid-cols-2' : 'grid-cols-1'} mb-6`}>
               <TabsTrigger value="login">Iniciar Sesión</TabsTrigger>
-              <TabsTrigger value="register">Registrarse</TabsTrigger>
+              {(systemSettings?.registrationEnabled ?? true) && (
+                <TabsTrigger value="register">Registrarse</TabsTrigger>
+              )}
             </TabsList>
             <TabsContent value="login">
               <form onSubmit={handleLogin} className="space-y-4">
@@ -112,61 +126,63 @@ export default function AuthPage() {
                 </Button>
               </form>
             </TabsContent>
-            <TabsContent value="register">
-              <form onSubmit={handleRegister} className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="register-username">Usuario</Label>
-                  <Input
-                    id="register-username"
-                    type="text"
-                    placeholder="tu_usuario"
-                    value={registerData.username}
-                    onChange={(e) => setRegisterData({ ...registerData, username: e.target.value })}
-                    required
-                    data-testid="input-register-username"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="register-email">Email</Label>
-                  <Input
-                    id="register-email"
-                    type="email"
-                    placeholder="tu@email.com"
-                    value={registerData.email}
-                    onChange={(e) => setRegisterData({ ...registerData, email: e.target.value })}
-                    required
-                    data-testid="input-register-email"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="register-password">Contraseña</Label>
-                  <Input
-                    id="register-password"
-                    type="password"
-                    placeholder="••••••••"
-                    value={registerData.password}
-                    onChange={(e) => setRegisterData({ ...registerData, password: e.target.value })}
-                    required
-                    data-testid="input-register-password"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="register-confirm-password">Confirmar Contraseña</Label>
-                  <Input
-                    id="register-confirm-password"
-                    type="password"
-                    placeholder="••••••••"
-                    value={registerData.confirmPassword}
-                    onChange={(e) => setRegisterData({ ...registerData, confirmPassword: e.target.value })}
-                    required
-                    data-testid="input-register-confirm-password"
-                  />
-                </div>
-                <Button type="submit" className="w-full" data-testid="button-register-submit">
-                  Crear Cuenta
-                </Button>
-              </form>
-            </TabsContent>
+            {(systemSettings?.registrationEnabled ?? true) && (
+              <TabsContent value="register">
+                <form onSubmit={handleRegister} className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="register-username">Usuario</Label>
+                    <Input
+                      id="register-username"
+                      type="text"
+                      placeholder="tu_usuario"
+                      value={registerData.username}
+                      onChange={(e) => setRegisterData({ ...registerData, username: e.target.value })}
+                      required
+                      data-testid="input-register-username"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="register-email">Email</Label>
+                    <Input
+                      id="register-email"
+                      type="email"
+                      placeholder="tu@email.com"
+                      value={registerData.email}
+                      onChange={(e) => setRegisterData({ ...registerData, email: e.target.value })}
+                      required
+                      data-testid="input-register-email"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="register-password">Contraseña</Label>
+                    <Input
+                      id="register-password"
+                      type="password"
+                      placeholder="••••••••"
+                      value={registerData.password}
+                      onChange={(e) => setRegisterData({ ...registerData, password: e.target.value })}
+                      required
+                      data-testid="input-register-password"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="register-confirm-password">Confirmar Contraseña</Label>
+                    <Input
+                      id="register-confirm-password"
+                      type="password"
+                      placeholder="••••••••"
+                      value={registerData.confirmPassword}
+                      onChange={(e) => setRegisterData({ ...registerData, confirmPassword: e.target.value })}
+                      required
+                      data-testid="input-register-confirm-password"
+                    />
+                  </div>
+                  <Button type="submit" className="w-full" data-testid="button-register-submit">
+                    Crear Cuenta
+                  </Button>
+                </form>
+              </TabsContent>
+            )}
           </Tabs>
         </CardContent>
       </Card>

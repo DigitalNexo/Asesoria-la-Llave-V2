@@ -11,6 +11,7 @@ export async function apiRequest(
   method: string,
   url: string,
   data?: unknown | undefined,
+  timeoutMs?: number,
 ): Promise<any> {
   const token = localStorage.getItem("token");
   const headers: Record<string, string> = {};
@@ -23,15 +24,35 @@ export async function apiRequest(
     headers["Authorization"] = `Bearer ${token}`;
   }
 
-  const res = await fetch(url, {
-    method,
-    headers,
-    body: data ? JSON.stringify(data) : undefined,
-    credentials: "include",
-  });
+  // Configurar timeout si se especifica (default: sin timeout para peticiones normales)
+  const controller = new AbortController();
+  let timeoutId: NodeJS.Timeout | undefined;
+  
+  if (timeoutMs) {
+    timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  }
 
-  await throwIfResNotOk(res);
-  return res.json();
+  try {
+    const res = await fetch(url, {
+      method,
+      headers,
+      body: data ? JSON.stringify(data) : undefined,
+      credentials: "include",
+      signal: controller.signal,
+    });
+
+    await throwIfResNotOk(res);
+    return res.json();
+  } catch (error: any) {
+    if (error.name === 'AbortError') {
+      throw new Error(`La petición tardó más de ${(timeoutMs || 0) / 1000}s y fue cancelada`);
+    }
+    throw error;
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
 }
 
 type UnauthorizedBehavior = "returnNull" | "throw";

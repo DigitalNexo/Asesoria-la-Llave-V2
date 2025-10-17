@@ -6,7 +6,9 @@ import {
   BookOpen,
   Settings,
   LogOut,
-  Shield
+  Shield,
+  Grid3x3,
+  Bell
 } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import {
@@ -29,43 +31,55 @@ const menuItems = [
     title: "Dashboard",
     url: "/",
     icon: LayoutDashboard,
-    roles: ["ADMIN", "GESTOR", "LECTURA"],
+    roles: ["Administrador", "Gestor", "Solo Lectura"],
   },
   {
     title: "Clientes",
     url: "/clientes",
     icon: Users,
-    roles: ["ADMIN", "GESTOR", "LECTURA"],
+    roles: ["Administrador", "Gestor", "Solo Lectura"],
   },
   {
     title: "Impuestos",
     url: "/impuestos",
     icon: FileText,
-    roles: ["ADMIN", "GESTOR", "LECTURA"],
+    roles: ["Administrador", "Gestor", "Solo Lectura"],
+  },
+  {
+    title: "Control Impuestos",
+    url: "/control-impuestos",
+    icon: Grid3x3,
+    roles: ["Administrador", "Gestor", "Solo Lectura"],
   },
   {
     title: "Tareas",
     url: "/tareas",
     icon: CheckSquare,
-    roles: ["ADMIN", "GESTOR", "LECTURA"],
+    roles: ["Administrador", "Gestor", "Solo Lectura"],
   },
   {
     title: "Manuales",
     url: "/manuales",
     icon: BookOpen,
-    roles: ["ADMIN", "GESTOR", "LECTURA"],
+    roles: ["Administrador", "Gestor", "Solo Lectura"],
+  },
+  {
+    title: "Notificaciones",
+    url: "/notificaciones",
+    icon: Bell,
+    roles: ["Administrador", "Gestor"],
   },
   {
     title: "Auditoría",
     url: "/auditoria",
     icon: Shield,
-    roles: ["ADMIN", "GESTOR"],
+    roles: ["Administrador", "Gestor"],
   },
   {
     title: "Administración",
     url: "/admin",
     icon: Settings,
-    roles: ["ADMIN"],
+    roles: ["Administrador"],
   },
 ];
 
@@ -74,7 +88,7 @@ export function AppSidebar() {
   const { user, logout } = useAuth();
 
   const filteredItems = menuItems.filter((item) => 
-    user && item.roles.includes(user.role)
+    user && (user as any).roleName && item.roles.includes((user as any).roleName)
   );
 
   const getInitials = (name: string) => {
@@ -122,7 +136,7 @@ export function AppSidebar() {
             </Avatar>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium truncate">{user.username}</p>
-              <p className="text-xs text-muted-foreground">{user.role}</p>
+              <p className="text-xs text-muted-foreground">{(user as any).roleName || "Sin rol"}</p>
             </div>
           </div>
         )}

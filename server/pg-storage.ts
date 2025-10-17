@@ -1,3 +1,17 @@
+/**
+ * ⚠️ DEPRECATED - DO NOT USE ⚠️
+ * 
+ * Este archivo es un LEGACY ARTIFACT del sistema anterior con PostgreSQL/Drizzle.
+ * El sistema ahora usa MariaDB con Prisma ORM (ver: server/prisma-storage.ts)
+ * 
+ * Migrado el 14 de octubre de 2025 a MariaDB externa (VPS 185.239.239.43:3306)
+ * 
+ * Para implementaciones nuevas, usar:
+ * - Database: MariaDB (conexión en DATABASE_URL)
+ * - ORM: Prisma (schema en prisma/schema.prisma)
+ * - Storage: PrismaStorage (server/prisma-storage.ts)
+ */
+
 import { drizzle } from 'drizzle-orm/neon-http';
 import { neon } from '@neondatabase/serverless';
 import { eq, and, desc } from 'drizzle-orm';
@@ -60,6 +74,59 @@ export class PostgresStorage implements IStorage {
   async deleteUser(id: string): Promise<boolean> {
     const result = await db.delete(schema.users).where(eq(schema.users.id, id));
     return result.rowCount ? result.rowCount > 0 : false;
+  }
+
+  async getUserWithPermissions(id: string): Promise<any> {
+    const user = await this.getUser(id);
+    if (!user || !user.roleId) {
+      return user;
+    }
+
+    // Obtener rol con permisos
+    const [roleData] = await db
+      .select({
+        id: schema.roles.id,
+        name: schema.roles.name,
+        description: schema.roles.description,
+        isSystem: schema.roles.isSystem,
+      })
+      .from(schema.roles)
+      .where(eq(schema.roles.id, user.roleId))
+      .limit(1);
+
+    if (!roleData) {
+      return user;
+    }
+
+    // Obtener permisos del rol
+    const permissionsData = await db
+      .select({
+        permissionId: schema.permissions.id,
+        resource: schema.permissions.resource,
+        action: schema.permissions.action,
+        description: schema.permissions.description,
+      })
+      .from(schema.rolePermissions)
+      .innerJoin(schema.permissions, eq(schema.rolePermissions.permissionId, schema.permissions.id))
+      .where(eq(schema.rolePermissions.roleId, user.roleId));
+
+    // Formatear permisos en la estructura esperada
+    const role = {
+      ...roleData,
+      permissions: permissionsData.map(p => ({
+        permission: {
+          id: p.permissionId,
+          resource: p.resource,
+          action: p.action,
+          description: p.description,
+        }
+      }))
+    };
+
+    return {
+      ...user,
+      role,
+    };
   }
 
   // Client methods

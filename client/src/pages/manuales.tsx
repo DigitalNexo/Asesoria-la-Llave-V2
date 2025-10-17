@@ -23,7 +23,7 @@ export default function Manuales() {
     queryKey: ["/api/manuals"],
   });
 
-  const canEdit = user?.role === "ADMIN" || user?.role === "GESTOR";
+  const canEdit = user?.permissions?.includes("manuals:create");
 
   const filteredManuals = manuals?.filter((manual) => {
     const matchesSearch = manual.titulo.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -50,7 +50,7 @@ export default function Manuales() {
           <p className="text-muted-foreground mt-1">Base de conocimientos y documentación interna</p>
         </div>
         {canEdit && (
-          <Button onClick={() => setLocation("/manuales/nuevo")} data-testid="button-add-manual">
+          <Button onClick={() => setLocation("/manuales/nuevo")} data-testid="button-nuevo-manual">
             <Plus className="h-4 w-4 mr-2" />
             Nuevo Manual
           </Button>

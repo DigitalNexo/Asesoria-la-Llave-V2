@@ -9,10 +9,39 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Search, Download, Edit, Trash2, Building2, User } from "lucide-react";
+import { Plus, Search, Download, Edit, Trash2, Building2, User, FileText, CheckCircle2, XCircle, UserCircle } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { Client, User as UserType } from "@shared/schema";
+import type { User as UserType } from "@shared/schema";
+import { getAvailableTaxModelsForClientType, ALL_TAX_MODELS } from "@/lib/tax-helpers";
+
+// Tipo Client compatible con Prisma (incluye taxModels, isActive y employees)
+interface ClientEmployee {
+  userId: string;
+  isPrimary: boolean;
+  user: {
+    id: string;
+    username: string;
+    email: string;
+  };
+}
+
+interface Client {
+  id: string;
+  razonSocial: string;
+  nifCif: string;
+  tipo: string;
+  email: string | null;
+  telefono: string | null;
+  direccion: string | null;
+  fechaAlta: Date;
+  responsableAsignado: string | null;
+  taxModels?: string[];
+  isActive?: boolean;
+  employees?: ClientEmployee[];
+}
 import Papa from "papaparse";
 
 export default function Clientes() {
@@ -21,6 +50,8 @@ export default function Clientes() {
   const [filterTipo, setFilterTipo] = useState<string>("todos");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingClient, setEditingClient] = useState<Client | null>(null);
+  const [selectedEmployees, setSelectedEmployees] = useState<string[]>([]);
+  const [primaryEmployeeId, setPrimaryEmployeeId] = useState<string>("");
   const [formData, setFormData] = useState({
     razonSocial: "",
     nifCif: "",
@@ -29,6 +60,8 @@ export default function Clientes() {
     telefono: "",
     direccion: "",
     responsableAsignado: "",
+    taxModels: [] as string[],
+    isActive: true,
   });
 
   const { data: clients, isLoading } = useQuery<Client[]>({
@@ -73,6 +106,19 @@ export default function Clientes() {
     },
   });
 
+  const toggleClientActiveMutation = useMutation({
+    mutationFn: async (id: string) => {
+      return await apiRequest("PATCH", `/api/clients/${id}/toggle-active`, {});
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/clients"] });
+      toast({ title: "Estado del cliente actualizado" });
+    },
+    onError: () => {
+      toast({ title: "Error al cambiar el estado del cliente", variant: "destructive" });
+    },
+  });
+
   const filteredClients = clients?.filter((client) => {
     const matchesSearch = client.razonSocial.toLowerCase().includes(searchTerm.toLowerCase()) ||
       client.nifCif.toLowerCase().includes(searchTerm.toLowerCase());
@@ -89,7 +135,11 @@ export default function Clientes() {
       telefono: "",
       direccion: "",
       responsableAsignado: "",
+      taxModels: [],
+      isActive: true,
     });
+    setSelectedEmployees([]);
+    setPrimaryEmployeeId("");
     setEditingClient(null);
   };
 
@@ -103,16 +153,63 @@ export default function Clientes() {
       telefono: client.telefono || "",
       direccion: client.direccion || "",
       responsableAsignado: client.responsableAsignado || "",
+      taxModels: client.taxModels || [],
+      isActive: client.isActive !== false, // Default to true if undefined
     });
+    
+    // Cargar empleados asignados
+    const employeeIds = client.employees?.map(e => e.userId) || [];
+    const primary = client.employees?.find(e => e.isPrimary)?.userId || "";
+    setSelectedEmployees(employeeIds);
+    setPrimaryEmployeeId(primary);
+    
     setIsDialogOpen(true);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const updateEmployeesMutation = useMutation({
+    mutationFn: async ({ clientId, employeeIds, primaryId }: { clientId: string; employeeIds: string[]; primaryId: string }) => {
+      return await apiRequest("PUT", `/api/clients/${clientId}/employees`, {
+        employeeIds,
+        primaryEmployeeId: primaryId
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/clients"] });
+    },
+  });
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (editingClient) {
-      updateMutation.mutate({ id: editingClient.id, data: formData });
-    } else {
-      createMutation.mutate(formData);
+    
+    try {
+      let clientId = editingClient?.id;
+      
+      if (editingClient) {
+        await updateMutation.mutateAsync({ id: editingClient.id, data: formData });
+        clientId = editingClient.id;
+      } else {
+        const newClient = await createMutation.mutateAsync(formData);
+        clientId = newClient.id;
+      }
+      
+      // Actualizar empleados asignados (incluye caso de array vacío para desasignar todos)
+      if (clientId) {
+        await updateEmployeesMutation.mutateAsync({
+          clientId,
+          employeeIds: selectedEmployees,
+          primaryId: selectedEmployees.length > 0 ? (primaryEmployeeId || selectedEmployees[0]) : ""
+        });
+      }
+      
+      toast({ title: editingClient ? "Cliente actualizado exitosamente" : "Cliente creado exitosamente" });
+      setIsDialogOpen(false);
+      resetForm();
+    } catch (error) {
+      toast({ 
+        title: "Error", 
+        description: error instanceof Error ? error.message : "Error al guardar el cliente",
+        variant: "destructive" 
+      });
     }
   };
 
@@ -199,29 +296,96 @@ export default function Clientes() {
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="tipo">Tipo *</Label>
-                  <Select value={formData.tipo} onValueChange={(value) => setFormData({ ...formData, tipo: value })}>
+                  <Select 
+                    value={formData.tipo} 
+                    onValueChange={(value) => {
+                      // Limpiar modelos fiscales cuando cambia el tipo
+                      setFormData({ ...formData, tipo: value, taxModels: [] });
+                    }}
+                  >
                     <SelectTrigger data-testid="select-tipo">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="autonomo">Autónomo</SelectItem>
                       <SelectItem value="empresa">Empresa</SelectItem>
+                      <SelectItem value="particular">Particular</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="responsable">Responsable Asignado</Label>
-                  <Select value={formData.responsableAsignado || "none"} onValueChange={(value) => setFormData({ ...formData, responsableAsignado: value === "none" ? "" : value })}>
-                    <SelectTrigger data-testid="select-responsable">
-                      <SelectValue placeholder="Sin asignar" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">Sin asignar</SelectItem>
-                      {users?.filter(u => u.role !== "LECTURA").map((user) => (
-                        <SelectItem key={user.id} value={user.id}>{user.username}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                <div className="space-y-3 col-span-2">
+                  <Label className="flex items-center gap-2">
+                    <UserCircle className="h-4 w-4" />
+                    Empleados Asignados
+                  </Label>
+                  <div className="border rounded-md p-4 space-y-3 max-h-48 overflow-y-auto">
+                    {users?.filter(u => u.role !== "LECTURA").map((user) => {
+                      const isSelected = selectedEmployees.includes(user.id);
+                      const isPrimary = primaryEmployeeId === user.id;
+                      
+                      return (
+                        <div key={user.id} className="flex items-center justify-between gap-3 p-2 rounded-md hover-elevate">
+                          <div className="flex items-center gap-3">
+                            <Checkbox
+                              id={`employee-${user.id}`}
+                              checked={isSelected}
+                              onCheckedChange={(checked) => {
+                                if (checked) {
+                                  const newEmployees = [...selectedEmployees, user.id];
+                                  setSelectedEmployees(newEmployees);
+                                  // Si es el primer empleado, marcarlo como primario
+                                  if (newEmployees.length === 1) {
+                                    setPrimaryEmployeeId(user.id);
+                                  }
+                                } else {
+                                  setSelectedEmployees(selectedEmployees.filter(id => id !== user.id));
+                                  // Si era el primario, limpiar o asignar otro
+                                  if (isPrimary) {
+                                    const remaining = selectedEmployees.filter(id => id !== user.id);
+                                    setPrimaryEmployeeId(remaining[0] || "");
+                                  }
+                                }
+                              }}
+                              data-testid={`checkbox-employee-${user.id}`}
+                            />
+                            <Label 
+                              htmlFor={`employee-${user.id}`} 
+                              className="text-sm font-medium cursor-pointer flex items-center gap-2"
+                            >
+                              {user.username}
+                              {isPrimary && (
+                                <Badge variant="default" className="text-xs">
+                                  Primario
+                                </Badge>
+                              )}
+                            </Label>
+                          </div>
+                          {isSelected && !isPrimary && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setPrimaryEmployeeId(user.id)}
+                              data-testid={`button-set-primary-${user.id}`}
+                            >
+                              Marcar como primario
+                            </Button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {selectedEmployees.length === 0 && (
+                    <p className="text-xs text-muted-foreground">
+                      Selecciona al menos un empleado para asignar al cliente
+                    </p>
+                  )}
+                  {selectedEmployees.length > 0 && (
+                    <p className="text-xs text-muted-foreground">
+                      {selectedEmployees.length} empleado{selectedEmployees.length > 1 ? 's' : ''} seleccionado{selectedEmployees.length > 1 ? 's' : ''}
+                      {primaryEmployeeId && ` • ${users?.find(u => u.id === primaryEmployeeId)?.username} es el responsable principal`}
+                    </p>
+                  )}
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="email">Email</Label>
@@ -250,6 +414,44 @@ export default function Clientes() {
                     onChange={(e) => setFormData({ ...formData, direccion: e.target.value })}
                     data-testid="input-direccion"
                   />
+                </div>
+                
+                <div className="space-y-3 col-span-2">
+                  <Label className="flex items-center gap-2">
+                    <FileText className="h-4 w-4" />
+                    Modelos Fiscales Asignados
+                  </Label>
+                  <div className="flex flex-wrap gap-4">
+                    {getAvailableTaxModelsForClientType(formData.tipo.toUpperCase()).map((modelCode) => {
+                      const modelInfo = ALL_TAX_MODELS.find(m => m.codigo === modelCode);
+                      return (
+                        <div key={modelCode} className="flex items-center space-x-2">
+                          <Checkbox
+                            id={`tax-model-${modelCode}`}
+                            checked={formData.taxModels.includes(modelCode)}
+                            onCheckedChange={(checked) => {
+                              if (checked) {
+                                setFormData({ ...formData, taxModels: [...formData.taxModels, modelCode] });
+                              } else {
+                                setFormData({ ...formData, taxModels: formData.taxModels.filter(m => m !== modelCode) });
+                              }
+                            }}
+                            data-testid={`checkbox-tax-model-${modelCode}`}
+                          />
+                          <Label 
+                            htmlFor={`tax-model-${modelCode}`} 
+                            className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
+                            title={modelInfo?.nombre}
+                          >
+                            {modelCode}
+                          </Label>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Los impuestos se generarán automáticamente para todos los períodos de los modelos seleccionados
+                  </p>
                 </div>
               </div>
               <DialogFooter>
@@ -284,6 +486,7 @@ export default function Clientes() {
             <SelectItem value="todos">Todos los tipos</SelectItem>
             <SelectItem value="autonomo">Autónomos</SelectItem>
             <SelectItem value="empresa">Empresas</SelectItem>
+            <SelectItem value="particular">Particulares</SelectItem>
           </SelectContent>
         </Select>
         <Button variant="outline" onClick={exportToCSV} data-testid="button-export-csv">
@@ -303,7 +506,8 @@ export default function Clientes() {
                 <TableHead>Razón Social</TableHead>
                 <TableHead>NIF/CIF</TableHead>
                 <TableHead>Tipo</TableHead>
-                <TableHead>Email</TableHead>
+                <TableHead>Modelos Fiscales</TableHead>
+                <TableHead>Estado</TableHead>
                 <TableHead>Responsable</TableHead>
                 <TableHead className="text-right">Acciones</TableHead>
               </TableRow>
@@ -311,7 +515,7 @@ export default function Clientes() {
             <TableBody>
               {filteredClients.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                  <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
                     No hay clientes registrados
                   </TableCell>
                 </TableRow>
@@ -322,12 +526,73 @@ export default function Clientes() {
                     <TableCell>{client.nifCif}</TableCell>
                     <TableCell>
                       <Badge variant="outline" className="gap-1">
-                        {client.tipo === "autonomo" ? <User className="h-3 w-3" /> : <Building2 className="h-3 w-3" />}
-                        {client.tipo === "autonomo" ? "Autónomo" : "Empresa"}
+                        {client.tipo === "autonomo" && <User className="h-3 w-3" />}
+                        {client.tipo === "empresa" && <Building2 className="h-3 w-3" />}
+                        {client.tipo === "particular" && <UserCircle className="h-3 w-3" />}
+                        {client.tipo === "autonomo" && "Autónomo"}
+                        {client.tipo === "empresa" && "Empresa"}
+                        {client.tipo === "particular" && "Particular"}
                       </Badge>
                     </TableCell>
-                    <TableCell>{client.email || "-"}</TableCell>
-                    <TableCell>{getUserName(client.responsableAsignado)}</TableCell>
+                    <TableCell>
+                      {client.taxModels && client.taxModels.length > 0 ? (
+                        <div className="flex flex-wrap gap-1">
+                          {client.taxModels.map((model) => (
+                            <Badge key={model} variant="secondary" className="text-xs">
+                              {model}
+                            </Badge>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-muted-foreground text-sm">Sin modelos</span>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <Badge 
+                          variant={client.isActive !== false ? "default" : "secondary"}
+                          className="gap-1"
+                          data-testid={`badge-status-${client.id}`}
+                        >
+                          {client.isActive !== false ? (
+                            <>
+                              <CheckCircle2 className="h-3 w-3" />
+                              Activo
+                            </>
+                          ) : (
+                            <>
+                              <XCircle className="h-3 w-3" />
+                              Inactivo
+                            </>
+                          )}
+                        </Badge>
+                        <Switch
+                          checked={client.isActive !== false}
+                          onCheckedChange={() => toggleClientActiveMutation.mutate(client.id)}
+                          disabled={toggleClientActiveMutation.isPending}
+                          data-testid={`switch-active-${client.id}`}
+                        />
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      {client.employees && client.employees.length > 0 ? (
+                        <div className="flex flex-wrap gap-1">
+                          {client.employees.map((emp) => (
+                            <Badge 
+                              key={emp.userId} 
+                              variant={emp.isPrimary ? "default" : "secondary"}
+                              className="text-xs"
+                              data-testid={`badge-employee-${emp.userId}`}
+                            >
+                              {emp.user.username}
+                              {emp.isPrimary && " ★"}
+                            </Badge>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-muted-foreground text-sm">Sin asignar</span>
+                      )}
+                    </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-2">
                         <Button

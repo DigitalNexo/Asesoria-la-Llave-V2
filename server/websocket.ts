@@ -59,6 +59,29 @@ export function notifyAll(notification: Notification) {
   });
 }
 
+// Emitir log de sistema (actualización/restauración/backup)
+export interface SystemLog {
+  type: "update" | "restore" | "backup" | "migration";
+  level: "info" | "success" | "warning" | "error";
+  message: string;
+  details?: string;
+  progress?: number; // 0-100
+}
+
+export function emitSystemLog(log: SystemLog) {
+  if (!io) {
+    console.warn("Socket.IO no está inicializado");
+    return;
+  }
+
+  io.emit("system:log", {
+    ...log,
+    timestamp: new Date().toISOString()
+  });
+  
+  console.log(`[SYSTEM ${log.type.toUpperCase()}] ${log.message}${log.details ? ` - ${log.details}` : ''}`);
+}
+
 // Notificar cambios en tareas
 export function notifyTaskChange(action: "created" | "updated" | "deleted", task: any, userId?: string) {
   const notification: Notification = {

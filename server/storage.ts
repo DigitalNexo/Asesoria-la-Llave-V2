@@ -7,8 +7,11 @@ import {
   type TaxFile, type InsertTaxFile,
   type Task, type InsertTask,
   type Manual, type InsertManual,
+  type ManualAttachment, type InsertManualAttachment,
+  type ManualVersion, type InsertManualVersion,
   type ActivityLog, type InsertActivityLog,
-  type AuditTrail, type InsertAuditTrail
+  type AuditTrail, type InsertAuditTrail,
+  type SystemSettings, type InsertSystemSettings
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 
@@ -67,6 +70,19 @@ export interface IStorage {
   deleteManual(id: string): Promise<boolean>;
   getAllManuals(): Promise<Manual[]>;
 
+  // Manual Attachments
+  getManualAttachment(id: string): Promise<ManualAttachment | undefined>;
+  createManualAttachment(attachment: InsertManualAttachment): Promise<ManualAttachment>;
+  deleteManualAttachment(id: string): Promise<boolean>;
+  getManualAttachments(manualId: string): Promise<ManualAttachment[]>;
+
+  // Manual Versions
+  getManualVersion(id: string): Promise<ManualVersion | undefined>;
+  createManualVersion(version: InsertManualVersion): Promise<ManualVersion>;
+  getManualVersions(manualId: string): Promise<ManualVersion[]>;
+  getNextVersionNumber(manualId: string): Promise<number>;
+  restoreManualVersion(manualId: string, versionId: string): Promise<Manual | undefined>;
+
   // Activity Logs
   createActivityLog(log: InsertActivityLog): Promise<ActivityLog>;
   getAllActivityLogs(): Promise<ActivityLog[]>;
@@ -86,6 +102,38 @@ export interface IStorage {
     manuales: any[];
     total: number;
   }>;
+
+  // System Settings
+  getSystemSettings(): Promise<SystemSettings | undefined>;
+  updateSystemSettings(settings: Partial<InsertSystemSettings>): Promise<SystemSettings>;
+
+  // SMTP Accounts
+  getSMTPAccount(id: string): Promise<any>;
+  getAllSMTPAccounts(): Promise<any[]>;
+  getDefaultSMTPAccount(): Promise<any>;
+  createSMTPAccount(account: any): Promise<any>;
+  updateSMTPAccount(id: string, account: any): Promise<any>;
+  deleteSMTPAccount(id: string): Promise<boolean>;
+
+  // Notification Templates
+  getNotificationTemplate(id: string): Promise<any>;
+  getAllNotificationTemplates(): Promise<any[]>;
+  createNotificationTemplate(template: any): Promise<any>;
+  updateNotificationTemplate(id: string, template: any): Promise<any>;
+  deleteNotificationTemplate(id: string): Promise<boolean>;
+
+  // Notification Logs
+  getNotificationLog(id: string): Promise<any>;
+  getAllNotificationLogs(): Promise<any[]>;
+  createNotificationLog(log: any): Promise<any>;
+
+  // Scheduled Notifications
+  getScheduledNotification(id: string): Promise<any>;
+  getAllScheduledNotifications(): Promise<any[]>;
+  getPendingScheduledNotifications(): Promise<any[]>;
+  createScheduledNotification(notification: any): Promise<any>;
+  updateScheduledNotification(id: string, notification: any): Promise<any>;
+  deleteScheduledNotification(id: string): Promise<boolean>;
 }
 
 export class MemStorage implements IStorage {

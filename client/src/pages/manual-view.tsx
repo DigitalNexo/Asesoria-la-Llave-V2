@@ -3,10 +3,11 @@ import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Edit, Download } from "lucide-react";
+import { ArrowLeft, Edit, Download, Paperclip } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/contexts/auth-context";
-import type { Manual } from "@shared/schema";
+import { TableOfContents } from "@/components/TableOfContents";
+import type { Manual, ManualAttachment } from "@shared/schema";
 import jsPDF from "jspdf";
 
 export default function ManualView() {
@@ -18,7 +19,18 @@ export default function ManualView() {
     queryKey: ["/api/manuals", params.id],
   });
 
+  const { data: attachments = [] } = useQuery<ManualAttachment[]>({
+    queryKey: ["/api/manuals", params.id, "attachments"],
+    enabled: !!params.id,
+  });
+
   const canEdit = user?.role === "ADMIN" || user?.role === "GESTOR";
+
+  const formatFileSize = (bytes: number) => {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  };
 
   const exportToPDF = () => {
     if (!manual) return;
@@ -82,44 +94,86 @@ export default function ManualView() {
         )}
       </div>
 
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div className="space-y-2">
-              <CardTitle className="text-2xl">{manual.titulo}</CardTitle>
-              {manual.categoria && (
-                <p className="text-muted-foreground">{manual.categoria}</p>
+      <div className="grid gap-6 lg:grid-cols-[1fr_300px]">
+        <div className="space-y-6">
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div className="space-y-2">
+                  <CardTitle className="text-2xl">{manual.titulo}</CardTitle>
+                  {manual.categoria && (
+                    <p className="text-muted-foreground">{manual.categoria}</p>
+                  )}
+                </div>
+                {manual.publicado ? (
+                  <Badge variant="outline" className="text-chart-3 bg-chart-3/10">Publicado</Badge>
+                ) : (
+                  <Badge variant="outline" className="text-muted-foreground bg-muted">Borrador</Badge>
+                )}
+              </div>
+              {manual.etiquetas && manual.etiquetas.length > 0 && (
+                <div className="flex flex-wrap gap-2 mt-4">
+                  {manual.etiquetas.map((tag) => (
+                    <Badge key={tag} variant="secondary">
+                      {tag}
+                    </Badge>
+                  ))}
+                </div>
               )}
-            </div>
-            {manual.publicado ? (
-              <Badge variant="outline" className="text-chart-3 bg-chart-3/10">Publicado</Badge>
-            ) : (
-              <Badge variant="outline" className="text-muted-foreground bg-muted">Borrador</Badge>
-            )}
-          </div>
-          {manual.etiquetas && manual.etiquetas.length > 0 && (
-            <div className="flex flex-wrap gap-2 mt-4">
-              {manual.etiquetas.map((tag) => (
-                <Badge key={tag} variant="secondary">
-                  {tag}
-                </Badge>
-              ))}
-            </div>
+            </CardHeader>
+            <CardContent>
+              <div 
+                className="prose prose-sm max-w-none [&_.editor-table]:border-collapse [&_.editor-table]:w-full [&_.editor-table]:my-4 [&_.editor-table_th]:border-2 [&_.editor-table_th]:border-black [&_.editor-table_th]:p-2 [&_.editor-table_th]:bg-muted [&_.editor-table_th]:font-semibold [&_.editor-table_th]:text-left [&_.editor-table_td]:border-2 [&_.editor-table_td]:border-black [&_.editor-table_td]:p-2"
+                dangerouslySetInnerHTML={{ __html: manual.contenidoHtml }}
+              />
+              <div className="mt-8 pt-4 border-t text-sm text-muted-foreground">
+                Creado el {new Date(manual.fechaCreacion).toLocaleDateString()}
+                {manual.fechaActualizacion !== manual.fechaCreacion && (
+                  <> · Actualizado el {new Date(manual.fechaActualizacion).toLocaleDateString()}</>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          {attachments.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <Paperclip className="h-4 w-4" />
+                  Adjuntos ({attachments.length})
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-2">
+                  {attachments.map((attachment) => (
+                    <div 
+                      key={attachment.id}
+                      className="flex items-center justify-between p-3 border rounded-lg hover-elevate cursor-pointer"
+                      onClick={() => window.open(attachment.filePath, '_blank')}
+                      data-testid={`attachment-${attachment.id}`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <Paperclip className="h-4 w-4 text-muted-foreground" />
+                        <div>
+                          <p className="text-sm font-medium">{attachment.originalName}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {formatFileSize(attachment.fileSize)}
+                          </p>
+                        </div>
+                      </div>
+                      <Download className="h-4 w-4 text-muted-foreground" />
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
           )}
-        </CardHeader>
-        <CardContent>
-          <div 
-            className="prose prose-sm max-w-none"
-            dangerouslySetInnerHTML={{ __html: manual.contenidoHtml }}
-          />
-          <div className="mt-8 pt-4 border-t text-sm text-muted-foreground">
-            Creado el {new Date(manual.fechaCreacion).toLocaleDateString()}
-            {manual.fechaActualizacion !== manual.fechaCreacion && (
-              <> · Actualizado el {new Date(manual.fechaActualizacion).toLocaleDateString()}</>
-            )}
-          </div>
-        </CardContent>
-      </Card>
+        </div>
+
+        <div className="lg:sticky lg:top-8 lg:h-fit">
+          <TableOfContents htmlContent={manual.contenidoHtml} />
+        </div>
+      </div>
     </div>
   );
 }

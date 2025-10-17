@@ -154,7 +154,7 @@ export default function Tareas() {
               </TabsTrigger>
               <TabsTrigger value="kanban" data-testid="button-view-kanban">
                 <LayoutGrid className="h-4 w-4 mr-2" />
-                Kanban
+                Tablero
               </TabsTrigger>
             </TabsList>
           </Tabs>

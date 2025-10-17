@@ -11,15 +11,10 @@ datasource db {
 }
 
 // ==================== ENUMS ====================
-enum UserRole {
-  ADMIN
-  GESTOR
-  LECTURA
-}
-
 enum ClientType {
   AUTONOMO
   EMPRESA
+  PARTICULAR
 }
 
 enum TaskPriority {
@@ -45,10 +40,92 @@ enum TaxStatus {
   REALIZADO
 }
 
+enum TaxFilingStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  PRESENTED
+}
+
+enum ManualStatus {
+  DRAFT
+  PUBLISHED
+}
+
 enum AuditAction {
   CREATE
   UPDATE
   DELETE
+}
+
+enum BackupStatus {
+  CREATING
+  COMPLETED
+  FAILED
+  RESTORING
+  RESTORED
+}
+
+enum UpdateStatus {
+  CHECKING
+  BACKING_UP
+  DOWNLOADING
+  INSTALLING
+  COMPLETED
+  FAILED
+  ROLLED_BACK
+}
+
+enum StorageType {
+  LOCAL
+  FTP
+  SMB
+}
+
+// ==================== ROLES & PERMISSIONS ====================
+model Role {
+  id          String   @id @default(uuid()) @db.VarChar(36)
+  name        String   @unique @db.VarChar(100)
+  description String?  @db.Text
+  isSystem    Boolean  @default(false) @map("is_system") // true para roles migrados (Admin, Gestor, Lectura)
+  createdAt   DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.DateTime(3)
+
+  // Relations
+  users       User[]
+  permissions RolePermission[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String   @id @default(uuid()) @db.VarChar(36)
+  resource    String   @db.VarChar(50) // "clients", "taxes", "tasks", "manuals", "users", "admin"
+  action      String   @db.VarChar(50) // "create", "read", "update", "delete", "export", "upload", etc.
+  description String?  @db.Text
+  createdAt   DateTime @default(now()) @map("created_at") @db.DateTime(3)
+
+  // Relations
+  roles RolePermission[]
+
+  @@unique([resource, action])
+  @@index([resource])
+  @@map("permissions")
+}
+
+model RolePermission {
+  id           String   @id @default(uuid()) @db.VarChar(36)
+  roleId       String   @map("role_id") @db.VarChar(36)
+  permissionId String   @map("permission_id") @db.VarChar(36)
+  createdAt    DateTime @default(now()) @map("created_at") @db.DateTime(3)
+
+  // Relations
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+  @@index([roleId])
+  @@index([permissionId])
+  @@map("role_permissions")
 }
 
 // ==================== USERS & AUTH ====================
@@ -57,17 +134,27 @@ model User {
   username  String   @unique @db.VarChar(191)
   email     String   @unique @db.VarChar(191)
   password  String   @db.Text
-  role      UserRole @default(LECTURA)
+  roleId    String?  @map("role_id") @db.VarChar(36) // Relación con tabla Role
+  isActive  Boolean  @default(true) @map("is_active") // Usuario activo o deshabilitado
   createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
 
   // Relations
+  role            Role?           @relation(fields: [roleId], references: [id], onDelete: SetNull)
   clientsManaged  Client[]        @relation("ClientManager")
+  clientsAssigned ClientEmployee[] @relation("ClientEmployees")
   tasksAssigned   Task[]          @relation("TaskAssignee")
   manualsAuthored Manual[]        @relation("ManualAuthor")
   activityLogs    ActivityLog[]
   auditTrails     AuditTrail[]
   taxFilesUploaded TaxFile[]      @relation("FileUploader")
+  smtpAccountsCreated SMTPAccount[]           @relation("SMTPCreator")
+  notificationTemplatesCreated NotificationTemplate[] @relation("TemplateCreator")
+  notificationsSent NotificationLog[]         @relation("NotificationSender")
+  scheduledNotificationsCreated ScheduledNotification[] @relation("ScheduledNotificationCreator")
+  backupsCreated  SystemBackup[]  @relation("BackupCreator")
+  updatesInitiated SystemUpdate[] @relation("UpdateInitiator")
 
+  @@index([roleId])
   @@map("users")
 }
 
@@ -82,15 +169,38 @@ model Client {
   direccion           String?  @db.Text
   fechaAlta           DateTime @default(now()) @map("fecha_alta") @db.DateTime(3)
   responsableAsignado String?  @map("responsable_asignado") @db.VarChar(36)
+  taxModels           Json?    @map("tax_models") // Array de modelos fiscales: ["303", "390", "130", "131"]
+  isActive            Boolean  @default(true) @map("is_active") // Cliente activo o deshabilitado
 
   // Relations
-  responsable User?      @relation("ClientManager", fields: [responsableAsignado], references: [id], onDelete: SetNull)
-  clientTaxes ClientTax[]
-  tasks       Task[]
+  responsable       User?                  @relation("ClientManager", fields: [responsableAsignado], references: [id], onDelete: SetNull)
+  clientTaxes       ClientTax[]
+  tasks             Task[]
+  taxRequirements   ClientTaxRequirement[]
+  taxFilings        ClientTaxFiling[]
+  employees         ClientEmployee[]
 
   @@index([responsableAsignado])
   @@index([tipo])
+  @@index([isActive])
   @@map("clients")
+}
+
+// ==================== CLIENT EMPLOYEES (Many-to-Many) ====================
+model ClientEmployee {
+  clientId   String   @map("client_id") @db.VarChar(36)
+  userId     String   @map("user_id") @db.VarChar(36)
+  isPrimary  Boolean  @default(false) @map("is_primary")
+  assignedAt DateTime @default(now()) @map("assigned_at") @db.DateTime(3)
+
+  // Relations
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  user   User   @relation("ClientEmployees", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([clientId, userId])
+  @@index([userId])
+  @@index([clientId])
+  @@map("client_employees")
 }
 
 // ==================== TAX MODELS ====================
@@ -192,23 +302,66 @@ model Task {
 
 // ==================== MANUALS ====================
 model Manual {
-  id                  String   @id @default(uuid()) @db.VarChar(36)
-  titulo              String   @db.Text
-  contenidoHtml       String   @map("contenido_html") @db.LongText
-  autorId             String   @map("autor_id") @db.VarChar(36)
-  etiquetas           String?  @db.Text // JSON array stored as text
-  categoria           String?  @db.VarChar(191)
-  publicado           Boolean  @default(false)
-  fechaCreacion       DateTime @default(now()) @map("fecha_creacion") @db.DateTime(3)
-  fechaActualizacion  DateTime @updatedAt @map("fecha_actualizacion") @db.DateTime(3)
+  id                  String       @id @default(uuid()) @db.VarChar(36)
+  titulo              String       @db.Text
+  contenidoHtml       String       @map("contenido_html") @db.Text
+  autorId             String       @map("autor_id") @db.VarChar(36)
+  etiquetas           String?      @db.Text // JSON array stored as text
+  categoria           String?      @db.VarChar(191)
+  status              ManualStatus @default(DRAFT)
+  fechaCreacion       DateTime     @default(now()) @map("fecha_creacion") @db.DateTime(3)
+  fechaActualizacion  DateTime     @updatedAt @map("fecha_actualizacion") @db.DateTime(3)
+  fechaPublicacion    DateTime?    @map("fecha_publicacion") @db.DateTime(3)
 
   // Relations
-  autor User @relation("ManualAuthor", fields: [autorId], references: [id], onDelete: Cascade)
+  autor       User              @relation("ManualAuthor", fields: [autorId], references: [id], onDelete: Cascade)
+  attachments ManualAttachment[]
+  versions    ManualVersion[]
 
-  @@index([publicado])
+  @@index([status])
   @@index([categoria])
   @@index([autorId])
   @@map("manuals")
+}
+
+// ==================== MANUAL ATTACHMENTS ====================
+model ManualAttachment {
+  id               String   @id @default(uuid()) @db.VarChar(36)
+  manualId         String   @map("manual_id") @db.VarChar(36)
+  fileName         String   @map("file_name") @db.VarChar(255)
+  originalName     String   @map("original_name") @db.VarChar(255)
+  filePath         String   @map("file_path") @db.Text
+  fileType         String   @map("file_type") @db.VarChar(100)
+  fileSize         Int      @map("file_size") // bytes
+  uploadedBy       String   @map("uploaded_by") @db.VarChar(36)
+  uploadedAt       DateTime @default(now()) @map("uploaded_at") @db.DateTime(3)
+
+  // Relations
+  manual Manual @relation(fields: [manualId], references: [id], onDelete: Cascade)
+
+  @@index([manualId])
+  @@map("manual_attachments")
+}
+
+// ==================== MANUAL VERSIONS ====================
+model ManualVersion {
+  id             String   @id @default(uuid()) @db.VarChar(36)
+  manualId       String   @map("manual_id") @db.VarChar(36)
+  versionNumber  Int      @map("version_number")
+  titulo         String   @db.Text
+  contenidoHtml  String   @map("contenido_html") @db.Text
+  etiquetas      String?  @db.Text
+  categoria      String?  @db.VarChar(191)
+  createdBy      String   @map("created_by") @db.VarChar(36)
+  createdAt      DateTime @default(now()) @map("created_at") @db.DateTime(3)
+
+  // Relations
+  manual Manual @relation(fields: [manualId], references: [id], onDelete: Cascade)
+
+  @@unique([manualId, versionNumber])
+  @@index([manualId])
+  @@index([createdAt])
+  @@map("manual_versions")
 }
 
 // ==================== ACTIVITY LOGS ====================
@@ -261,6 +414,66 @@ model SmtpConfig {
   @@map("smtp_config")
 }
 
+// ==================== TAX CONTROL - REQUIREMENTS (EXCEL GRID X) ====================
+model ClientTaxRequirement {
+  id           String   @id @default(uuid()) @db.VarChar(36)
+  clientId     String   @map("client_id") @db.VarChar(36)
+  taxModelCode String   @map("tax_model_code") @db.VarChar(10) // "111","115","123","130","131","202","349","303"
+  required     Boolean  @default(true) // X = true
+  note         String?  @db.Text // "Anual", "Desde 3T25", etc
+  colorTag     String?  @map("color_tag") @db.VarChar(20) // "green" | "yellow" | "blue"
+  createdAt    DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.DateTime(3)
+
+  // Relations
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@unique([clientId, taxModelCode])
+  @@index([taxModelCode])
+  @@map("client_tax_requirements")
+}
+
+// ==================== FISCAL PERIODS (GENERIC - NO MODEL) ====================
+model FiscalPeriod {
+  id        String   @id @default(uuid()) @db.VarChar(36)
+  year      Int
+  quarter   Int?     // 1..4; null if annual
+  label     String   @db.VarChar(10) // "1T","2T","3T","4T","Anual"
+  startsAt  DateTime @map("starts_at") @db.DateTime(3)
+  endsAt    DateTime @map("ends_at") @db.DateTime(3)
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+
+  // Relations
+  filings ClientTaxFiling[]
+
+  @@unique([year, quarter])
+  @@index([year])
+  @@map("fiscal_periods")
+}
+
+// ==================== CLIENT TAX FILINGS (EXCEL GRID STATUS) ====================
+model ClientTaxFiling {
+  id            String          @id @default(uuid()) @db.VarChar(36)
+  clientId      String          @map("client_id") @db.VarChar(36)
+  taxModelCode  String          @map("tax_model_code") @db.VarChar(10)
+  periodId      String          @map("period_id") @db.VarChar(36)
+  status        TaxFilingStatus @default(NOT_STARTED)
+  presentedAt   DateTime?       @map("presented_at") @db.DateTime(3)
+  notes         String?         @db.Text
+  createdAt     DateTime        @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt     DateTime        @updatedAt @map("updated_at") @db.DateTime(3)
+
+  // Relations
+  client Client       @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  period FiscalPeriod @relation(fields: [periodId], references: [id], onDelete: Cascade)
+
+  @@unique([clientId, taxModelCode, periodId])
+  @@index([periodId])
+  @@index([clientId, taxModelCode])
+  @@index([status])
+  @@map("client_tax_filings")
+}
+
 // ==================== JOB RUNS (CRON TRACKING) ====================
 model JobRun {
   id             String   @id @default(uuid()) @db.VarChar(36)
@@ -275,4 +488,184 @@ model JobRun {
   @@index([jobName, startedAt])
   @@index([status])
   @@map("job_runs")
+}
+
+// ==================== SYSTEM SETTINGS ====================
+model SystemSettings {
+  id                   String   @id @default(uuid()) @db.VarChar(36)
+  registrationEnabled  Boolean  @default(true) @map("registration_enabled")
+  updatedAt            DateTime @updatedAt @map("updated_at") @db.DateTime(3)
+
+  @@map("system_settings")
+}
+
+// ==================== NOTIFICATIONS SYSTEM ====================
+// Múltiples cuentas SMTP
+model SMTPAccount {
+  id             String   @id @default(uuid()) @db.VarChar(36)
+  nombre         String   @db.VarChar(191)
+  host           String   @db.VarChar(191)
+  port           Int
+  user           String   @db.VarChar(191) // Email usado para enviar
+  password       String   @db.Text // Encriptada
+  isPredeterminada Boolean @default(false) @map("is_predeterminada")
+  activa         Boolean  @default(true)
+  creadaPor      String?  @map("creada_por") @db.VarChar(36)
+  fechaCreacion  DateTime @default(now()) @map("fecha_creacion") @db.DateTime(3)
+
+  // Relations
+  creador   User?                @relation("SMTPCreator", fields: [creadaPor], references: [id], onDelete: SetNull)
+  logs      NotificationLog[]
+  scheduled ScheduledNotification[]
+
+  @@index([isPredeterminada])
+  @@index([activa])
+  @@map("smtp_accounts")
+}
+
+// Plantillas de notificaciones
+model NotificationTemplate {
+  id             String   @id @default(uuid()) @db.VarChar(36)
+  nombre         String   @db.VarChar(191)
+  asunto         String   @db.Text // Puede contener variables: {nombre_cliente}
+  contenidoHTML  String   @map("contenido_html") @db.Text
+  variables      Json?    // Array de variables disponibles: ["cliente", "impuesto", "fecha"]
+  tipo           String   @db.VarChar(50) // RECORDATORIO, INFORMATIVO, URGENTE
+  activa         Boolean  @default(true)
+  creadoPor      String?  @map("creado_por") @db.VarChar(36)
+  fechaCreacion  DateTime @default(now()) @map("fecha_creacion") @db.DateTime(3)
+  fechaActualizacion DateTime @updatedAt @map("fecha_actualizacion") @db.DateTime(3)
+
+  // Relations
+  creador   User?                  @relation("TemplateCreator", fields: [creadoPor], references: [id], onDelete: SetNull)
+  logs      NotificationLog[]
+  scheduled ScheduledNotification[]
+
+  @@index([tipo])
+  @@index([activa])
+  @@map("notification_templates")
+}
+
+// Historial de notificaciones enviadas
+model NotificationLog {
+  id              String   @id @default(uuid()) @db.VarChar(36)
+  plantillaId     String?  @map("plantilla_id") @db.VarChar(36)
+  smtpAccountId   String?  @map("smtp_account_id") @db.VarChar(36)
+  destinatarios   Json     // Array de emails
+  asunto          String   @db.Text
+  contenido       String   @db.Text
+  tipo            String   @db.VarChar(50) // EMAIL
+  estado          String   @db.VarChar(50) // ENVIADO, FALLIDO, PENDIENTE
+  fechaEnvio      DateTime @map("fecha_envio") @db.DateTime(3)
+  enviadoPor      String?  @map("enviado_por") @db.VarChar(36)
+  metadata        Json?    // Información adicional
+
+  // Relations
+  plantilla   NotificationTemplate? @relation(fields: [plantillaId], references: [id], onDelete: SetNull)
+  smtpAccount SMTPAccount?          @relation(fields: [smtpAccountId], references: [id], onDelete: SetNull)
+  enviador    User?                 @relation("NotificationSender", fields: [enviadoPor], references: [id], onDelete: SetNull)
+
+  @@index([estado])
+  @@index([fechaEnvio])
+  @@index([tipo])
+  @@map("notification_logs")
+}
+
+// Notificaciones programadas
+model ScheduledNotification {
+  id                    String   @id @default(uuid()) @db.VarChar(36)
+  plantillaId           String   @map("plantilla_id") @db.VarChar(36)
+  smtpAccountId         String?  @map("smtp_account_id") @db.VarChar(36)
+  destinatariosSeleccionados Json @map("destinatarios_seleccionados") // Filtros o clientes específicos
+  fechaProgramada       DateTime @map("fecha_programada") @db.DateTime(3)
+  estado                String   @db.VarChar(50) @default("PENDIENTE") // PENDIENTE, ENVIADA, CANCELADA
+  recurrencia           String   @db.VarChar(50) @default("NINGUNA") // NINGUNA, DIARIA, SEMANAL, MENSUAL
+  creadoPor             String?  @map("creado_por") @db.VarChar(36)
+  fechaCreacion         DateTime @default(now()) @map("fecha_creacion") @db.DateTime(3)
+
+  // Relations
+  plantilla   NotificationTemplate @relation(fields: [plantillaId], references: [id], onDelete: Cascade)
+  smtpAccount SMTPAccount?         @relation(fields: [smtpAccountId], references: [id], onDelete: SetNull)
+  creador     User?                @relation("ScheduledNotificationCreator", fields: [creadoPor], references: [id], onDelete: SetNull)
+
+  @@index([estado])
+  @@index([fechaProgramada])
+  @@map("scheduled_notifications")
+}
+
+// ==================== SISTEMA: CONFIGURACIÓN Y ACTUALIZACIONES ====================
+
+// Configuración del sistema
+model SystemConfig {
+  id                 String   @id @default(uuid()) @db.VarChar(36)
+  key                String   @unique @db.VarChar(100) // Clave única de configuración
+  value              String   @db.Text // Valor de la configuración
+  description        String?  @db.Text // Descripción de qué hace esta config
+  isEditable         Boolean  @default(true) @map("is_editable") // Si se puede editar desde la UI
+  createdAt          DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt          DateTime @updatedAt @map("updated_at") @db.DateTime(3)
+
+  @@map("system_config")
+}
+
+// Registro de backups del sistema
+model SystemBackup {
+  id                 String       @id @default(uuid()) @db.VarChar(36)
+  version            String       @db.VarChar(50) // Versión del sistema al momento del backup
+  dbFile             String       @map("db_file") @db.VarChar(500) // Ruta al archivo .sql
+  filesFile          String       @map("files_file") @db.VarChar(500) // Ruta al archivo .zip
+  dbSize             BigInt       @default(0) @map("db_size") // Tamaño del backup de BD en bytes
+  filesSize          BigInt       @default(0) @map("files_size") // Tamaño del backup de archivos en bytes
+  status             BackupStatus @default(CREATING)
+  errorMessage       String?      @map("error_message") @db.Text
+  createdBy          String?      @map("created_by") @db.VarChar(36)
+  createdAt          DateTime     @default(now()) @map("created_at") @db.DateTime(3)
+  completedAt        DateTime?    @map("completed_at") @db.DateTime(3)
+
+  // Relations
+  creator User? @relation("BackupCreator", fields: [createdBy], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@index([createdAt])
+  @@map("system_backups")
+}
+
+// Registro de actualizaciones del sistema
+model SystemUpdate {
+  id                 String       @id @default(uuid()) @db.VarChar(36)
+  fromVersion        String       @map("from_version") @db.VarChar(50) // Versión inicial
+  toVersion          String       @map("to_version") @db.VarChar(50) // Versión destino
+  status             UpdateStatus @default(CHECKING)
+  logs               Json?        // Logs del proceso de actualización
+  backupId           String?      @map("backup_id") @db.VarChar(36) // ID del backup creado
+  errorMessage       String?      @map("error_message") @db.Text
+  initiatedBy        String?      @map("initiated_by") @db.VarChar(36)
+  createdAt          DateTime     @default(now()) @map("created_at") @db.DateTime(3)
+  completedAt        DateTime?    @map("completed_at") @db.DateTime(3)
+
+  // Relations
+  initiator User? @relation("UpdateInitiator", fields: [initiatedBy], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@index([createdAt])
+  @@map("system_updates")
+}
+
+// Configuración de almacenamiento externo (FTP/SMB/NAS)
+model StorageConfig {
+  id                String      @id @default(uuid()) @db.VarChar(36)
+  type              StorageType @default(LOCAL)
+  name              String      @db.VarChar(200) // Nombre descriptivo del storage
+  host              String?     @db.VarChar(500) // Host/IP para FTP/SMB
+  port              Int?        // Puerto para FTP/SMB
+  username          String?     @db.VarChar(200) // Usuario para FTP/SMB
+  encryptedPassword String?     @map("encrypted_password") @db.Text // Contraseña cifrada AES-256-GCM
+  basePath          String      @default("/uploads") @map("base_path") @db.VarChar(1000) // Ruta base de almacenamiento
+  isActive          Boolean     @default(false) @map("is_active") // Solo uno puede estar activo
+  createdAt         DateTime    @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt         DateTime    @updatedAt @map("updated_at") @db.DateTime(3)
+
+  @@index([type])
+  @@index([isActive])
+  @@map("storage_configs")
 }

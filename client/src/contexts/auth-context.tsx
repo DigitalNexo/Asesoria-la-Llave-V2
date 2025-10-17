@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, getQueryFn } from "@/lib/queryClient";
 import type { User } from "@shared/schema";
 
 interface AuthContextType {
@@ -14,20 +14,14 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
   const queryClient = useQueryClient();
 
-  const { data: profileData, isLoading } = useQuery<User>({
+  const { data: user, isLoading } = useQuery<User | null>({
     queryKey: ["/api/auth/profile"],
+    queryFn: getQueryFn({ on401: "returnNull" }),
     retry: false,
     enabled: true,
   });
-
-  useEffect(() => {
-    if (profileData) {
-      setUser(profileData);
-    }
-  }, [profileData]);
 
   const loginMutation = useMutation({
     mutationFn: async ({ username, password }: { username: string; password: string }) => {
@@ -36,8 +30,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     },
     onSuccess: (data) => {
       localStorage.setItem("token", data.token);
-      setUser(data.user);
-      queryClient.invalidateQueries({ queryKey: ["/api/auth/profile"] });
+      queryClient.setQueryData(["/api/auth/profile"], data.user);
     },
   });
 
@@ -48,8 +41,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     },
     onSuccess: (data) => {
       localStorage.setItem("token", data.token);
-      setUser(data.user);
-      queryClient.invalidateQueries({ queryKey: ["/api/auth/profile"] });
+      queryClient.setQueryData(["/api/auth/profile"], data.user);
     },
   });
 
@@ -59,7 +51,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     },
     onSuccess: () => {
       localStorage.removeItem("token");
-      setUser(null);
+      queryClient.setQueryData(["/api/auth/profile"], null);
       queryClient.clear();
     },
   });
@@ -77,7 +69,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, login, register, logout }}>
+    <AuthContext.Provider value={{ user: user ?? null, isLoading, login, register, logout }}>
       {children}
     </AuthContext.Provider>
   );

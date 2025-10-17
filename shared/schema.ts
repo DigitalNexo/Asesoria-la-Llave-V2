@@ -1,7 +1,69 @@
+/**
+ * ⚠️ DEPRECATED - DO NOT USE ⚠️
+ * 
+ * Este archivo es un LEGACY ARTIFACT del sistema anterior con PostgreSQL/Drizzle.
+ * El sistema ahora usa MariaDB con Prisma ORM.
+ * 
+ * Migrado el 14 de octubre de 2025 a MariaDB externa (VPS 185.239.239.43:3306)
+ * 
+ * Para el schema actual del sistema, ver:
+ * - Database Schema: prisma/schema.prisma (Prisma format para MariaDB)
+ * - Validations: Usar Zod directo o Prisma types
+ * - Storage: server/prisma-storage.ts
+ */
+
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, timestamp, integer, boolean } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, timestamp, integer, boolean, primaryKey } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
+
+// ==================== ROLES & PERMISSIONS ====================
+export const roles = pgTable("roles", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull().unique(),
+  description: text("description"),
+  isSystem: boolean("is_system").notNull().default(false),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const permissions = pgTable("permissions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  resource: text("resource").notNull(), // "clients", "taxes", "tasks", "manuals", "users", "admin"
+  action: text("action").notNull(), // "create", "read", "update", "delete", etc.
+  description: text("description"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const rolePermissions = pgTable("role_permissions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  roleId: varchar("role_id").notNull().references(() => roles.id, { onDelete: "cascade" }),
+  permissionId: varchar("permission_id").notNull().references(() => permissions.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertRoleSchema = createInsertSchema(roles).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertPermissionSchema = createInsertSchema(permissions).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertRolePermissionSchema = createInsertSchema(rolePermissions).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type Role = typeof roles.$inferSelect;
+export type InsertRole = z.infer<typeof insertRoleSchema>;
+export type Permission = typeof permissions.$inferSelect;
+export type InsertPermission = z.infer<typeof insertPermissionSchema>;
+export type RolePermission = typeof rolePermissions.$inferSelect;
+export type InsertRolePermission = z.infer<typeof insertRolePermissionSchema>;
 
 // ==================== USERS & AUTH ====================
 export const users = pgTable("users", {
@@ -9,7 +71,9 @@ export const users = pgTable("users", {
   username: text("username").notNull().unique(),
   email: text("email").notNull().unique(),
   password: text("password").notNull(),
-  role: text("role").notNull().default("LECTURA"), // ADMIN, GESTOR, LECTURA
+  role: text("role"), // Legacy field, deprecated in favor of roleId
+  roleId: varchar("role_id").references(() => roles.id, { onDelete: "set null" }),
+  isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -41,6 +105,23 @@ export const insertClientSchema = createInsertSchema(clients).omit({
 
 export type InsertClient = z.infer<typeof insertClientSchema>;
 export type Client = typeof clients.$inferSelect;
+
+// ==================== CLIENT EMPLOYEES (Many-to-Many) ====================
+export const clientEmployees = pgTable("client_employees", {
+  clientId: varchar("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  isPrimary: boolean("is_primary").notNull().default(false),
+  assignedAt: timestamp("assigned_at").notNull().defaultNow(),
+}, (table) => ({
+  pk: primaryKey({ columns: [table.clientId, table.userId] }),
+}));
+
+export const insertClientEmployeeSchema = createInsertSchema(clientEmployees).omit({
+  assignedAt: true,
+});
+
+export type InsertClientEmployee = z.infer<typeof insertClientEmployeeSchema>;
+export type ClientEmployee = typeof clientEmployees.$inferSelect;
 
 // ==================== TAX MODELS ====================
 export const taxModels = pgTable("tax_models", {
@@ -81,6 +162,8 @@ export const clientTax = pgTable("client_tax", {
   taxPeriodId: varchar("tax_period_id").notNull().references(() => taxPeriods.id),
   estado: text("estado").notNull().default("PENDIENTE"), // PENDIENTE, CALCULADO, REALIZADO
   notas: text("notas"),
+  displayText: text("display_text"), // Texto visual para la tabla (ej: "x", "x (No)", etc.)
+  colorTag: text("color_tag"), // Color de celda (ej: "green", "blue", "yellow")
   fechaCreacion: timestamp("fecha_creacion").notNull().defaultNow(),
   fechaActualizacion: timestamp("fecha_actualizacion").notNull().defaultNow(),
 });
@@ -197,3 +280,60 @@ export const insertAuditTrailSchema = createInsertSchema(auditTrail).omit({
 
 export type InsertAuditTrail = z.infer<typeof insertAuditTrailSchema>;
 export type AuditTrail = typeof auditTrail.$inferSelect;
+
+// ==================== SYSTEM SETTINGS ====================
+export const systemSettings = pgTable("system_settings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  registrationEnabled: boolean("registration_enabled").notNull().default(true),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const insertSystemSettingsSchema = createInsertSchema(systemSettings).omit({
+  id: true,
+  updatedAt: true,
+});
+
+export type InsertSystemSettings = z.infer<typeof insertSystemSettingsSchema>;
+export type SystemSettings = typeof systemSettings.$inferSelect;
+
+// ==================== MANUAL ATTACHMENTS (Prisma-based types) ====================
+export const manualAttachmentSchema = z.object({
+  id: z.string(),
+  manualId: z.string(),
+  fileName: z.string(),
+  originalName: z.string(),
+  filePath: z.string(),
+  fileType: z.string(),
+  fileSize: z.number(),
+  uploadedBy: z.string(),
+  uploadedAt: z.date(),
+});
+
+export const insertManualAttachmentSchema = manualAttachmentSchema.omit({
+  id: true,
+  uploadedAt: true,
+});
+
+export type ManualAttachment = z.infer<typeof manualAttachmentSchema>;
+export type InsertManualAttachment = z.infer<typeof insertManualAttachmentSchema>;
+
+// ==================== MANUAL VERSIONS (Prisma-based types) ====================
+export const manualVersionSchema = z.object({
+  id: z.string(),
+  manualId: z.string(),
+  versionNumber: z.number(),
+  titulo: z.string(),
+  contenidoHtml: z.string(),
+  etiquetas: z.array(z.string()).nullable(),
+  categoria: z.string().nullable(),
+  createdBy: z.string(),
+  createdAt: z.date(),
+});
+
+export const insertManualVersionSchema = manualVersionSchema.omit({
+  id: true,
+  createdAt: true,
+});
+
+export type ManualVersion = z.infer<typeof manualVersionSchema>;
+export type InsertManualVersion = z.infer<typeof insertManualVersionSchema>;

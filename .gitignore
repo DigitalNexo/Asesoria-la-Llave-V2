@@ -1,0 +1,105 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Production build
+dist/
+build/
+server/public/
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Testing
+coverage/
+.nyc_output
+
+# Uploads (archivos temporales locales - en producción usar S3)
+uploads/
+attached_assets/
+
+# Backups (guardar en ubicación segura, no en repo)
+backups/
+*.sql
+*.sql.gz
+
+# Database
+*.sqlite
+*.sqlite3
+*.db
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea
+.idea/*
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Vite
+vite.config.ts.*
+
+# Prisma
+prisma/migrations/
+*.db-journal
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.bak
+*.cache
+
+# SSL certificates (no subir claves privadas)
+ssl/*.key
+ssl/*.pem
+*.key
+*.pem
+*.crt
+
+# Archives
+*.tar.gz
+*.zip
+*.rar
+
+# Docker (opcional si usas Docker localmente)
+.dockerignore
+
+# Codespaces
+.devcontainer/docker-compose.yml.backup
