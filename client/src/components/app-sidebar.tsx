@@ -8,7 +8,8 @@ import {
   LogOut,
   Shield,
   Grid3x3,
-  Bell
+  Bell,
+  Calendar
 } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import {
@@ -49,6 +50,12 @@ const menuItems = [
     title: "Control Impuestos",
     url: "/control-impuestos",
     icon: Grid3x3,
+    roles: ["Administrador", "Gestor", "Solo Lectura"],
+  },
+  {
+    title: "Calendario AEAT",
+    url: "/calendario-aeat",
+    icon: Calendar,
     roles: ["Administrador", "Gestor", "Solo Lectura"],
   },
   {

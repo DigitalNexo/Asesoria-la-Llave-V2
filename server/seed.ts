@@ -1,34 +1,27 @@
 import { pgStorage } from './pg-storage';
-import bcrypt from 'bcrypt';
 
 async function seed() {
   console.log('🌱 Seeding database...');
 
-  // Create users
-  const hashedPassword = await bcrypt.hash('admin123', 10);
+  // ==================== USUARIOS ====================
+  // NOTA: Los usuarios YA NO se crean aquí por seguridad.
+  // El usuario administrador se crea automáticamente al iniciar el servidor
+  // usando las variables de entorno ADMIN_EMAIL, ADMIN_USERNAME, ADMIN_PASSWORD
+  // Configura estas variables en tu archivo .env antes de iniciar el servidor.
   
-  const admin = await pgStorage.createUser({
-    username: 'admin',
-    email: 'admin@asesoria.com',
-    password: hashedPassword,
-    role: 'ADMIN',
-  });
-
-  const gestor = await pgStorage.createUser({
-    username: 'gestor',
-    email: 'gestor@asesoria.com',
-    password: hashedPassword,
-    role: 'GESTOR',
-  });
-
-  const lectura = await pgStorage.createUser({
-    username: 'lectura',
-    email: 'lectura@asesoria.com',
-    password: hashedPassword,
-    role: 'LECTURA',
-  });
-
-  console.log('✅ Users created');
+  console.log('ℹ️  Usuarios: Se crean automáticamente desde .env al iniciar servidor');
+  
+  // Obtener usuarios existentes para asignar datos de ejemplo
+  const users = await pgStorage.getAllUsers();
+  
+  if (users.length === 0) {
+    console.log('⚠️  No hay usuarios. Ejecuta el servidor primero para crear el administrador.');
+    console.log('   El servidor usa las variables ADMIN_EMAIL, ADMIN_USERNAME, ADMIN_PASSWORD del .env');
+    process.exit(1);
+  }
+  
+  const admin = users[0]; // Usar el primer usuario (administrador)
+  console.log(`✅ Usando usuario existente: ${admin.username}`);
 
   // Create clients
   const client1 = await pgStorage.createClient({
@@ -38,7 +31,7 @@ async function seed() {
     email: 'comercial@lopez.com',
     telefono: '912345678',
     direccion: 'Calle Mayor 123, Madrid',
-    responsableAsignado: gestor.id,
+    responsableAsignado: admin.id,
   });
 
   await pgStorage.createClient({
@@ -48,7 +41,7 @@ async function seed() {
     email: 'juan@garcia.com',
     telefono: '654321987',
     direccion: 'Avenida de la Constitución 45, Barcelona',
-    responsableAsignado: gestor.id,
+    responsableAsignado: admin.id,
   });
 
   await pgStorage.createClient({
@@ -58,7 +51,7 @@ async function seed() {
     email: 'maria@rodriguez.com',
     telefono: '678901234',
     direccion: 'Plaza España 12, Valencia',
-    responsableAsignado: gestor.id,
+    responsableAsignado: admin.id,
   });
 
   await pgStorage.createClient({
@@ -68,7 +61,7 @@ async function seed() {
     email: 'info@construccionesperez.com',
     telefono: '965432187',
     direccion: 'Polígono Industrial Norte, Sevilla',
-    responsableAsignado: gestor.id,
+    responsableAsignado: admin.id,
   });
 
   await pgStorage.createClient({
@@ -169,7 +162,7 @@ async function seed() {
     titulo: 'Revisar documentación fiscal Q1',
     descripcion: 'Revisar toda la documentación fiscal del primer trimestre',
     clienteId: client1.id,
-    asignadoA: gestor.id,
+    asignadoA: admin.id,
     prioridad: 'ALTA',
     estado: 'EN_PROGRESO',
     visibilidad: 'GENERAL',
@@ -180,7 +173,7 @@ async function seed() {
     titulo: 'Preparar declaración anual',
     descripcion: 'Preparar toda la documentación para la declaración anual',
     clienteId: null,
-    asignadoA: gestor.id,
+    asignadoA: admin.id,
     prioridad: 'MEDIA',
     estado: 'PENDIENTE',
     visibilidad: 'GENERAL',
@@ -202,7 +195,7 @@ async function seed() {
     titulo: 'Llamar a proveedor',
     descripcion: 'Llamar al proveedor para confirmar entrega',
     clienteId: null,
-    asignadoA: gestor.id,
+    asignadoA: admin.id,
     prioridad: 'ALTA',
     estado: 'PENDIENTE',
     visibilidad: 'PERSONAL',
@@ -235,7 +228,7 @@ async function seed() {
   await pgStorage.createManual({
     titulo: 'Procedimiento de Alta de Clientes',
     contenidoHtml: '<h2>Alta de Nuevos Clientes</h2><p>Pasos para dar de alta un nuevo cliente...</p>',
-    autorId: gestor.id,
+    autorId: admin.id,
     etiquetas: ['clientes', 'procedimientos'],
     categoria: 'Gestión',
     publicado: true,

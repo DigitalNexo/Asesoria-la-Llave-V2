@@ -24,6 +24,7 @@ import ManualEditor from "@/pages/manual-editor";
 import Admin from "@/pages/admin";
 import Auditoria from "@/pages/auditoria";
 import ControlImpuestos from "@/pages/control-impuestos";
+import CalendarioAEAT from "@/pages/calendario-aeat";
 import Notificaciones from "@/pages/notificaciones";
 
 function ConnectionIndicator() {
@@ -100,6 +101,7 @@ function Router() {
               <Route path="/clientes" component={Clientes} />
               <Route path="/impuestos" component={Impuestos} />
               <Route path="/control-impuestos" component={ControlImpuestos} />
+              <Route path="/calendario-aeat" component={CalendarioAEAT} />
               <Route path="/tareas" component={Tareas} />
               <Route path="/manuales" component={Manuales} />
               <Route path="/manuales/nuevo" component={ManualEditor} />

@@ -4,7 +4,6 @@ import { promisify } from 'util';
 import { createSystemBackup, restoreFromBackup, restartService } from './backup-service.js';
 import { getCurrentVersion, checkForUpdates, performHealthCheck } from './version-service.js';
 import { emitSystemLog } from '../websocket.js';
-import { updateReadmeBadge } from './readme-badge.js';
 
 const execAsync = promisify(exec);
 const prisma = new PrismaClient();
@@ -208,21 +207,7 @@ export async function performSystemUpdate(
       // No fallar la actualización por health check
     }
 
-    // 13. Actualizar badge de versión en README
-    log('UPDATE_BADGE', 'Actualizando badge de versión en README.md...', 'info');
-    try {
-      const badgeResult = await updateReadmeBadge();
-      if (badgeResult.success) {
-        log('BADGE_SUCCESS', `Badge actualizado: ${badgeResult.oldVersion} → ${badgeResult.newVersion}`, 'success');
-      } else {
-        log('BADGE_WARNING', badgeResult.message, 'warning');
-      }
-    } catch (error: any) {
-      log('BADGE_ERROR', `Error al actualizar badge: ${error.message}`, 'warning');
-      // No fallar la actualización por error de badge
-    }
-
-    // 14. Actualización completada
+    // 13. Actualización completada
     await prisma.systemUpdate.update({
       where: { id: updateRecord.id },
       data: {

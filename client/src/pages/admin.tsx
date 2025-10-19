@@ -51,12 +51,6 @@ export default function Admin() {
     password: "",
     roleId: "",
   });
-  const [smtpData, setSmtpData] = useState({
-    host: "",
-    port: "",
-    user: "",
-    pass: "",
-  });
 
   // Roles & Permissions
   const [isRoleDialogOpen, setIsRoleDialogOpen] = useState(false);
@@ -88,21 +82,6 @@ export default function Admin() {
   const { data: logs, isLoading: logsLoading } = useQuery<(ActivityLog & { user?: User })[]>({
     queryKey: ["/api/activity-logs"],
   });
-
-  const { data: smtpConfig } = useQuery<{ configured: boolean; host?: string; port?: number; user?: string }>({
-    queryKey: ["/api/admin/smtp-config"],
-  });
-
-  useEffect(() => {
-    if (smtpConfig?.configured && smtpConfig.host && smtpConfig.port && smtpConfig.user) {
-      setSmtpData({
-        host: smtpConfig.host,
-        port: smtpConfig.port.toString(),
-        user: smtpConfig.user,
-        pass: "",
-      });
-    }
-  }, [smtpConfig]);
 
   const { data: systemSettings } = useQuery<{ registrationEnabled: boolean }>({
     queryKey: ["/api/admin/system-settings"],
@@ -222,19 +201,6 @@ export default function Admin() {
     },
     onError: (error: any) => {
       toast({ title: "Error al cambiar estado", description: error.message, variant: "destructive" });
-    },
-  });
-
-  const saveSMTPMutation = useMutation({
-    mutationFn: async (data: typeof smtpData) => {
-      return await apiRequest("POST", "/api/admin/smtp-config", data);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/smtp-config"] });
-      toast({ title: "Configuración SMTP guardada exitosamente" });
-    },
-    onError: (error: any) => {
-      toast({ title: "Error al guardar configuración", description: error.message, variant: "destructive" });
     },
   });
 
@@ -1091,80 +1057,6 @@ export default function Admin() {
 
         <TabsContent value="settings" className="space-y-4">
           <h2 className="text-xl font-display font-semibold">Configuración del Sistema</h2>
-          <Card>
-            <CardHeader>
-              <CardTitle>Configuración SMTP para Notificaciones</CardTitle>
-              {smtpConfig?.configured && (
-                <p className="text-sm text-muted-foreground">
-                  Configuración activa - Las notificaciones automáticas están habilitadas
-                </p>
-              )}
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="smtp-host">Servidor SMTP *</Label>
-                  <Input 
-                    id="smtp-host" 
-                    placeholder="smtp.gmail.com" 
-                    value={smtpData.host}
-                    onChange={(e) => setSmtpData({ ...smtpData, host: e.target.value })}
-                    data-testid="input-smtp-host" 
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="smtp-port">Puerto *</Label>
-                  <Input 
-                    id="smtp-port" 
-                    placeholder="587" 
-                    type="number"
-                    value={smtpData.port}
-                    onChange={(e) => setSmtpData({ ...smtpData, port: e.target.value })}
-                    data-testid="input-smtp-port" 
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="smtp-user">Usuario SMTP *</Label>
-                  <Input 
-                    id="smtp-user" 
-                    placeholder="usuario@gmail.com" 
-                    value={smtpData.user}
-                    onChange={(e) => setSmtpData({ ...smtpData, user: e.target.value })}
-                    data-testid="input-smtp-user" 
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="smtp-pass">Contraseña SMTP *</Label>
-                  <Input 
-                    id="smtp-pass" 
-                    type="password" 
-                    placeholder={smtpConfig?.configured ? "••••••••" : "Contraseña de aplicación"}
-                    value={smtpData.pass}
-                    onChange={(e) => setSmtpData({ ...smtpData, pass: e.target.value })}
-                    data-testid="input-smtp-pass" 
-                  />
-                </div>
-              </div>
-              <div className="bg-muted/50 p-4 rounded-md">
-                <p className="text-sm text-muted-foreground">
-                  <strong>Nota:</strong> Las notificaciones automáticas se enviarán:
-                </p>
-                <ul className="text-sm text-muted-foreground mt-2 space-y-1 list-disc list-inside">
-                  <li>Tareas: 3 días antes del vencimiento</li>
-                  <li>Impuestos: 7 días antes de la fecha límite</li>
-                </ul>
-              </div>
-              <Button 
-                onClick={() => saveSMTPMutation.mutate(smtpData)}
-                disabled={!smtpData.host || !smtpData.port || !smtpData.user || !smtpData.pass}
-                data-testid="button-save-smtp"
-              >
-                Guardar Configuración
-              </Button>
-            </CardContent>
-          </Card>
 
           <Card>
             <CardHeader>

@@ -373,8 +373,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         expiresIn: "24h",
       });
 
-      const { password: _, ...userWithoutPassword } = user;
-      res.json({ user: userWithoutPassword, token });
+      // Obtener usuario completo con permisos y rol
+      const fullUser = await storage.getUserWithPermissions(user.id);
+      if (!fullUser) {
+        return res.status(500).json({ error: "Error al obtener información del usuario" });
+      }
+
+      const { password: _, ...userWithoutPassword } = fullUser;
+      
+      // Incluir permisos formateados
+      const permissions = fullUser.role?.permissions?.map((rp: any) => 
+        `${rp.permission.resource}:${rp.permission.action}`
+      ) || [];
+      
+      // Incluir roleName para fácil acceso en el frontend
+      const roleName = fullUser.role?.name || null;
+
+      res.json({ user: { ...userWithoutPassword, permissions, roleName }, token });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -981,210 +996,478 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   );
 
-  // ==================== TAX MODEL ROUTES ====================
-  app.get("/api/tax-models", authenticateToken, async (req: Request, res: Response) => {
-    try {
-      const models = await storage.getAllTaxModels();
-      res.json(models);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
+  // ==================== IMPUESTOS ROUTES ====================
+  // GET /api/impuestos - Listar todos los impuestos
+  app.get(
+    "/api/impuestos",
+    authenticateToken,
+    async (req: AuthRequest, res: Response) => {
+      try {
+        const impuestos = await storage.getAllImpuestos();
+        res.json(impuestos);
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
     }
-  });
+  );
 
-  // ==================== TAX PERIOD ROUTES ====================
-  app.get("/api/tax-periods", authenticateToken, async (req: Request, res: Response) => {
-    try {
-      const periods = await storage.getAllTaxPeriods();
-      const models = await storage.getAllTaxModels();
-      
-      const periodsWithModels = periods.map(period => ({
-        ...period,
-        taxModel: models.find(m => m.id === period.modeloId),
-      }));
-      
-      res.json(periodsWithModels);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  // Crear año fiscal completo (todos los modelos y trimestres)
+  // POST /api/impuestos - Crear nuevo impuesto
   app.post(
-    "/api/tax-periods/create-year",
+    "/api/impuestos",
     authenticateToken,
     checkPermission("taxes:create"),
-    async (req: Request, res: Response) => {
+    async (req: AuthRequest, res: Response) => {
       try {
-        const { year } = req.body;
+        const { modelo, nombre, descripcion } = req.body;
         
-        if (!year || year < 2000 || year > 2100) {
-          return res.status(400).json({ error: "Año inválido" });
+        if (!modelo || !nombre) {
+          return res.status(400).json({ error: "Modelo y nombre son requeridos" });
+        }
+
+        const impuesto = await storage.createImpuesto({ modelo, nombre, descripcion });
+        
+        await storage.createActivityLog({
+          usuarioId: req.user!.id,
+          accion: `Creó el impuesto: ${modelo} - ${nombre}`,
+          modulo: "impuestos",
+          detalles: descripcion || "",
+        });
+
+        res.status(201).json(impuesto);
+      } catch (error: any) {
+        if (error.code === 'P2002') {
+          return res.status(400).json({ error: "Ya existe un impuesto con ese modelo" });
+        }
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
+  // PATCH /api/impuestos/:id - Actualizar impuesto
+  app.patch(
+    "/api/impuestos/:id",
+    authenticateToken,
+    checkPermission("taxes:update"),
+    async (req: AuthRequest, res: Response) => {
+      try {
+        const { modelo, nombre, descripcion } = req.body;
+        const impuesto = await storage.updateImpuesto(req.params.id, { modelo, nombre, descripcion });
+        
+        await storage.createActivityLog({
+          usuarioId: req.user!.id,
+          accion: `Actualizó el impuesto: ${impuesto.modelo}`,
+          modulo: "impuestos",
+          detalles: JSON.stringify({ modelo, nombre, descripcion }),
+        });
+
+        res.json(impuesto);
+      } catch (error: any) {
+        if (error.code === 'P2002') {
+          return res.status(400).json({ error: "Ya existe un impuesto con ese modelo" });
+        }
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
+  // DELETE /api/impuestos/:id - Eliminar impuesto
+  app.delete(
+    "/api/impuestos/:id",
+    authenticateToken,
+    checkPermission("taxes:delete"),
+    async (req: AuthRequest, res: Response) => {
+      try {
+        await storage.deleteImpuesto(req.params.id);
+        
+        await storage.createActivityLog({
+          usuarioId: req.user!.id,
+          accion: `Eliminó un impuesto`,
+          modulo: "impuestos",
+          detalles: `ID: ${req.params.id}`,
+        });
+
+        res.json({ success: true });
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
+  // ==================== OBLIGACIONES FISCALES ROUTES ====================
+  // GET /api/obligaciones-fiscales - Listar todas las obligaciones fiscales
+  app.get(
+    "/api/obligaciones-fiscales",
+    authenticateToken,
+    async (req: AuthRequest, res: Response) => {
+      try {
+        const obligaciones = await storage.getAllObligacionesFiscales();
+        res.json(obligaciones);
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
+  // GET /api/obligaciones-fiscales/cliente/:clienteId - Listar obligaciones de un cliente
+  app.get(
+    "/api/obligaciones-fiscales/cliente/:clienteId",
+    authenticateToken,
+    async (req: AuthRequest, res: Response) => {
+      try {
+        const obligaciones = await storage.getObligacionesByCliente(req.params.clienteId);
+        res.json(obligaciones);
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
+  // POST /api/obligaciones-fiscales - Crear nueva obligación fiscal
+  app.post(
+    "/api/obligaciones-fiscales",
+    authenticateToken,
+    checkPermission("taxes:create"),
+    async (req: AuthRequest, res: Response) => {
+      try {
+        const { clienteId, impuestoId, periodicidad, diaVencimiento, observaciones, fechaInicio, fechaFin, activo } = req.body;
+        
+        if (!clienteId || !impuestoId || !periodicidad || !fechaInicio) {
+          return res.status(400).json({ error: "Cliente, impuesto, periodicidad y fecha de inicio son requeridos" });
+        }
+
+        const obligacion = await storage.createObligacionFiscal({
+          clienteId,
+          impuestoId,
+          periodicidad,
+          diaVencimiento: diaVencimiento || null,
+          observaciones: observaciones || null,
+          fechaInicio: new Date(fechaInicio),
+          fechaFin: fechaFin ? new Date(fechaFin) : null,
+          activo: activo !== undefined ? activo : true,
+          fechaAsignacion: new Date()
+        });
+        
+        await storage.createActivityLog({
+          usuarioId: req.user!.id,
+          accion: `Creó obligación fiscal para cliente`,
+          modulo: "impuestos",
+          detalles: `Cliente: ${clienteId}, Impuesto: ${impuestoId}`,
+        });
+
+        res.status(201).json(obligacion);
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
+  // PATCH /api/obligaciones-fiscales/:id - Actualizar obligación fiscal
+  app.patch(
+    "/api/obligaciones-fiscales/:id",
+    authenticateToken,
+    checkPermission("taxes:update"),
+    async (req: AuthRequest, res: Response) => {
+      try {
+        const updateData = { ...req.body };
+        
+        // Convertir fechas de string a Date si están presentes
+        if (updateData.fechaInicio && typeof updateData.fechaInicio === 'string') {
+          updateData.fechaInicio = new Date(updateData.fechaInicio);
+        }
+        if (updateData.fechaFin && typeof updateData.fechaFin === 'string') {
+          updateData.fechaFin = new Date(updateData.fechaFin);
         }
         
-        const models = await storage.getAllTaxModels();
-        const createdPeriods = [];
+        const obligacion = await storage.updateObligacionFiscal(req.params.id, updateData);
         
-        // Crear 4 trimestres para cada modelo
-        for (const model of models) {
-          for (let trimestre = 1; trimestre <= 4; trimestre++) {
-            // Calcular fechas de presentación (ejemplo: T1 se presenta en abril)
-            const month = trimestre * 3 + 1; // T1=4, T2=7, T3=10, T4=1(+1año)
-            const presentationYear = month > 12 ? year + 1 : year;
-            const presentationMonth = month > 12 ? 1 : month;
-            
-            const inicioPresentacion = new Date(presentationYear, presentationMonth - 1, 1);
-            const finPresentacion = new Date(presentationYear, presentationMonth - 1, 20);
-            
-            const period = await storage.createTaxPeriod({
-              modeloId: model.id,
-              anio: year,
-              trimestre,
-              mes: null,
-              inicioPresentacion: inicioPresentacion,
-              finPresentacion: finPresentacion,
-            });
-            
-            createdPeriods.push(period);
+        await storage.createActivityLog({
+          usuarioId: req.user!.id,
+          accion: `Actualizó obligación fiscal`,
+          modulo: "impuestos",
+          detalles: `ID: ${req.params.id}`,
+        });
+
+        res.json(obligacion);
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
+  // DELETE /api/obligaciones-fiscales/:id - Eliminar obligación fiscal
+  app.delete(
+    "/api/obligaciones-fiscales/:id",
+    authenticateToken,
+    checkPermission("taxes:delete"),
+    async (req: AuthRequest, res: Response) => {
+      try {
+        await storage.deleteObligacionFiscal(req.params.id);
+        
+        await storage.createActivityLog({
+          usuarioId: req.user!.id,
+          accion: `Eliminó obligación fiscal`,
+          modulo: "impuestos",
+          detalles: `ID: ${req.params.id}`,
+        });
+
+        res.json({ success: true });
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
+  // ==================== CALENDARIO AEAT ROUTES ====================
+  // GET /api/calendario-aeat - Listar todos los calendarios AEAT
+  app.get(
+    "/api/calendario-aeat",
+    authenticateToken,
+    checkPermission("taxes:read"),
+    async (req: AuthRequest, res: Response) => {
+      try {
+        const { modelo, periodicidad, anio } = req.query;
+        let calendarios;
+
+        if (modelo || periodicidad || anio) {
+          // Filtros opcionales
+          const where: any = {};
+          if (modelo) where.modelo = modelo;
+          if (periodicidad) where.periodicidad = periodicidad;
+          if (anio) {
+            // Filtrar por año en periodoContable (ej: "2025-Q1", "2025-04", "2025")
+            where.periodoContable = { contains: anio };
           }
+          calendarios = await prisma.calendarioAEAT.findMany({ where, orderBy: [{ periodoContable: 'desc' }, { modelo: 'asc' }] });
+        } else {
+          calendarios = await storage.getAllCalendariosAEAT();
         }
         
-        await storage.createActivityLog({
-          usuarioId: (req as AuthRequest).user!.id,
-          accion: `Creó año fiscal ${year} completo`,
-          modulo: "impuestos",
-          detalles: null,
-        });
-        
-        res.json({ 
-          message: `Año fiscal ${year} creado exitosamente`,
-          created: createdPeriods.length,
-          periods: createdPeriods 
-        });
+        res.json(calendarios);
       } catch (error: any) {
         res.status(500).json({ error: error.message });
       }
     }
   );
 
-  // ==================== CLIENT TAX ROUTES ====================
-  app.get("/api/client-tax", authenticateToken, async (req: Request, res: Response) => {
-    try {
-      const clientTaxes = await storage.getAllClientTax();
-      const allClients = await storage.getAllClients();
-      const periods = await storage.getAllTaxPeriods();
-      const models = await storage.getAllTaxModels();
-      
-      // Filtrar solo clientes activos
-      const activeClients = allClients.filter((c: any) => c.isActive !== false);
-      const activeClientIds = new Set(activeClients.map(c => c.id));
-      
-      // Filtrar client-taxes para incluir solo los de clientes activos
-      const activeClientTaxes = clientTaxes.filter(ct => activeClientIds.has(ct.clientId));
-      
-      const enriched = activeClientTaxes.map(ct => ({
-        ...ct,
-        client: activeClients.find(c => c.id === ct.clientId),
-        taxPeriod: {
-          ...periods.find(p => p.id === ct.taxPeriodId),
-          taxModel: models.find(m => m.id === periods.find(p => p.id === ct.taxPeriodId)?.modeloId),
-        },
-      }));
-      
-      res.json(enriched);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
+  // GET /api/calendario-aeat/modelo/:modelo - Listar calendarios de un modelo
+  app.get(
+    "/api/calendario-aeat/modelo/:modelo",
+    authenticateToken,
+    checkPermission("taxes:read"),
+    async (req: AuthRequest, res: Response) => {
+      try {
+        const calendarios = await prisma.calendarioAEAT.findMany({
+          where: { modelo: req.params.modelo },
+          orderBy: { periodoContable: 'desc' }
+        });
+        res.json(calendarios);
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
     }
-  });
+  );
 
+  // POST /api/calendario-aeat - Crear nuevo calendario AEAT
   app.post(
-    "/api/client-tax",
+    "/api/calendario-aeat",
     authenticateToken,
     checkPermission("taxes:create"),
-    async (req: Request, res: Response) => {
+    async (req: AuthRequest, res: Response) => {
       try {
-        const clientTax = await storage.createClientTax(req.body);
-        await storage.createActivityLog({
-          usuarioId: (req as AuthRequest).user!.id,
-          accion: "Asignó un impuesto a un cliente",
-          modulo: "impuestos",
-          detalles: null,
+        const { modelo, periodicidad, periodoContable, fechaInicio, fechaFin } = req.body;
+        
+        if (!modelo || !periodicidad || !periodoContable || !fechaInicio || !fechaFin) {
+          return res.status(400).json({ error: "Modelo, periodicidad, periodo contable, fecha inicio y fecha fin son requeridos" });
+        }
+
+        const calendario = await storage.createCalendarioAEAT({
+          modelo,
+          periodicidad,
+          periodoContable,
+          fechaInicio: new Date(fechaInicio),
+          fechaFin: new Date(fechaFin)
         });
-        res.json(clientTax);
+        
+        await storage.createActivityLog({
+          usuarioId: req.user!.id,
+          accion: `Creó calendario AEAT`,
+          modulo: "impuestos",
+          detalles: `Modelo: ${modelo}, Periodo: ${periodoContable}, Periodicidad: ${periodicidad}`,
+        });
+
+        res.status(201).json(calendario);
+      } catch (error: any) {
+        if (error.code === 'P2002') {
+          return res.status(400).json({ error: "Ya existe un calendario para este modelo, periodicidad y periodo contable" });
+        }
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
+  // PATCH /api/calendario-aeat/:id - Actualizar calendario AEAT
+  app.patch(
+    "/api/calendario-aeat/:id",
+    authenticateToken,
+    checkPermission("taxes:update"),
+    async (req: AuthRequest, res: Response) => {
+      try {
+        const { fechaInicio, fechaFin } = req.body;
+        const updateData: any = {};
+        
+        if (fechaInicio) updateData.fechaInicio = new Date(fechaInicio);
+        if (fechaFin) updateData.fechaFin = new Date(fechaFin);
+
+        const calendario = await storage.updateCalendarioAEAT(req.params.id, updateData);
+        
+        await storage.createActivityLog({
+          usuarioId: req.user!.id,
+          accion: `Actualizó calendario AEAT`,
+          modulo: "impuestos",
+          detalles: `Modelo: ${calendario.modelo}, Periodo: ${calendario.periodoContable}`,
+        });
+
+        res.json(calendario);
       } catch (error: any) {
         res.status(500).json({ error: error.message });
       }
     }
   );
 
-  // Bulk update de client-taxes (para selección múltiple)
-  // IMPORTANTE: Esta ruta debe ir ANTES de /api/client-tax/:id para que Express la reconozca correctamente
-  app.patch(
-    "/api/client-tax/bulk-update",
+  // DELETE /api/calendario-aeat/:id - Eliminar calendario AEAT
+  app.delete(
+    "/api/calendario-aeat/:id",
     authenticateToken,
-    checkPermission("taxes:update"),
-    async (req: Request, res: Response) => {
+    checkPermission("taxes:delete"),
+    async (req: AuthRequest, res: Response) => {
       try {
-        const { ids, estado } = req.body;
-        
-        console.log("📝 Bulk update recibido:", { ids, estado });
-        
-        if (!ids || !Array.isArray(ids) || ids.length === 0) {
-          return res.status(400).json({ error: "Se requiere un array de IDs" });
-        }
-        
-        if (!estado) {
-          return res.status(400).json({ error: "Se requiere un estado" });
-        }
-        
-        // Actualizar todos los registros con el nuevo estado
-        const updateData: any = { estado };
-        
-        console.log("🔄 Ejecutando updateMany con:", { where: { id: { in: ids } }, data: updateData });
-        
-        const result = await prisma.clientTax.updateMany({
-          where: { id: { in: ids } },
-          data: updateData
+        const calendario = await prisma.calendarioAEAT.findUnique({
+          where: { id: req.params.id }
         });
-        
-        console.log("✅ UpdateMany result:", result);
+
+        await storage.deleteCalendarioAEAT(req.params.id);
         
         await storage.createActivityLog({
-          usuarioId: (req as AuthRequest).user!.id,
-          accion: `Actualizó ${ids.length} impuestos en masa`,
+          usuarioId: req.user!.id,
+          accion: `Eliminó calendario AEAT`,
           modulo: "impuestos",
-          detalles: estado ? `Nuevo estado: ${estado}` : null,
+          detalles: `Modelo: ${calendario?.modelo}, Periodo: ${calendario?.periodoContable}`,
         });
-        
-        res.json({ 
-          success: true, 
-          updated: result.count,
-          message: `${result.count} impuestos actualizados exitosamente`
-        });
+
+        res.json({ success: true });
       } catch (error: any) {
-        console.error("❌ Error en bulk update:", error);
         res.status(500).json({ error: error.message });
       }
     }
   );
 
+  // ==================== DECLARACIONES ROUTES ====================
+  // GET /api/declaraciones - Listar todas las declaraciones
+  app.get(
+    "/api/declaraciones",
+    authenticateToken,
+    async (req: AuthRequest, res: Response) => {
+      try {
+        const declaraciones = await storage.getAllDeclaraciones();
+        res.json(declaraciones);
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
+  // GET /api/declaraciones/cliente/:clienteId - Listar declaraciones de un cliente
+  app.get(
+    "/api/declaraciones/cliente/:clienteId",
+    authenticateToken,
+    async (req: AuthRequest, res: Response) => {
+      try {
+        const declaraciones = await storage.getDeclaracionesByCliente(req.params.clienteId);
+        res.json(declaraciones);
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
+  // POST /api/declaraciones - Crear nueva declaración
+  app.post(
+    "/api/declaraciones",
+    authenticateToken,
+    checkPermission("taxes:create"),
+    async (req: AuthRequest, res: Response) => {
+      try {
+        const { obligacionId, anio, periodo, fechaLimite, estado, resultado, observaciones } = req.body;
+        
+        if (!obligacionId || !anio || !periodo || !fechaLimite) {
+          return res.status(400).json({ error: "Obligación, año, periodo y fecha límite son requeridos" });
+        }
+
+        const declaracion = await storage.createDeclaracion({
+          obligacionId,
+          anio: parseInt(anio),
+          periodo,
+          fechaLimite: new Date(fechaLimite),
+          estado: estado || 'PENDIENTE',
+          resultado: resultado || null,
+          observaciones: observaciones || null,
+          fechaPresentacion: null
+        });
+        
+        await storage.createActivityLog({
+          usuarioId: req.user!.id,
+          accion: `Creó declaración`,
+          modulo: "impuestos",
+          detalles: `Periodo: ${periodo}/${anio}`,
+        });
+
+        res.status(201).json(declaracion);
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
+  // PATCH /api/declaraciones/:id - Actualizar declaración
   app.patch(
-    "/api/client-tax/:id",
+    "/api/declaraciones/:id",
     authenticateToken,
     checkPermission("taxes:update"),
-    async (req: Request, res: Response) => {
+    async (req: AuthRequest, res: Response) => {
       try {
-        const { id } = req.params;
-        const clientTax = await storage.updateClientTax(id, req.body);
-        if (!clientTax) {
-          return res.status(404).json({ error: "Impuesto no encontrado" });
-        }
+        const declaracion = await storage.updateDeclaracion(req.params.id, req.body);
+        
         await storage.createActivityLog({
-          usuarioId: (req as AuthRequest).user!.id,
-          accion: `Actualizó estado de impuesto a ${req.body.estado}`,
+          usuarioId: req.user!.id,
+          accion: `Actualizó declaración`,
           modulo: "impuestos",
-          detalles: null,
+          detalles: `ID: ${req.params.id}`,
         });
-        res.json(clientTax);
+
+        res.json(declaracion);
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
+  // DELETE /api/declaraciones/:id - Eliminar declaración
+  app.delete(
+    "/api/declaraciones/:id",
+    authenticateToken,
+    checkPermission("taxes:delete"),
+    async (req: AuthRequest, res: Response) => {
+      try {
+        await storage.deleteDeclaracion(req.params.id);
+        
+        await storage.createActivityLog({
+          usuarioId: req.user!.id,
+          accion: `Eliminó declaración`,
+          modulo: "impuestos",
+          detalles: `ID: ${req.params.id}`,
+        });
+
+        res.json({ success: true });
       } catch (error: any) {
         res.status(500).json({ error: error.message });
       }
@@ -1542,16 +1825,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/dashboard/stats", authenticateToken, async (req: Request, res: Response) => {
     try {
       const clients = await storage.getAllClients();
-      const clientTaxes = await storage.getAllClientTax();
       const tasks = await storage.getAllTasks();
       const manuals = await storage.getAllManuals();
 
       const stats = {
         totalClientes: clients.length,
         clientesActivos: clients.filter(c => c.responsableAsignado).length,
-        impuestosPendientes: clientTaxes.filter(ct => ct.estado === "PENDIENTE").length,
-        impuestosCalculados: clientTaxes.filter(ct => ct.estado === "CALCULADO").length,
-        impuestosRealizados: clientTaxes.filter(ct => ct.estado === "REALIZADO").length,
         tareasGenerales: tasks.filter(t => t.visibilidad === "GENERAL").length,
         tareasPersonales: tasks.filter(t => t.visibilidad === "PERSONAL").length,
         tareasPendientes: tasks.filter(t => t.estado === "PENDIENTE").length,
@@ -1566,90 +1845,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ error: error.message });
     }
   });
-
-  // ==================== FILE UPLOAD ROUTES ====================
-  app.post(
-    "/api/tax-files/upload",
-    authenticateToken,
-    upload.single("file"),
-    uploadToStorage,
-    async (req: AuthRequest, res: Response) => {
-      try {
-        if (!req.file) {
-          return res.status(400).json({ error: "No se proporcionó ningún archivo" });
-        }
-
-        const { clientTaxId, tipo } = req.body;
-        
-        const taxFile = await storage.createTaxFile({
-          clientTaxId,
-          nombreArchivo: req.file.originalname,
-          ruta: req.file.path,
-          tipo: tipo || null,
-          subidoPor: req.user?.id || null,
-        });
-
-        await storage.createActivityLog({
-          usuarioId: req.user!.id,
-          accion: `Subió archivo "${req.file.originalname}" para impuesto`,
-          modulo: "impuestos",
-          detalles: `Tipo: ${tipo || 'Sin especificar'}`,
-        });
-
-        res.json(taxFile);
-      } catch (error: any) {
-        res.status(500).json({ error: error.message });
-      }
-    }
-  );
-
-  app.get(
-    "/api/tax-files/:clientTaxId",
-    authenticateToken,
-    async (req: Request, res: Response) => {
-      try {
-        const { clientTaxId } = req.params;
-        const files = await storage.getTaxFilesByClientTax(clientTaxId);
-        res.json(files);
-      } catch (error: any) {
-        res.status(500).json({ error: error.message });
-      }
-    }
-  );
-
-  app.delete(
-    "/api/tax-files/:id",
-    authenticateToken,
-    checkPermission("taxes:delete"),
-    async (req: AuthRequest, res: Response) => {
-      try {
-        const { id } = req.params;
-        const file = await storage.getTaxFile(id);
-        
-        if (!file) {
-          return res.status(404).json({ error: "Archivo no encontrado" });
-        }
-
-        // Delete physical file
-        if (fs.existsSync(file.ruta)) {
-          fs.unlinkSync(file.ruta);
-        }
-
-        await storage.deleteTaxFile(id);
-        
-        await storage.createActivityLog({
-          usuarioId: req.user!.id,
-          accion: `Eliminó archivo "${file.nombreArchivo}"`,
-          modulo: "impuestos",
-          detalles: null,
-        });
-
-        res.json({ success: true });
-      } catch (error: any) {
-        res.status(500).json({ error: error.message });
-      }
-    }
-  );
 
   // ==================== EMAIL CONFIGURATION ROUTES ====================
   app.post(

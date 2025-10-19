@@ -5,15 +5,39 @@
  */
 
 import { PrismaClient } from '@prisma/client';
-import bcrypt from 'bcrypt';
 
 const prisma = new PrismaClient();
 
 async function main() {
   console.log('🌱 Iniciando seed de datos...\n');
 
-  // Limpiar datos existentes (opcional, comentar si quieres preservar datos)
-  console.log('🗑️  Limpiando datos existentes...');
+  // ==================== USUARIOS ====================
+  // NOTA: Los usuarios YA NO se crean aquí por seguridad.
+  // El usuario administrador se crea automáticamente al iniciar el servidor
+  // usando las variables de entorno ADMIN_EMAIL, ADMIN_USERNAME, ADMIN_PASSWORD
+  // Configura estas variables en tu archivo .env antes de iniciar el servidor.
+  
+  console.log('ℹ️  Usuarios: Se crean automáticamente desde .env al iniciar servidor');
+  
+  // Obtener usuario administrador existente para asignar datos de ejemplo
+  const adminRole = await prisma.role.findFirst({
+    where: { name: 'Administrador' }
+  });
+  
+  const existingAdmin = await prisma.user.findFirst({
+    where: { roleId: adminRole?.id }
+  });
+  
+  if (!existingAdmin) {
+    console.log('⚠️  No hay usuario administrador. Ejecuta el servidor primero para crearlo.');
+    console.log('   El servidor usa las variables ADMIN_EMAIL, ADMIN_USERNAME, ADMIN_PASSWORD del .env');
+    process.exit(1);
+  }
+  
+  console.log(`  ✅ Usando admin existente: ${existingAdmin.username}`);
+
+  // Limpiar solo datos de ejemplo (NO usuarios ni roles/permisos)
+  console.log('\n🗑️  Limpiando datos de ejemplo existentes...');
   await prisma.auditTrail.deleteMany();
   await prisma.activityLog.deleteMany();
   await prisma.taxFile.deleteMany();
@@ -23,45 +47,8 @@ async function main() {
   await prisma.manual.deleteMany();
   await prisma.task.deleteMany();
   await prisma.client.deleteMany();
-  await prisma.user.deleteMany();
   await prisma.smtpConfig.deleteMany();
   await prisma.jobRun.deleteMany();
-
-  // Hash de contraseña (admin123)
-  const hashedPassword = await bcrypt.hash('admin123', 10);
-
-  // ==================== USUARIOS ====================
-  console.log('👥 Creando usuarios...');
-  const admin = await prisma.user.create({
-    data: {
-      username: 'admin',
-      email: 'admin@asesoria.com',
-      password: hashedPassword,
-      role: 'ADMIN',
-    },
-  });
-
-  const gestor = await prisma.user.create({
-    data: {
-      username: 'gestor',
-      email: 'gestor@asesoria.com',
-      password: hashedPassword,
-      role: 'GESTOR',
-    },
-  });
-
-  const lectura = await prisma.user.create({
-    data: {
-      username: 'lectura',
-      email: 'lectura@asesoria.com',
-      password: hashedPassword,
-      role: 'LECTURA',
-    },
-  });
-
-  console.log(`  ✅ Admin: ${admin.username} (${admin.email})`);
-  console.log(`  ✅ Gestor: ${gestor.username} (${gestor.email})`);
-  console.log(`  ✅ Lectura: ${lectura.username} (${lectura.email})`);
 
   // ==================== CLIENTES ====================
   console.log('\n📋 Creando clientes...');
@@ -73,7 +60,7 @@ async function main() {
       email: 'info@construccionesperez.com',
       telefono: '965432187',
       direccion: 'Polígono Industrial Norte, Sevilla',
-      responsableAsignado: gestor.id,
+      responsableAsignado: existingAdmin.id,
     },
   });
 
@@ -85,7 +72,7 @@ async function main() {
       email: 'contacto@textilesmartinez.com',
       telefono: '912345678',
       direccion: 'Calle Mayor 45, Madrid',
-      responsableAsignado: gestor.id,
+      responsableAsignado: existingAdmin.id,
     },
   });
 
@@ -97,7 +84,7 @@ async function main() {
       email: 'juan.garcia@email.com',
       telefono: '654321987',
       direccion: 'Avenida Principal 123, Barcelona',
-      responsableAsignado: gestor.id,
+      responsableAsignado: existingAdmin.id,
     },
   });
 
@@ -109,7 +96,7 @@ async function main() {
       email: 'info@serviciosinf.com',
       telefono: '963258741',
       direccion: 'Parque Tecnológico, Valencia',
-      responsableAsignado: gestor.id,
+      responsableAsignado: existingAdmin.id,
     },
   });
 
@@ -121,7 +108,7 @@ async function main() {
       email: 'maria.rodriguez@email.com',
       telefono: '698745632',
       direccion: 'Plaza España 12, Málaga',
-      responsableAsignado: gestor.id,
+      responsableAsignado: existingAdmin.id,
     },
   });
 
@@ -254,7 +241,7 @@ async function main() {
       titulo: 'Revisar declaración trimestral',
       descripcion: 'Revisar modelo 303 del primer trimestre para Construcciones Pérez',
       clienteId: client1.id,
-      asignadoA: gestor.id,
+      asignadoA: existingAdmin.id,
       prioridad: 'ALTA',
       estado: 'EN_PROGRESO',
       visibilidad: 'GENERAL',
@@ -267,7 +254,7 @@ async function main() {
       titulo: 'Actualizar datos fiscales',
       descripcion: 'Actualizar información fiscal de Textiles Martínez',
       clienteId: client2.id,
-      asignadoA: gestor.id,
+      asignadoA: existingAdmin.id,
       prioridad: 'MEDIA',
       estado: 'PENDIENTE',
       visibilidad: 'GENERAL',
@@ -280,7 +267,7 @@ async function main() {
       titulo: 'Contactar cliente para documentación',
       descripcion: 'Solicitar facturas del trimestre a Juan García',
       clienteId: client3.id,
-      asignadoA: gestor.id,
+      asignadoA: existingAdmin.id,
       prioridad: 'ALTA',
       estado: 'PENDIENTE',
       visibilidad: 'GENERAL',
@@ -292,7 +279,7 @@ async function main() {
     data: {
       titulo: 'Preparar informe anual',
       descripcion: 'Elaborar informe anual de actividades para reunión de equipo',
-      asignadoA: admin.id,
+      asignadoA: existingAdmin.id,
       prioridad: 'MEDIA',
       estado: 'PENDIENTE',
       visibilidad: 'PERSONAL',
@@ -304,7 +291,7 @@ async function main() {
     data: {
       titulo: 'Revisar procedimientos internos',
       descripcion: 'Actualizar manual de procedimientos de gestión documental',
-      asignadoA: admin.id,
+      asignadoA: existingAdmin.id,
       prioridad: 'BAJA',
       estado: 'PENDIENTE',
       visibilidad: 'GENERAL',
@@ -320,10 +307,9 @@ async function main() {
     data: {
       titulo: 'Procedimiento de Presentación de Modelos Fiscales',
       contenidoHtml: '<h2>Procedimiento Modelo 303</h2><p>Este manual describe el proceso completo para la presentación del modelo 303...</p>',
-      autorId: admin.id,
+      autorId: existingAdmin.id,
       etiquetas: JSON.stringify(['impuestos', 'modelo-303', 'procedimientos']),
       categoria: 'Fiscalidad',
-      publicado: true,
     },
   });
 
@@ -331,10 +317,9 @@ async function main() {
     data: {
       titulo: 'Guía de Gestión Documental',
       contenidoHtml: '<h2>Sistema de Archivos</h2><p>Organización y gestión de documentación de clientes...</p>',
-      autorId: gestor.id,
+      autorId: existingAdmin.id,
       etiquetas: JSON.stringify(['documentacion', 'gestion', 'archivos']),
       categoria: 'Administración',
-      publicado: true,
     },
   });
 

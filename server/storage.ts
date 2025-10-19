@@ -1,10 +1,6 @@
 import { 
   type User, type InsertUser,
   type Client, type InsertClient,
-  type TaxModel, type InsertTaxModel,
-  type TaxPeriod, type InsertTaxPeriod,
-  type ClientTax, type InsertClientTax,
-  type TaxFile, type InsertTaxFile,
   type Task, type InsertTask,
   type Manual, type InsertManual,
   type ManualAttachment, type InsertManualAttachment,
@@ -33,28 +29,38 @@ export interface IStorage {
   deleteClient(id: string): Promise<boolean>;
   getAllClients(): Promise<Client[]>;
 
-  // Tax Models
-  getTaxModel(id: string): Promise<TaxModel | undefined>;
-  createTaxModel(model: InsertTaxModel): Promise<TaxModel>;
-  getAllTaxModels(): Promise<TaxModel[]>;
+  // Impuestos
+  getAllImpuestos(): Promise<any[]>;
+  getImpuesto(id: string): Promise<any>;
+  getImpuestoByModelo(modelo: string): Promise<any>;
+  createImpuesto(data: any): Promise<any>;
+  updateImpuesto(id: string, data: any): Promise<any>;
+  deleteImpuesto(id: string): Promise<boolean>;
 
-  // Tax Periods
-  getTaxPeriod(id: string): Promise<TaxPeriod | undefined>;
-  createTaxPeriod(period: InsertTaxPeriod): Promise<TaxPeriod>;
-  getAllTaxPeriods(): Promise<TaxPeriod[]>;
+  // Obligaciones Fiscales
+  getAllObligacionesFiscales(): Promise<any[]>;
+  getObligacionFiscal(id: string): Promise<any>;
+  getObligacionesByCliente(clienteId: string): Promise<any[]>;
+  createObligacionFiscal(data: any): Promise<any>;
+  updateObligacionFiscal(id: string, data: any): Promise<any>;
+  deleteObligacionFiscal(id: string): Promise<boolean>;
 
-  // Client Tax
-  getClientTax(id: string): Promise<ClientTax | undefined>;
-  createClientTax(clientTax: InsertClientTax): Promise<ClientTax>;
-  updateClientTax(id: string, clientTax: Partial<InsertClientTax>): Promise<ClientTax | undefined>;
-  deleteClientTax(id: string): Promise<boolean>;
-  getAllClientTax(): Promise<ClientTax[]>;
+  // Calendario AEAT
+  getAllCalendariosAEAT(): Promise<any[]>;
+  getCalendarioAEAT(id: string): Promise<any>;
+  getCalendariosByImpuesto(impuestoId: string): Promise<any[]>;
+  createCalendarioAEAT(data: any): Promise<any>;
+  updateCalendarioAEAT(id: string, data: any): Promise<any>;
+  deleteCalendarioAEAT(id: string): Promise<boolean>;
 
-  // Tax Files
-  getTaxFile(id: string): Promise<TaxFile | undefined>;
-  createTaxFile(file: InsertTaxFile): Promise<TaxFile>;
-  deleteTaxFile(id: string): Promise<boolean>;
-  getTaxFilesByClientTax(clientTaxId: string): Promise<TaxFile[]>;
+  // Declaraciones
+  getAllDeclaraciones(): Promise<any[]>;
+  getDeclaracion(id: string): Promise<any>;
+  getDeclaracionesByObligacion(obligacionId: string): Promise<any[]>;
+  getDeclaracionesByCliente(clienteId: string): Promise<any[]>;
+  createDeclaracion(data: any): Promise<any>;
+  updateDeclaracion(id: string, data: any): Promise<any>;
+  deleteDeclaracion(id: string): Promise<boolean>;
 
   // Tasks
   getTask(id: string): Promise<Task | undefined>;
@@ -139,10 +145,10 @@ export interface IStorage {
 export class MemStorage implements IStorage {
   private users: Map<string, User> = new Map();
   private clients: Map<string, Client> = new Map();
-  private taxModels: Map<string, TaxModel> = new Map();
-  private taxPeriods: Map<string, TaxPeriod> = new Map();
-  private clientTax: Map<string, ClientTax> = new Map();
-  private taxFiles: Map<string, TaxFile> = new Map();
+  private impuestos: Map<string, any> = new Map();
+  private obligacionesFiscales: Map<string, any> = new Map();
+  private calendariosAEAT: Map<string, any> = new Map();
+  private declaraciones: Map<string, any> = new Map();
   private tasks: Map<string, Task> = new Map();
   private manuals: Map<string, Manual> = new Map();
   private activityLogs: Map<string, ActivityLog> = new Map();
@@ -247,71 +253,7 @@ export class MemStorage implements IStorage {
       responsableAsignado: gestorId,
     });
 
-    // Create seed tax models
-    const modelIds = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
-
-    this.taxModels.set(modelIds[0], {
-      id: modelIds[0],
-      nombre: "303",
-      descripcion: "IVA - Declaración trimestral",
-    });
-
-    this.taxModels.set(modelIds[1], {
-      id: modelIds[1],
-      nombre: "390",
-      descripcion: "IVA - Resumen anual",
-    });
-
-    this.taxModels.set(modelIds[2], {
-      id: modelIds[2],
-      nombre: "130",
-      descripcion: "IRPF - Pago fraccionado trimestral",
-    });
-
-    this.taxModels.set(modelIds[3], {
-      id: modelIds[3],
-      nombre: "131",
-      descripcion: "IRPF - Estimación objetiva trimestral",
-    });
-
-    // Create seed tax periods for current year
-    const currentYear = new Date().getFullYear();
-    const periodIds: string[] = [];
-
-    for (let i = 1; i <= 4; i++) {
-      const periodId = randomUUID();
-      periodIds.push(periodId);
-      this.taxPeriods.set(periodId, {
-        id: periodId,
-        modeloId: modelIds[0], // Model 303
-        anio: currentYear,
-        trimestre: i,
-        mes: null,
-        inicioPresentacion: new Date(currentYear, (i - 1) * 3, 1),
-        finPresentacion: new Date(currentYear, i * 3 - 1, 20),
-      });
-    }
-
-    // Create some client tax assignments
-    this.clientTax.set(randomUUID(), {
-      id: randomUUID(),
-      clientId: clientIds[0],
-      taxPeriodId: periodIds[0],
-      estado: "PENDIENTE",
-      notas: "Pendiente de recibir documentación",
-      fechaCreacion: new Date(),
-      fechaActualizacion: new Date(),
-    });
-
-    this.clientTax.set(randomUUID(), {
-      id: randomUUID(),
-      clientId: clientIds[1],
-      taxPeriodId: periodIds[0],
-      estado: "REALIZADO",
-      notas: "Presentado correctamente",
-      fechaCreacion: new Date(),
-      fechaActualizacion: new Date(),
-    });
+    // Note: Tax system seed data removed - new AEAT system uses Prisma migrations
 
     // Create seed tasks
     const taskIds = [randomUUID(), randomUUID(), randomUUID(), randomUUID(), randomUUID()];
@@ -496,106 +438,137 @@ export class MemStorage implements IStorage {
     return Array.from(this.clients.values());
   }
 
-  // Tax Model methods
-  async getTaxModel(id: string): Promise<TaxModel | undefined> {
-    return this.taxModels.get(id);
+  // Impuestos methods
+  async getAllImpuestos(): Promise<any[]> {
+    return Array.from(this.impuestos.values());
   }
 
-  async createTaxModel(insertModel: InsertTaxModel): Promise<TaxModel> {
+  async getImpuesto(id: string): Promise<any> {
+    return this.impuestos.get(id);
+  }
+
+  async getImpuestoByModelo(modelo: string): Promise<any> {
+    return Array.from(this.impuestos.values()).find(i => i.modelo === modelo);
+  }
+
+  async createImpuesto(data: any): Promise<any> {
     const id = randomUUID();
-    const model: TaxModel = { 
-      ...insertModel, 
-      descripcion: insertModel.descripcion || null,
-      id 
-    };
-    this.taxModels.set(id, model);
-    return model;
+    const impuesto = { id, ...data };
+    this.impuestos.set(id, impuesto);
+    return impuesto;
   }
 
-  async getAllTaxModels(): Promise<TaxModel[]> {
-    return Array.from(this.taxModels.values());
-  }
-
-  // Tax Period methods
-  async getTaxPeriod(id: string): Promise<TaxPeriod | undefined> {
-    return this.taxPeriods.get(id);
-  }
-
-  async createTaxPeriod(insertPeriod: InsertTaxPeriod): Promise<TaxPeriod> {
-    const id = randomUUID();
-    const period: TaxPeriod = { 
-      ...insertPeriod, 
-      trimestre: insertPeriod.trimestre || null,
-      mes: insertPeriod.mes || null,
-      id 
-    };
-    this.taxPeriods.set(id, period);
-    return period;
-  }
-
-  async getAllTaxPeriods(): Promise<TaxPeriod[]> {
-    return Array.from(this.taxPeriods.values());
-  }
-
-  // Client Tax methods
-  async getClientTax(id: string): Promise<ClientTax | undefined> {
-    return this.clientTax.get(id);
-  }
-
-  async createClientTax(insertClientTax: InsertClientTax): Promise<ClientTax> {
-    const id = randomUUID();
-    const clientTax: ClientTax = { 
-      ...insertClientTax,
-      estado: insertClientTax.estado || "PENDIENTE",
-      notas: insertClientTax.notas || null,
-      id, 
-      fechaCreacion: new Date(),
-      fechaActualizacion: new Date()
-    };
-    this.clientTax.set(id, clientTax);
-    return clientTax;
-  }
-
-  async updateClientTax(id: string, updateData: Partial<InsertClientTax>): Promise<ClientTax | undefined> {
-    const clientTax = this.clientTax.get(id);
-    if (!clientTax) return undefined;
-    const updated = { ...clientTax, ...updateData, fechaActualizacion: new Date() };
-    this.clientTax.set(id, updated);
+  async updateImpuesto(id: string, data: any): Promise<any> {
+    const impuesto = this.impuestos.get(id);
+    if (!impuesto) throw new Error('Impuesto not found');
+    const updated = { ...impuesto, ...data };
+    this.impuestos.set(id, updated);
     return updated;
   }
 
-  async deleteClientTax(id: string): Promise<boolean> {
-    return this.clientTax.delete(id);
+  async deleteImpuesto(id: string): Promise<boolean> {
+    return this.impuestos.delete(id);
   }
 
-  async getAllClientTax(): Promise<ClientTax[]> {
-    return Array.from(this.clientTax.values());
+  // Obligaciones Fiscales methods
+  async getAllObligacionesFiscales(): Promise<any[]> {
+    return Array.from(this.obligacionesFiscales.values());
   }
 
-  // Tax File methods
-  async getTaxFile(id: string): Promise<TaxFile | undefined> {
-    return this.taxFiles.get(id);
+  async getObligacionFiscal(id: string): Promise<any> {
+    return this.obligacionesFiscales.get(id);
   }
 
-  async createTaxFile(insertFile: InsertTaxFile): Promise<TaxFile> {
+  async getObligacionesByCliente(clienteId: string): Promise<any[]> {
+    return Array.from(this.obligacionesFiscales.values()).filter(o => o.clienteId === clienteId);
+  }
+
+  async createObligacionFiscal(data: any): Promise<any> {
     const id = randomUUID();
-    const file: TaxFile = { 
-      ...insertFile,
-      tipo: insertFile.tipo || null,
-      subidoPor: insertFile.subidoPor || null,
-      id, 
-      fechaSubida: new Date() 
-    };
-    this.taxFiles.set(id, file);
-    return file;
+    const obligacion = { id, ...data };
+    this.obligacionesFiscales.set(id, obligacion);
+    return obligacion;
   }
 
-  async deleteTaxFile(id: string): Promise<boolean> {
-    return this.taxFiles.delete(id);
+  async updateObligacionFiscal(id: string, data: any): Promise<any> {
+    const obligacion = this.obligacionesFiscales.get(id);
+    if (!obligacion) throw new Error('Obligacion not found');
+    const updated = { ...obligacion, ...data };
+    this.obligacionesFiscales.set(id, updated);
+    return updated;
   }
 
-  async getTaxFilesByClientTax(clientTaxId: string): Promise<TaxFile[]> {
-    return Array.from(this.taxFiles.values()).filter(file => file.clientTaxId === clientTaxId);
+  async deleteObligacionFiscal(id: string): Promise<boolean> {
+    return this.obligacionesFiscales.delete(id);
+  }
+
+  // Calendario AEAT methods
+  async getAllCalendariosAEAT(): Promise<any[]> {
+    return Array.from(this.calendariosAEAT.values());
+  }
+
+  async getCalendarioAEAT(id: string): Promise<any> {
+    return this.calendariosAEAT.get(id);
+  }
+
+  async getCalendariosByImpuesto(impuestoId: string): Promise<any[]> {
+    return Array.from(this.calendariosAEAT.values()).filter(c => c.impuestoId === impuestoId);
+  }
+
+  async createCalendarioAEAT(data: any): Promise<any> {
+    const id = randomUUID();
+    const calendario = { id, ...data };
+    this.calendariosAEAT.set(id, calendario);
+    return calendario;
+  }
+
+  async updateCalendarioAEAT(id: string, data: any): Promise<any> {
+    const calendario = this.calendariosAEAT.get(id);
+    if (!calendario) throw new Error('Calendario not found');
+    const updated = { ...calendario, ...data };
+    this.calendariosAEAT.set(id, updated);
+    return updated;
+  }
+
+  async deleteCalendarioAEAT(id: string): Promise<boolean> {
+    return this.calendariosAEAT.delete(id);
+  }
+
+  // Declaraciones methods
+  async getAllDeclaraciones(): Promise<any[]> {
+    return Array.from(this.declaraciones.values());
+  }
+
+  async getDeclaracion(id: string): Promise<any> {
+    return this.declaraciones.get(id);
+  }
+
+  async getDeclaracionesByObligacion(obligacionId: string): Promise<any[]> {
+    return Array.from(this.declaraciones.values()).filter(d => d.obligacionId === obligacionId);
+  }
+
+  async getDeclaracionesByCliente(clienteId: string): Promise<any[]> {
+    // Nota: En MemStorage no podemos hacer joins, retornamos array vacío
+    return [];
+  }
+
+  async createDeclaracion(data: any): Promise<any> {
+    const id = randomUUID();
+    const declaracion = { id, ...data };
+    this.declaraciones.set(id, declaracion);
+    return declaracion;
+  }
+
+  async updateDeclaracion(id: string, data: any): Promise<any> {
+    const declaracion = this.declaraciones.get(id);
+    if (!declaracion) throw new Error('Declaracion not found');
+    const updated = { ...declaracion, ...data };
+    this.declaraciones.set(id, updated);
+    return updated;
+  }
+
+  async deleteDeclaracion(id: string): Promise<boolean> {
+    return this.declaraciones.delete(id);
   }
 
   // Task methods

@@ -34,18 +34,6 @@ enum TaskVisibility {
   PERSONAL
 }
 
-enum TaxStatus {
-  PENDIENTE
-  CALCULADO
-  REALIZADO
-}
-
-enum TaxFilingStatus {
-  NOT_STARTED
-  IN_PROGRESS
-  PRESENTED
-}
-
 enum ManualStatus {
   DRAFT
   PUBLISHED
@@ -79,6 +67,23 @@ enum StorageType {
   LOCAL
   FTP
   SMB
+}
+
+enum Periodicidad {
+  MENSUAL
+  TRIMESTRAL
+  ANUAL
+}
+
+enum EstadoDeclaracion {
+  PENDIENTE
+  CALCULADO
+  PRESENTADO
+}
+
+enum TipoNotificacion {
+  SOLICITUD_INFO
+  CONFIRMACION_PRESENTACION
 }
 
 // ==================== ROLES & PERMISSIONS ====================
@@ -146,7 +151,6 @@ model User {
   manualsAuthored Manual[]        @relation("ManualAuthor")
   activityLogs    ActivityLog[]
   auditTrails     AuditTrail[]
-  taxFilesUploaded TaxFile[]      @relation("FileUploader")
   smtpAccountsCreated SMTPAccount[]           @relation("SMTPCreator")
   notificationTemplatesCreated NotificationTemplate[] @relation("TemplateCreator")
   notificationsSent NotificationLog[]         @relation("NotificationSender")
@@ -160,29 +164,30 @@ model User {
 
 // ==================== CLIENTS ====================
 model Client {
-  id                  String   @id @default(uuid()) @db.VarChar(36)
-  razonSocial         String   @map("razon_social") @db.Text
-  nifCif              String   @unique @map("nif_cif") @db.VarChar(191)
+  id                  String    @id @default(uuid()) @db.VarChar(36)
+  razonSocial         String    @map("razon_social") @db.Text
+  nifCif              String    @unique @map("nif_cif") @db.VarChar(191)
   tipo                ClientType
-  email               String?  @db.Text
-  telefono            String?  @db.Text
-  direccion           String?  @db.Text
-  fechaAlta           DateTime @default(now()) @map("fecha_alta") @db.DateTime(3)
-  responsableAsignado String?  @map("responsable_asignado") @db.VarChar(36)
-  taxModels           Json?    @map("tax_models") // Array de modelos fiscales: ["303", "390", "130", "131"]
-  isActive            Boolean  @default(true) @map("is_active") // Cliente activo o deshabilitado
+  email               String?   @db.Text
+  telefono            String?   @db.Text
+  direccion           String?   @db.Text
+  fechaAlta           DateTime  @default(now()) @map("fecha_alta") @db.DateTime(3)
+  fechaBaja           DateTime? @map("fecha_baja") @db.DateTime(3) // NULL = cliente activo
+  responsableAsignado String?   @map("responsable_asignado") @db.VarChar(36)
+  taxModels           Json?     @map("tax_models") // Array de modelos fiscales: ["303", "390", "130", "131"]
+  isActive            Boolean   @default(true) @map("is_active") // Cliente activo o deshabilitado
 
   // Relations
-  responsable       User?                  @relation("ClientManager", fields: [responsableAsignado], references: [id], onDelete: SetNull)
-  clientTaxes       ClientTax[]
-  tasks             Task[]
-  taxRequirements   ClientTaxRequirement[]
-  taxFilings        ClientTaxFiling[]
-  employees         ClientEmployee[]
+  responsable         User?                  @relation("ClientManager", fields: [responsableAsignado], references: [id], onDelete: SetNull)
+  tasks               Task[]
+  employees           ClientEmployee[]
+  obligacionesFiscales ObligacionFiscal[]
+  notificaciones      Notificacion[]
 
   @@index([responsableAsignado])
   @@index([tipo])
   @@index([isActive])
+  @@index([fechaBaja])
   @@map("clients")
 }
 
@@ -201,78 +206,6 @@ model ClientEmployee {
   @@index([userId])
   @@index([clientId])
   @@map("client_employees")
-}
-
-// ==================== TAX MODELS ====================
-model TaxModel {
-  id          String   @id @default(uuid()) @db.VarChar(36)
-  nombre      String   @db.VarChar(191)
-  descripcion String?  @db.Text
-
-  // Relations
-  taxPeriods TaxPeriod[]
-
-  @@map("tax_models")
-}
-
-// ==================== TAX PERIODS ====================
-model TaxPeriod {
-  id                  String   @id @default(uuid()) @db.VarChar(36)
-  modeloId            String   @map("modelo_id") @db.VarChar(36)
-  anio                Int
-  trimestre           Int?
-  mes                 Int?
-  inicioPresentacion  DateTime @map("inicio_presentacion") @db.DateTime(3)
-  finPresentacion     DateTime @map("fin_presentacion") @db.DateTime(3)
-
-  // Relations
-  modelo     TaxModel    @relation(fields: [modeloId], references: [id], onDelete: Cascade)
-  clientTaxes ClientTax[]
-
-  @@index([modeloId])
-  @@index([anio])
-  @@map("tax_periods")
-}
-
-// ==================== CLIENT TAX ====================
-model ClientTax {
-  id                  String    @id @default(uuid()) @db.VarChar(36)
-  clientId            String    @map("client_id") @db.VarChar(36)
-  taxPeriodId         String    @map("tax_period_id") @db.VarChar(36)
-  estado              TaxStatus @default(PENDIENTE)
-  notas               String?   @db.Text
-  fechaCreacion       DateTime  @default(now()) @map("fecha_creacion") @db.DateTime(3)
-  fechaActualizacion  DateTime  @updatedAt @map("fecha_actualizacion") @db.DateTime(3)
-
-  // Relations
-  client    Client     @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  taxPeriod TaxPeriod  @relation(fields: [taxPeriodId], references: [id], onDelete: Cascade)
-  files     TaxFile[]
-
-  @@index([clientId, taxPeriodId])
-  @@index([estado])
-  @@index([fechaCreacion])
-  @@map("client_tax")
-}
-
-// ==================== TAX FILES (S3 STORAGE) ====================
-model TaxFile {
-  id            String   @id @default(uuid()) @db.VarChar(36)
-  clientTaxId   String   @map("client_tax_id") @db.VarChar(36)
-  nombreArchivo String   @map("nombre_archivo") @db.Text
-  s3Url         String   @map("s3_url") @db.Text
-  s3Key         String   @map("s3_key") @db.Text
-  tipo          String?  @db.VarChar(50)
-  tamanio       Int?
-  fechaSubida   DateTime @default(now()) @map("fecha_subida") @db.DateTime(3)
-  subidoPor     String?  @map("subido_por") @db.VarChar(36)
-
-  // Relations
-  clientTax ClientTax @relation(fields: [clientTaxId], references: [id], onDelete: Cascade)
-  uploader  User?     @relation("FileUploader", fields: [subidoPor], references: [id], onDelete: SetNull)
-
-  @@index([clientTaxId])
-  @@map("tax_files")
 }
 
 // ==================== TASKS ====================
@@ -412,66 +345,6 @@ model SmtpConfig {
   secure   Boolean @default(false)
 
   @@map("smtp_config")
-}
-
-// ==================== TAX CONTROL - REQUIREMENTS (EXCEL GRID X) ====================
-model ClientTaxRequirement {
-  id           String   @id @default(uuid()) @db.VarChar(36)
-  clientId     String   @map("client_id") @db.VarChar(36)
-  taxModelCode String   @map("tax_model_code") @db.VarChar(10) // "111","115","123","130","131","202","349","303"
-  required     Boolean  @default(true) // X = true
-  note         String?  @db.Text // "Anual", "Desde 3T25", etc
-  colorTag     String?  @map("color_tag") @db.VarChar(20) // "green" | "yellow" | "blue"
-  createdAt    DateTime @default(now()) @map("created_at") @db.DateTime(3)
-  updatedAt    DateTime @updatedAt @map("updated_at") @db.DateTime(3)
-
-  // Relations
-  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
-
-  @@unique([clientId, taxModelCode])
-  @@index([taxModelCode])
-  @@map("client_tax_requirements")
-}
-
-// ==================== FISCAL PERIODS (GENERIC - NO MODEL) ====================
-model FiscalPeriod {
-  id        String   @id @default(uuid()) @db.VarChar(36)
-  year      Int
-  quarter   Int?     // 1..4; null if annual
-  label     String   @db.VarChar(10) // "1T","2T","3T","4T","Anual"
-  startsAt  DateTime @map("starts_at") @db.DateTime(3)
-  endsAt    DateTime @map("ends_at") @db.DateTime(3)
-  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
-
-  // Relations
-  filings ClientTaxFiling[]
-
-  @@unique([year, quarter])
-  @@index([year])
-  @@map("fiscal_periods")
-}
-
-// ==================== CLIENT TAX FILINGS (EXCEL GRID STATUS) ====================
-model ClientTaxFiling {
-  id            String          @id @default(uuid()) @db.VarChar(36)
-  clientId      String          @map("client_id") @db.VarChar(36)
-  taxModelCode  String          @map("tax_model_code") @db.VarChar(10)
-  periodId      String          @map("period_id") @db.VarChar(36)
-  status        TaxFilingStatus @default(NOT_STARTED)
-  presentedAt   DateTime?       @map("presented_at") @db.DateTime(3)
-  notes         String?         @db.Text
-  createdAt     DateTime        @default(now()) @map("created_at") @db.DateTime(3)
-  updatedAt     DateTime        @updatedAt @map("updated_at") @db.DateTime(3)
-
-  // Relations
-  client Client       @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  period FiscalPeriod @relation(fields: [periodId], references: [id], onDelete: Cascade)
-
-  @@unique([clientId, taxModelCode, periodId])
-  @@index([periodId])
-  @@index([clientId, taxModelCode])
-  @@index([status])
-  @@map("client_tax_filings")
 }
 
 // ==================== JOB RUNS (CRON TRACKING) ====================
@@ -668,4 +541,117 @@ model StorageConfig {
   @@index([type])
   @@index([isActive])
   @@map("storage_configs")
+}
+
+// ==================== NUEVO SISTEMA DE GESTIÓN DE IMPUESTOS ====================
+
+// Catálogo de impuestos (IVA, IRPF, etc.)
+model Impuesto {
+  id          String   @id @default(uuid()) @db.VarChar(36)
+  nombre      String   @db.VarChar(100) // Ej: IVA, IRPF, Sociedades
+  modelo      String   @db.VarChar(10)  // Ej: 303, 111, 200
+  descripcion String?  @db.Text
+  activo      Boolean  @default(true)   // Si el impuesto está activo
+  createdAt   DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.DateTime(3)
+
+  // Relations
+  obligaciones ObligacionFiscal[]
+
+  @@unique([modelo])
+  @@index([modelo])
+  @@map("impuestos")
+}
+
+// Obligaciones fiscales de cada cliente (qué impuestos presenta y con qué periodicidad)
+model ObligacionFiscal {
+  id              String        @id @default(uuid()) @db.VarChar(36)
+  clienteId       String        @map("cliente_id") @db.VarChar(36)
+  impuestoId      String        @map("impuesto_id") @db.VarChar(36)
+  periodicidad    Periodicidad  // MENSUAL, TRIMESTRAL, ANUAL
+  diaVencimiento  Int?          @map("dia_vencimiento") // Día del mes para vencimiento (1-31)
+  fechaInicio     DateTime      @map("fecha_inicio") @db.DateTime(3) // Desde cuándo aplica
+  fechaFin        DateTime?     @map("fecha_fin") @db.DateTime(3)    // NULL = vigente
+  observaciones   String?       @db.Text
+  fechaAsignacion DateTime      @default(now()) @map("fecha_asignacion") @db.DateTime(3)
+  activo          Boolean       @default(true)
+  createdAt       DateTime      @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt       DateTime      @updatedAt @map("updated_at") @db.DateTime(3)
+
+  // Relations
+  cliente       Client        @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+  impuesto      Impuesto      @relation(fields: [impuestoId], references: [id], onDelete: Cascade)
+  declaraciones Declaracion[]
+
+  @@index([clienteId])
+  @@index([impuestoId])
+  @@index([fechaFin]) // Para búsquedas de obligaciones vigentes
+  @@index([activo])
+  @@map("obligaciones_fiscales")
+}
+
+// Calendario oficial de la AEAT (períodos y fechas límite por modelo)
+model CalendarioAEAT {
+  id              String        @id @default(uuid()) @db.VarChar(36)
+  modelo          String        @db.VarChar(10)  // Ej: 303, 111, 200
+  periodicidad    Periodicidad  // MENSUAL, TRIMESTRAL, ANUAL
+  periodoContable String        @map("periodo_contable") @db.VarChar(20) // Ej: 2025-Q2, 2025-04, 2025
+  fechaInicio     DateTime      @map("fecha_inicio") @db.DateTime(3)     // Inicio del período
+  fechaFin        DateTime      @map("fecha_fin") @db.DateTime(3)        // Fecha límite de presentación
+  createdAt       DateTime      @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt       DateTime      @updatedAt @map("updated_at") @db.DateTime(3)
+
+  // Relations
+  declaraciones Declaracion[]
+
+  @@unique([modelo, periodicidad, periodoContable])
+  @@index([periodoContable])
+  @@index([modelo])
+  @@index([fechaFin]) // Para búsquedas de vencimientos próximos
+  @@map("calendario_aeat")
+}
+
+// Declaraciones individuales (seguimiento de presentación por período)
+model Declaracion {
+  id                 String            @id @default(uuid()) @db.VarChar(36)
+  obligacionId       String            @map("obligacion_id") @db.VarChar(36)
+  calendarioId       String            @map("calendario_id") @db.VarChar(36)
+  estado             EstadoDeclaracion @default(PENDIENTE) // PENDIENTE, CALCULADO, PRESENTADO
+  fechaPresentacion  DateTime?         @map("fecha_presentacion") @db.DateTime(3) // Solo si PRESENTADO
+  archivoPdf         String?           @map("archivo_pdf") @db.VarChar(500)       // Ruta al justificante
+  notas              String?           @db.Text
+  createdAt          DateTime          @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt          DateTime          @updatedAt @map("updated_at") @db.DateTime(3)
+
+  // Relations
+  obligacion ObligacionFiscal @relation(fields: [obligacionId], references: [id], onDelete: Cascade)
+  calendario CalendarioAEAT   @relation(fields: [calendarioId], references: [id], onDelete: Cascade)
+
+  @@index([obligacionId])
+  @@index([calendarioId])
+  @@index([estado])
+  @@index([fechaPresentacion])
+  @@map("declaraciones")
+}
+
+// Notificaciones enviadas a clientes
+model Notificacion {
+  id          String            @id @default(uuid()) @db.VarChar(36)
+  clienteId   String            @map("cliente_id") @db.VarChar(36)
+  periodo     String            @db.VarChar(20) // Ej: 2025-Q2, 2025-04
+  tipo        TipoNotificacion  // SOLICITUD_INFO, CONFIRMACION_PRESENTACION
+  fechaEnvio  DateTime          @map("fecha_envio") @db.DateTime(3)
+  enviada     Boolean           @default(true)
+  asunto      String?           @db.VarChar(500)
+  mensaje     String?           @db.Text
+  createdAt   DateTime          @default(now()) @map("created_at") @db.DateTime(3)
+
+  // Relations
+  cliente Client @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+
+  @@index([clienteId])
+  @@index([periodo])
+  @@index([tipo])
+  @@index([fechaEnvio])
+  @@map("notificaciones")
 }

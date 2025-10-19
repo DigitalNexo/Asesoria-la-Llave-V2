@@ -150,43 +150,13 @@ async function migrateRBAC() {
       console.log(`    → ${roleData.permissions.length} permisos asignados`);
     }
 
-    // 4. Migrar usuarios existentes al nuevo sistema
-    console.log('\n🔄 Migrando usuarios existentes...');
-    
-    // Nota: Los usuarios viejos no tienen el campo "role" porque ya eliminamos el enum
-    // Vamos a crear usuarios por defecto si no existen
-    
-    const defaultUsers = [
-      { username: 'admin', email: 'admin@lallave.com', password: 'admin123', roleName: 'Administrador' },
-      { username: 'gestor', email: 'gestor@lallave.com', password: 'admin123', roleName: 'Gestor' },
-      { username: 'lectura', email: 'lectura@lallave.com', password: 'admin123', roleName: 'Solo Lectura' },
-    ];
-
-    for (const userData of defaultUsers) {
-      const role = createdRoles[userData.roleName];
-      const hashedPassword = await bcrypt.hash(userData.password, 10);
-      
-      const user = await prisma.user.upsert({
-        where: { username: userData.username },
-        update: {
-          roleId: role.id,
-        },
-        create: {
-          username: userData.username,
-          email: userData.email,
-          password: hashedPassword,
-          roleId: role.id,
-        },
-      });
-      
-      console.log(`  ✓ ${userData.username} → ${userData.roleName}`);
-    }
-
-    console.log('\n✅ Migración completada exitosamente!');
+    console.log('\n✅ Migración de RBAC completada exitosamente!');
     console.log(`\n📊 Resumen:`);
     console.log(`   - ${PERMISSIONS.length} permisos creados`);
     console.log(`   - ${SYSTEM_ROLES.length} roles del sistema creados`);
-    console.log(`   - ${defaultUsers.length} usuarios migrados/creados`);
+    console.log('\n💡 Nota: El usuario administrador se creará automáticamente');
+    console.log('   al iniciar el servidor usando las variables de entorno:');
+    console.log('   ADMIN_EMAIL, ADMIN_USERNAME, ADMIN_PASSWORD');
 
   } catch (error) {
     console.error('❌ Error en la migración:', error);

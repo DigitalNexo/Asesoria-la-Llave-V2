@@ -3,10 +3,6 @@ import type { IStorage } from './storage';
 import type {
   User, InsertUser,
   Client, InsertClient,
-  TaxModel, InsertTaxModel,
-  TaxPeriod, InsertTaxPeriod,
-  ClientTax, InsertClientTax,
-  TaxFile, InsertTaxFile,
   Task, InsertTask,
   Manual, InsertManual,
   ManualAttachment, InsertManualAttachment,
@@ -56,51 +52,6 @@ function mapPrismaClient(client: any): any {
   };
 }
 
-function mapPrismaTaxModel(model: any): TaxModel {
-  return {
-    id: model.id,
-    nombre: model.nombre,
-    descripcion: model.descripcion,
-  };
-}
-
-function mapPrismaTaxPeriod(period: any): TaxPeriod {
-  return {
-    id: period.id,
-    modeloId: period.modeloId,
-    anio: period.anio,
-    trimestre: period.trimestre,
-    mes: period.mes,
-    inicioPresentacion: period.inicioPresentacion,
-    finPresentacion: period.finPresentacion,
-  };
-}
-
-function mapPrismaClientTax(clientTax: any): ClientTax {
-  return {
-    id: clientTax.id,
-    clientId: clientTax.clientId,
-    taxPeriodId: clientTax.taxPeriodId,
-    estado: clientTax.estado as 'PENDIENTE' | 'CALCULADO' | 'REALIZADO',
-    notas: clientTax.notas,
-    displayText: clientTax.displayText,
-    colorTag: clientTax.colorTag,
-    fechaCreacion: clientTax.fechaCreacion,
-    fechaActualizacion: clientTax.fechaActualizacion,
-  };
-}
-
-function mapPrismaTaxFile(file: any): TaxFile {
-  return {
-    id: file.id,
-    clientTaxId: file.clientTaxId,
-    nombreArchivo: file.nombreArchivo,
-    ruta: file.s3Url, // Mantener compatibilidad (ruta = s3Url)
-    tipo: file.tipo,
-    fechaSubida: file.fechaSubida,
-    subidoPor: file.subidoPor,
-  };
-}
 
 function mapPrismaTask(task: any): Task {
   return {
@@ -356,132 +307,247 @@ export class PrismaStorage implements IStorage {
     }
   }
 
-  // ==================== TAX MODEL METHODS ====================
-  async getTaxModel(id: string): Promise<TaxModel | undefined> {
-    const model = await prisma.taxModel.findUnique({ where: { id } });
-    return model ? mapPrismaTaxModel(model) : undefined;
+  // ==================== IMPUESTO METHODS ====================
+  async getAllImpuestos() {
+    return await prisma.impuesto.findMany({
+      orderBy: { modelo: 'asc' }
+    });
   }
 
-  async createTaxModel(insertModel: InsertTaxModel): Promise<TaxModel> {
-    const model = await prisma.taxModel.create({
-      data: {
-        nombre: insertModel.nombre,
-        descripcion: insertModel.descripcion,
+  async getImpuesto(id: string) {
+    return await prisma.impuesto.findUnique({
+      where: { id }
+    });
+  }
+
+  async getImpuestoByModelo(modelo: string) {
+    return await prisma.impuesto.findUnique({
+      where: { modelo }
+    });
+  }
+
+  async createImpuesto(data: { modelo: string; nombre: string; descripcion?: string | null }) {
+    return await prisma.impuesto.create({
+      data
+    });
+  }
+
+  async updateImpuesto(id: string, data: { modelo?: string; nombre?: string; descripcion?: string | null }) {
+    return await prisma.impuesto.update({
+      where: { id },
+      data
+    });
+  }
+
+  async deleteImpuesto(id: string) {
+    await prisma.impuesto.delete({
+      where: { id }
+    });
+    return true;
+  }
+
+  // ==================== OBLIGACION FISCAL METHODS ====================
+  async getAllObligacionesFiscales() {
+    return await prisma.obligacionFiscal.findMany({
+      include: {
+        cliente: true,
+        impuesto: true
       },
+      orderBy: { fechaAsignacion: 'desc' }
     });
-    return mapPrismaTaxModel(model);
   }
 
-  async getAllTaxModels(): Promise<TaxModel[]> {
-    const models = await prisma.taxModel.findMany();
-    return models.map(mapPrismaTaxModel);
+  async getObligacionFiscal(id: string) {
+    return await prisma.obligacionFiscal.findUnique({
+      where: { id },
+      include: {
+        cliente: true,
+        impuesto: true
+      }
+    });
   }
 
-  // ==================== TAX PERIOD METHODS ====================
-  async getTaxPeriod(id: string): Promise<TaxPeriod | undefined> {
-    const period = await prisma.taxPeriod.findUnique({ where: { id } });
-    return period ? mapPrismaTaxPeriod(period) : undefined;
-  }
-
-  async createTaxPeriod(insertPeriod: InsertTaxPeriod): Promise<TaxPeriod> {
-    const period = await prisma.taxPeriod.create({
-      data: {
-        modeloId: insertPeriod.modeloId,
-        anio: insertPeriod.anio,
-        trimestre: insertPeriod.trimestre,
-        mes: insertPeriod.mes,
-        inicioPresentacion: insertPeriod.inicioPresentacion,
-        finPresentacion: insertPeriod.finPresentacion,
+  async getObligacionesByCliente(clienteId: string) {
+    return await prisma.obligacionFiscal.findMany({
+      where: { clienteId },
+      include: {
+        cliente: true,
+        impuesto: true
       },
+      orderBy: { fechaAsignacion: 'desc' }
     });
-    return mapPrismaTaxPeriod(period);
   }
 
-  async getAllTaxPeriods(): Promise<TaxPeriod[]> {
-    const periods = await prisma.taxPeriod.findMany();
-    return periods.map(mapPrismaTaxPeriod);
+  async createObligacionFiscal(data: any) {
+    return await prisma.obligacionFiscal.create({
+      data,
+      include: {
+        cliente: true,
+        impuesto: true
+      }
+    });
   }
 
-  // ==================== CLIENT TAX METHODS ====================
-  async getClientTax(id: string): Promise<ClientTax | undefined> {
-    const clientTax = await prisma.clientTax.findUnique({ where: { id } });
-    return clientTax ? mapPrismaClientTax(clientTax) : undefined;
+  async updateObligacionFiscal(id: string, data: any) {
+    return await prisma.obligacionFiscal.update({
+      where: { id },
+      data,
+      include: {
+        cliente: true,
+        impuesto: true
+      }
+    });
   }
 
-  async createClientTax(insertClientTax: InsertClientTax): Promise<ClientTax> {
-    const clientTax = await prisma.clientTax.create({
-      data: {
-        clientId: insertClientTax.clientId,
-        taxPeriodId: insertClientTax.taxPeriodId,
-        estado: insertClientTax.estado as any,
-        notas: insertClientTax.notas,
-        displayText: (insertClientTax as any).displayText,
-        colorTag: (insertClientTax as any).colorTag,
+  async deleteObligacionFiscal(id: string) {
+    await prisma.obligacionFiscal.delete({
+      where: { id }
+    });
+    return true;
+  }
+
+  // ==================== CALENDARIO AEAT METHODS ====================
+  async getAllCalendariosAEAT() {
+    return await prisma.calendarioAEAT.findMany({
+      orderBy: [
+        { periodoContable: 'desc' },
+        { modelo: 'asc' }
+      ]
+    });
+  }
+
+  async getCalendarioAEAT(id: string) {
+    return await prisma.calendarioAEAT.findUnique({
+      where: { id }
+    });
+  }
+
+  async getCalendariosByModelo(modelo: string) {
+    return await prisma.calendarioAEAT.findMany({
+      where: { modelo },
+      orderBy: [
+        { periodoContable: 'desc' }
+      ]
+    });
+  }
+
+  async createCalendarioAEAT(data: any) {
+    return await prisma.calendarioAEAT.create({
+      data
+    });
+  }
+
+  async updateCalendarioAEAT(id: string, data: any) {
+    return await prisma.calendarioAEAT.update({
+      where: { id },
+      data
+    });
+  }
+
+  async deleteCalendarioAEAT(id: string) {
+    await prisma.calendarioAEAT.delete({
+      where: { id }
+    });
+    return true;
+  }
+
+  // ==================== DECLARACION METHODS ====================
+  async getAllDeclaraciones() {
+    return await prisma.declaracion.findMany({
+      include: {
+        obligacion: {
+          include: {
+            cliente: true,
+            impuesto: true
+          }
+        }
       },
+      orderBy: { fechaLimite: 'desc' }
     });
-    return mapPrismaClientTax(clientTax);
   }
 
-  async updateClientTax(id: string, updateData: Partial<InsertClientTax>): Promise<ClientTax | undefined> {
-    try {
-      const clientTax = await prisma.clientTax.update({
-        where: { id },
-        data: updateData as any,
-      });
-      return mapPrismaClientTax(clientTax);
-    } catch {
-      return undefined;
-    }
+  async getDeclaracion(id: string) {
+    return await prisma.declaracion.findUnique({
+      where: { id },
+      include: {
+        obligacion: {
+          include: {
+            cliente: true,
+            impuesto: true
+          }
+        }
+      }
+    });
   }
 
-  async deleteClientTax(id: string): Promise<boolean> {
-    try {
-      await prisma.clientTax.delete({ where: { id } });
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  async getAllClientTax(): Promise<ClientTax[]> {
-    const clientTaxes = await prisma.clientTax.findMany();
-    return clientTaxes.map(mapPrismaClientTax);
-  }
-
-  // ==================== TAX FILE METHODS ====================
-  async getTaxFile(id: string): Promise<TaxFile | undefined> {
-    const file = await prisma.taxFile.findUnique({ where: { id } });
-    return file ? mapPrismaTaxFile(file) : undefined;
-  }
-
-  async createTaxFile(insertFile: InsertTaxFile): Promise<TaxFile> {
-    const file = await prisma.taxFile.create({
-      data: {
-        clientTaxId: insertFile.clientTaxId,
-        nombreArchivo: insertFile.nombreArchivo,
-        s3Url: insertFile.ruta, // ruta -> s3Url
-        s3Key: insertFile.ruta, // Temporal hasta migrar completamente
-        tipo: insertFile.tipo,
-        subidoPor: insertFile.subidoPor,
+  async getDeclaracionesByObligacion(obligacionId: string) {
+    return await prisma.declaracion.findMany({
+      where: { obligacionId },
+      include: {
+        obligacion: {
+          include: {
+            cliente: true,
+            impuesto: true
+          }
+        }
       },
+      orderBy: { fechaLimite: 'desc' }
     });
-    return mapPrismaTaxFile(file);
   }
 
-  async deleteTaxFile(id: string): Promise<boolean> {
-    try {
-      await prisma.taxFile.delete({ where: { id } });
-      return true;
-    } catch {
-      return false;
-    }
+  async getDeclaracionesByCliente(clienteId: string) {
+    return await prisma.declaracion.findMany({
+      where: {
+        obligacion: {
+          clienteId
+        }
+      },
+      include: {
+        obligacion: {
+          include: {
+            cliente: true,
+            impuesto: true
+          }
+        }
+      },
+      orderBy: { fechaLimite: 'desc' }
+    });
   }
 
-  async getTaxFilesByClientTax(clientTaxId: string): Promise<TaxFile[]> {
-    const files = await prisma.taxFile.findMany({
-      where: { clientTaxId },
+  async createDeclaracion(data: any) {
+    return await prisma.declaracion.create({
+      data,
+      include: {
+        obligacion: {
+          include: {
+            cliente: true,
+            impuesto: true
+          }
+        }
+      }
     });
-    return files.map(mapPrismaTaxFile);
+  }
+
+  async updateDeclaracion(id: string, data: any) {
+    return await prisma.declaracion.update({
+      where: { id },
+      data,
+      include: {
+        obligacion: {
+          include: {
+            cliente: true,
+            impuesto: true
+          }
+        }
+      }
+    });
+  }
+
+  async deleteDeclaracion(id: string) {
+    await prisma.declaracion.delete({
+      where: { id }
+    });
+    return true;
   }
 
   // ==================== TASK METHODS ====================
