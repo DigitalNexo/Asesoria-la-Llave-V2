@@ -15,6 +15,43 @@ const app = express();
 // Trust proxy para logging
 app.set("trust proxy", 1);
 
+// Ensure DATABASE_URL is configured and points to MySQL/MariaDB
+const dbUrl = process.env.DATABASE_URL;
+if (!dbUrl) {
+  logger.fatal('\n\n❌ FATAL: DATABASE_URL no está configurada. Este proyecto requiere una base de datos MariaDB externa.\n' +
+    'Por favor añade DATABASE_URL en tu archivo .env con el formato:\n' +
+    '  mysql://USER:PASS@HOST:3306/asesoria_llave?socket_timeout=60&connect_timeout=60\n' +
+    'o\n' +
+    '  mariadb://USER:PASS@HOST:3306/asesoria_llave\n\n');
+  process.exit(1);
+}
+
+// Accept both mysql:// and mariadb:// schemes
+if (!/^mysql:\/\//i.test(dbUrl) && !/^mariadb:\/\//i.test(dbUrl)) {
+  logger.fatal('\n\n❌ FATAL: DATABASE_URL debe usar el driver MySQL/MariaDB (mysql:// o mariadb://).\n' +
+    `Valor actual: ${dbUrl}\n` +
+    'Asegúrate de usar MariaDB como base de datos externa.\n\n');
+  process.exit(1);
+}
+
+// If not explicitly allowed, disallow localhost/internal DBs to enforce external MariaDB
+try {
+  const parsed = new URL(dbUrl);
+  const host = parsed.hostname;
+  const allowLocal = process.env.ALLOW_LOCAL_DB === "true";
+
+  const localHosts = ["localhost", "127.0.0.1", "::1", "db"];
+  if (!allowLocal && localHosts.includes(host)) {
+    logger.fatal('\n\n❌ FATAL: Se requiere una base de datos MariaDB EXTERNA.\n' +
+      `DATABASE_URL apunta a un host local/internal: ${host}\n` +
+      'Si quieres permitir uso de una base de datos local (ej. docker-compose) define ALLOW_LOCAL_DB=true en tu .env\n\n');
+    process.exit(1);
+  }
+} catch (e) {
+  // If URL parsing fails, it was already validated earlier; log and proceed
+  logger.warn({ err: e }, 'No se pudo parsear DATABASE_URL para validación de host');
+}
+
 const prisma = new PrismaClient({
   log: [
     { level: "query", emit: "event" },
