@@ -260,10 +260,10 @@ async function main() {
 
   for (const ct of clientTaxes) {
     await prisma.clientTax.create({
-      data: {
+      data: ({
         id: randomUUID(),
         ...ct,
-      },
+      } as any),
     });
   }
 

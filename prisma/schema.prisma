@@ -181,6 +181,9 @@ model Client {
   responsable         User?                  @relation("ClientManager", fields: [responsableAsignado], references: [id], onDelete: SetNull)
   tasks               Task[]
   employees           ClientEmployee[]
+  clientTaxes         clientTax[]
+  clientTaxRequirements clientTaxRequirement[]
+  taxFilings          clientTaxFiling[]
   obligacionesFiscales ObligacionFiscal[]
   notificaciones      Notificacion[]
 
@@ -655,3 +658,122 @@ model Notificacion {
   @@index([fechaEnvio])
   @@map("notificaciones")
 }
+
+// ======= Alias models para compatibilidad con código existente =======
+// Muchas partes del código esperan modelos con nombres en inglés
+// (taxModel, taxPeriod, clientTax, taxFile, clientTaxRequirement, fiscalPeriod, clientTaxFiling)
+// pero el schema principal usa nombres en español. Estos modelos son "alias"
+// que mappean a las mismas tablas en la base de datos para mantener compatibilidad
+// sin modificar el resto de la aplicación.
+
+model taxModel {
+  id          String   @id @default(uuid()) @db.VarChar(36)
+  nombre      String   @db.VarChar(191)
+  descripcion String?  @db.Text
+
+  // Relations
+  periods taxPeriod[]  @relation("TaxModelPeriods")
+
+  @@map("tax_models")
+}
+
+model taxPeriod {
+  id                  String    @id @default(uuid()) @db.VarChar(36)
+  modeloId            String    @map("modelo_id") @db.VarChar(36)
+  anio                Int
+  trimestre           Int?
+  mes                 Int?
+  inicioPresentacion  DateTime  @map("inicio_presentacion") @db.DateTime(3)
+  finPresentacion     DateTime  @map("fin_presentacion") @db.DateTime(3)
+
+  // Relations
+  modelo taxModel @relation("TaxModelPeriods", fields: [modeloId], references: [id], onDelete: Cascade)
+  clientTaxes clientTax[]
+
+  @@map("tax_periods")
+}
+
+model clientTax {
+  id               String   @id @default(uuid()) @db.VarChar(36)
+  clientId         String   @map("client_id") @db.VarChar(36)
+  taxPeriodId      String   @map("tax_period_id") @db.VarChar(36)
+  estado           String   @db.VarChar(50)
+  notas            String?  @db.Text
+  displayText      String?  @map("display_text")
+  colorTag         String?  @map("color_tag")
+  fechaCreacion    DateTime @map("fecha_creacion") @db.DateTime(3)
+  fechaActualizacion DateTime @map("fecha_actualizacion") @db.DateTime(3)
+
+  // Relations
+  client Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  period taxPeriod @relation(fields: [taxPeriodId], references: [id], onDelete: Cascade)
+  files taxFile[]
+
+  @@map("client_tax")
+}
+
+model taxFile {
+  id            String   @id @default(uuid()) @db.VarChar(36)
+  clientTaxId   String   @map("client_tax_id") @db.VarChar(36)
+  nombreArchivo String   @map("nombre_archivo") @db.Text
+  s3Url         String   @map("s3_url") @db.Text
+  s3Key         String   @map("s3_key") @db.Text
+  tipo          String?  @db.VarChar(50)
+  tamanio       Int?
+  fechaSubida   DateTime @map("fecha_subida") @db.DateTime(3)
+  subidoPor     String?  @map("subido_por") @db.VarChar(36)
+
+  // Relations
+  clientTax clientTax @relation(fields: [clientTaxId], references: [id], onDelete: Cascade)
+
+  @@map("tax_files")
+}
+
+model clientTaxRequirement {
+  id           String  @id @default(uuid()) @db.VarChar(36)
+  clientId     String  @map("client_id") @db.VarChar(36)
+  impuesto     String  @db.VarChar(191)
+  detalle      String? @db.Text
+  taxModelCode String? @map("tax_model_code") @db.VarChar(50)
+  required     Boolean @default(true)
+  note         String? @map("note") @db.Text
+  colorTag     String? @map("color_tag") @db.VarChar(50)
+
+  // Relations
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@map("client_tax_requirements")
+}
+
+model fiscalPeriod {
+  id      String   @id @default(uuid()) @db.VarChar(36)
+  year    Int
+  quarter Int
+  label   String   @db.VarChar(50)
+  startsAt DateTime @map("starts_at") @db.DateTime(3)
+  endsAt   DateTime @map("ends_at") @db.DateTime(3)
+
+  // Relations
+  filings clientTaxFiling[]
+
+  @@map("fiscal_periods")
+}
+
+model clientTaxFiling {
+  id           String  @id @default(uuid()) @db.VarChar(36)
+  clientId     String  @map("client_id") @db.VarChar(36)
+  taxModelCode String  @map("tax_model_code") @db.VarChar(50)
+  periodId     String  @map("period_id") @db.VarChar(36)
+  status       String  @db.VarChar(50)
+  notes        String? @db.Text
+  presentedAt  DateTime? @map("presented_at") @db.DateTime(3)
+
+  // Relations
+  client Client? @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  period fiscalPeriod? @relation(fields: [periodId], references: [id], onDelete: Cascade)
+
+  @@unique([clientId, taxModelCode, periodId], map: "clientId_taxModelCode_periodId")
+  @@map("client_tax_filings")
+}
+
+// (clientTaxes añadido arriba en el modelo Client)

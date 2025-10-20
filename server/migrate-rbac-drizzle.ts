@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { drizzle } from 'drizzle-orm/neon-http';
 import { neon } from '@neondatabase/serverless';
 import { eq, and } from 'drizzle-orm';

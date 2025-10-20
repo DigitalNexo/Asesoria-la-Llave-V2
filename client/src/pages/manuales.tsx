@@ -23,7 +23,7 @@ export default function Manuales() {
     queryKey: ["/api/manuals"],
   });
 
-  const canEdit = user?.permissions?.includes("manuals:create");
+  const canEdit = Array.isArray((user as any)?.permissions) && (user as any).permissions.includes("manuals:create");
 
   const filteredManuals = manuals?.filter((manual) => {
     const matchesSearch = manual.titulo.toLowerCase().includes(searchTerm.toLowerCase()) ||

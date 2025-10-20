@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useParams, useLocation } from "wouter";
+type ManualParams = { id?: string };
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
@@ -17,7 +18,7 @@ import { manualTemplates, type ManualTemplate } from "@/lib/manual-templates";
 import type { Manual, ManualAttachment, ManualVersion } from "@shared/schema";
 
 export default function ManualEditor() {
-  const params = useParams();
+  const params = useParams<ManualParams>();
   const [location, setLocation] = useLocation();
   const { toast } = useToast();
   const isNew = location === "/manuales/nuevo" || params.id === "nuevo";
@@ -161,7 +162,7 @@ export default function ManualEditor() {
       ...formData,
       titulo: formData.titulo || template.nombre,
       categoria: template.categoria,
-      etiquetas: [...new Set([...formData.etiquetas, ...template.etiquetas])],
+  etiquetas: Array.from(new Set([...formData.etiquetas, ...template.etiquetas])),
       contenidoHtml: template.contenidoHtml,
     });
     setIsTemplateDialogOpen(false);

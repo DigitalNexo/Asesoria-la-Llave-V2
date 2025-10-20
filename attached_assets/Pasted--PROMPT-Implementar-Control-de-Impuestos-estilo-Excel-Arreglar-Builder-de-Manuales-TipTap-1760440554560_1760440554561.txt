@@ -1,0 +1,259 @@
+# 🔧 PROMPT — Implementar “Control de Impuestos” estilo Excel + Arreglar Builder de Manuales (TipTap)
+# Stack: Node.js + Express + TypeScript (API) | React + Vite + TypeScript + Tailwind + shadcn (UI) | Prisma (provider mysql) + MariaDB
+
+Quiero que apliques dos mejoras críticas en mi proyecto “Asesoría La Llave” y las dejes operativas y testeadas:
+A) Un **Control de Impuestos** con **vista estilo Excel** (colores, X, año/trimestre, creación de periodos y generación masiva de filas).
+B) Reparar y completar el **Builder de Manuales** (TipTap) con **tablas personalizables** e **imágenes** (subida + sanitización) y exportación a PDF.
+
+Además, todo debe cumplir: **cookies httpOnly, CSRF, CORS con credentials, Helmet CSP estricta, paginación**, sin loops de red ni pantallas en blanco. Usa **MariaDB** (no Postgres) con **Prisma provider mysql**. Entrega **migraciones, seeds, endpoints, componentes UI y tests**.
+
+
+====================================================================
+PARTE A) CONTROL DE IMPUESTOS — VISTA ESTILO EXCEL
+====================================================================
+
+1) UX / Interfaz (idéntica al Excel de referencia)
+--------------------------------------------------
+- **Vista a pantalla completa** con tabla estilo Excel.
+- **Columna A** (izquierda, sticky): **Clientes** (nombre completo). Scroll vertical.
+- **Columnas de la B en adelante** (sticky header): **Modelos** fiscales por defecto:
+  `111 | 115 | 123 | 130 | 131 | 202 | 349 | 303`
+- **Celdas**: muestran una **“X”** cuando el cliente **debe presentar** ese modelo (requisito). Vacío si no.
+- **Edición directa** en celda: click → **toggle X** (debounce 400ms) → persiste vía API.
+- **Colores de fila** (como en la captura):
+  - **Verde** = cliente activo (por defecto).
+  - **Amarillo** = “revisar/pendiente de confirmación”.
+  - **Azul** = “nota especial / advertencia”.
+  - Permite **texto rojo** dentro de la fila (nota corta como “Anual”, “Desde 3T25”, etc.).
+- **Leyenda** (chips) arriba a la derecha con los 3 colores y su significado.
+- **Acciones de lista** arriba:
+  - Búsqueda por cliente.
+  - Filtros: gestor asignado, tipo (Autónomo/Empresa), color de fila, por “tiene X en modelo …”.
+  - Export **CSV/Excel** de lo que se ve en pantalla (filtros aplicados).
+- **Rendimiento**: tabla **virtualizada** (TanStack Table + react-virtual), headers sticky, columna A sticky, 1000+ filas fluidas.
+- **Estados del período activo** (opcional en la misma vista o en panel lateral): para cada celda, mostrar un **chip** con estado **NOT_STARTED / IN_PROGRESS / PRESENTED**, editable con click.
+
+2) Selección y creación de periodos
+-----------------------------------
+- En el header de la vista, incluye **Select Año** (por defecto año actual) y **Select Trimestre** con opciones `1T, 2T, 3T, 4T` + (opcional) “Anual”.
+- Si el **año no existe**, mostrar botón **“Crear periodo fiscal (año completo)”** → crea **1T..4T** (y “Anual” si lo usamos).
+- Botón **“Nuevo periodo”** para **añadir un trimestre concreto** (ej.: 2025, 4T).
+- Al crear un periodo (año/trim), **se generan automáticamente** filas `ClientTaxFiling` para **todos los clientes** y **todos los modelos** que tengan **X** en sus requisitos (`ClientTaxRequirement.required = true`). Inicialmente `status=NOT_STARTED`.
+- Tras crear, **refrescar la hoja** al periodo seleccionado con todas las filas y colores tal como corresponde.
+
+3) Modelo de datos (Prisma + MariaDB)
+-------------------------------------
+### Nuevos/Ajustados modelos
+```prisma
+model ClientTaxRequirement {
+  id           String   @id @default(cuid())
+  clientId     String
+  taxModelCode String   // "111","115","123","130","131","202","349","303"
+  required     Boolean  @default(true)   // X = true
+  note         String?  // texto corto “Anual”, “Desde 3T25”, etc.
+  colorTag     String?  // "green" | "yellow" | "blue"
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  client       Client   @relation(fields: [clientId], references: [id])
+
+  @@unique([clientId, taxModelCode])
+  @@index([taxModelCode])
+}
+
+model TaxPeriod {
+  id        String   @id @default(cuid())
+  year      Int
+  quarter   Int?     // 1..4; null si es Anual
+  label     String   // "1T","2T","3T","4T" o "Anual"
+  startsAt  DateTime
+  endsAt    DateTime
+  createdAt DateTime @default(now())
+
+  @@unique([year, quarter])
+  @@index([year])
+}
+
+model ClientTaxFiling {
+  id            String          @id @default(cuid())
+  clientId      String
+  taxModelCode  String
+  periodId      String
+  status        TaxFilingStatus @default(NOT_STARTED) // NOT_STARTED | IN_PROGRESS | PRESENTED
+  presentedAt   DateTime?
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  client        Client    @relation(fields: [clientId], references: [id])
+  period        TaxPeriod @relation(fields: [periodId], references: [id])
+
+  @@unique([clientId, taxModelCode, periodId])
+  @@index([periodId])
+  @@index([clientId, taxModelCode])
+}
+
+enum TaxFilingStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  PRESENTED
+}
+```
+- Charset/Collation: `utf8mb4` / `utf8mb4_unicode_ci`.
+- **Índices extra recomendados**: `clients(nif_cif UNIQUE)`, `activity_logs(usuario_id, modulo, fecha)`.
+- Genera **migraciones Prisma** y un **dump SQL** en `database/schema_mariadb.sql` con todas las tablas e índices.
+
+4) Endpoints API
+----------------
+### Requisitos (las “X” de la hoja)
+- `GET /api/tax/requirements?search=&gestorId=&model=&color=` → lista por cliente los modelos con su `required`, `colorTag`, `note`.
+- `PATCH /api/tax/requirements/toggle` → body `{ clientId, taxModelCode, required: boolean }` (upsert si no existe).
+- `PATCH /api/tax/requirements/row-meta` → body `{ clientId, colorTag?: "green"|"yellow"|"blue", note?: string }`.
+
+### Periodos
+- `GET /api/tax/periods?year=` → devuelve periodos del año.
+- `POST /api/tax/periods/create-year` → body `{ year }` → crea 1T..4T (y Anual si procede) con `startsAt/endsAt` naturales.
+- `POST /api/tax/periods/create` → body `{ year, quarter }` → crea p.ej. 2025/4T.
+- Tras crear un periodo, **generar** `ClientTaxFiling` para cada `ClientTaxRequirement.required=true` (evitar duplicados por unique).
+
+### Filings del periodo activo (estados)
+- `GET /api/tax/filings?periodId=&search=&status=&model=` → devuelve para este periodo los estados por cliente+modelo.
+- `PATCH /api/tax/filings/status` → body `{ filingId, status: "NOT_STARTED"|"IN_PROGRESS"|"PRESENTED", presentedAt? }`.
+
+### Export
+- `GET /api/tax/export?periodId=&format=csv|xlsx` → exporta lo visible (clientes x modelos con estados y colores).
+
+5) Frontend (React + Vite + Tailwind + shadcn)
+-----------------------------------------------
+- **Componente** `TaxControlGrid`:
+  - Header con selects **Año** y **Trimestre**, botones **Crear año** / **Nuevo periodo**.
+  - **Tabla virtualizada**: primera columna sticky (clientes), encabezados sticky (modelos).
+  - Celdas clicables (toggle X), guardado con debounce y toast “Guardado”.
+  - Fila con background según `colorTag` y nota en texto rojo (junto al nombre del cliente).
+  - Chips de estado por celda (para el periodo activo): sin iniciar / en progreso / presentado.
+  - Export botón (CSV/Excel).
+- **React Query** (sin loops): `refetchOnWindowFocus:false`, `retry:1`, `staleTime:30000`.
+- **Rendimiento**: memo de celdas, `react-virtual` para filas, no refetch agresivos.
+
+6) Lógica de periodos (fechas)
+-------------------------------
+- **Q1**: 1 Enero – 31 Marzo
+- **Q2**: 1 Abril – 30 Junio
+- **Q3**: 1 Julio – 30 Septiembre
+- **Q4**: 1 Octubre – 31 Diciembre
+- `label` = "1T"/"2T"/"3T"/"4T"; para anual `quarter=null`, `label="Anual"` si lo usamos.
+- Crear año completo genera 4 periodos y, si procede, uno “Anual”.
+
+7) Seguridad y permisos
+-----------------------
+- Solo **ADMIN** y **GESTOR** pueden editar requisitos (X), notas/colores y crear periodos.
+- **LECTURA** solo puede ver.
+- Mantener **cookies httpOnly**, **CSRF** en mutaciones, **CORS** con `credentials:true`, **Helmet** con CSP estricta.
+
+8) Criterios de aceptación (Control de Impuestos)
+-------------------------------------------------
+- [ ] Hoja estilo Excel con **colores, X editables**, columna A clientes, columnas de modelos por defecto.
+- [ ] Select **Año/Trimestre**, creación de **Año completo** y **Trimestre** ok.
+- [ ] Generación masiva de `ClientTaxFiling` al crear periodo (sin duplicados).
+- [ ] Export CSV/Excel correcto.
+- [ ] Virtualización fluida con 1000+ filas.
+- [ ] Sin bucles de red ni pantallas en blanco.
+
+
+====================================================================
+PARTE B) BUILDER DE MANUALES (Tiptap) — TABLAS + IMÁGENES
+====================================================================
+
+1) Requisitos funcionales
+-------------------------
+- El **creador de manuales** debe funcionar y permitir:
+  - **Tablas personalizables**: insertar p.ej. **3 filas x 4 columnas**, añadir/eliminar filas/columnas, **redimensionar columnas**, combinar celdas.
+  - **Imágenes**: subida (S3/local según config), **caption**, alineación (izq/centro/dcha), resize responsivo.
+  - **Etiquetas y categorías** como ya existía.
+  - **Estados**: Borrador / Publicado.
+  - **Exportación a PDF** (servidor con `puppeteer`/`playwright` o cliente con `html2pdf.js` — elige y documenta).
+- **Sanitización HTML** en backend con `sanitize-html` para evitar XSS (whitelist):
+  `p,h1,h2,h3,h4,h5,h6,ul,ol,li,strong,em,u,a,img,table,thead,tbody,tr,td,th,code,pre,blockquote`
+  Atributos permitidos: `a[href|title|target|rel]`, `img[src|alt|title|width|height|style]`, `table[style]`, `td[style]`.
+  Permitidos esquemas: `http, https, data`.
+
+2) Frontend TipTap
+------------------
+- Activar extensiones: `StarterKit`, `Table`, `TableRow`, `TableHeader`, `TableCell`, `Image`, `Link`, `Underline`, `Code`, `History`.
+- Toolbar con botones:
+  - **Insertar tabla** (diálogo filas/columnas por defecto 3x4).
+  - Añadir/eliminar fila/columna, **resize de columnas**, combinar celdas.
+  - **Insertar imagen** (subir archivo → POST `/api/manuals/upload` → insertar URL).
+  - Títulos H1/H2, Bold, Italic, Underline, Listas, Link, Code, Undo/Redo.
+- Guardar contenido como **HTML** en `Manual.contentHtml` (LONGTEXT).
+
+3) API Manuales
+----------------
+- `POST /api/manuals` `{ title, categoryId?, tags[], contentHtml, status }`
+- `PATCH /api/manuals/:id` (mismas props)
+- `GET /api/manuals` (filtros: estado, categoría, etiqueta, búsqueda)
+- `GET /api/manuals/:id`
+- `POST /api/manuals/upload` (imagen) → validación **MIME real** con `file-type`; permite PNG/JPG/JPEG/GIF/SVG (si procede), máx 10MB; responde `{ url }`.
+- `GET /api/manuals/:id/export.pdf` (si export server-side).
+
+4) Modelo de datos (Prisma)
+---------------------------
+```prisma
+model Manual {
+  id           String   @id @default(cuid())
+  title        String
+  contentHtml  String   @db.LongText
+  status       ManualStatus @default(DRAFT) // DRAFT | PUBLISHED
+  tags         Json?
+  categoryId   String?
+  authorId     String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  publishedAt  DateTime?
+  // índices según necesidad: @@index([categoryId]), @@index([publishedAt])
+}
+enum ManualStatus {
+  DRAFT
+  PUBLISHED
+}
+```
+- Si ya existen tablas/columnas, **migra** sin perder datos (ALTER necesarios).
+
+5) Tests mínimos (E2E/UI/servicio)
+----------------------------------
+- Crear **Manual** con **tabla 3x4**, guardar, volver a abrir, verificar HTML contiene `<table>` y celdas correctas.
+- Subir **imagen** y verificar que se inserta en el contenido con URL válida.
+- Export a **PDF** devuelve archivo descargable y texto principal renderizado.
+- Seguridad: al guardar manual, el backend **sanitiza** (no permite `<script>`).
+
+6) Criterios de aceptación (Manuales)
+-------------------------------------
+- [ ] Editor TipTap con tabla 3x4, resize columnas, añadir/eliminar filas/columnas, combinar.
+- [ ] Subida de imagen con validación MIME real y URL insertada.
+- [ ] Guardado/lectura de `contentHtml` estable (sin pérdida de formato).
+- [ ] Sanitización activa (XSS bloqueado).
+- [ ] Export a PDF funcional.
+
+
+====================================================================
+ASPECTOS TRANSVERSALES
+====================================================================
+- Mantener **cookies httpOnly** para auth; **CSRF** en mutaciones; **CORS** con `origin=FRONTEND_URL` y `credentials:true`; **Helmet** con CSP estricta.
+- **React Query** global: `refetchOnWindowFocus:false`, `retry:1`, `staleTime:30000` (evitar tormenta de peticiones).
+- **Paginación** en endpoints de listados.
+- **Logs** con `pino` + `request-id`.
+- **Índices MariaDB** creados según arriba para buen rendimiento.
+
+
+====================================================================
+ENTREGABLES Y VERIFICACIÓN FINAL
+====================================================================
+1) **Migraciones Prisma** aplicadas (MariaDB, provider mysql) + `database/schema_mariadb.sql` generado (charset/collation correctos).
+2) **API**: endpoints nuevos/ajustados listados arriba, con validaciones y permisos (ADMIN/GESTOR editan; LECTURA solo ve).
+3) **UI**: componentes funcionando (`TaxControlGrid`, Editor TipTap completo).
+4) **Tests**: añade mínimo 6 tests (2 de periodos/filings, 2 de requisitos toggle, 2 de manuales con tablas/imágenes).
+5) **Rendimiento UX**: la hoja Excel virtualizada fluye en 1000+ filas; login y navegación sin pantallas en blanco.
+6) **README**: sección “Control de Impuestos (Excel)” y “Manuales (TipTap)” con capturas/indicaciones.
+7) **ZIP final** preparado para descargar.
+
+Si algo falla (CORS, cookies, CSRF, virtualización, TipTap, export), **ajústalo y reintenta** hasta cumplir todos los criterios.

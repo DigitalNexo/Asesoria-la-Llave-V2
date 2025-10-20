@@ -1,4 +1,5 @@
 import { useParams, useLocation } from "wouter";
+type ManualParams = { id?: string };
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,7 +12,7 @@ import type { Manual, ManualAttachment } from "@shared/schema";
 import jsPDF from "jspdf";
 
 export default function ManualView() {
-  const params = useParams();
+  const params = useParams<ManualParams>();
   const [, setLocation] = useLocation();
   const { user } = useAuth();
 

@@ -2,7 +2,7 @@ import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import { Server as SocketIOServer } from "socket.io";
 import { prismaStorage as storage } from "./prisma-storage";
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient, Prisma } from "@prisma/client";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { body, validationResult } from "express-validator";
@@ -254,11 +254,11 @@ async function generateClientTaxes(clientId: string, taxModels: string[]) {
 
         if (!existing) {
           await prisma.clientTax.create({
-            data: {
+            data: ({
               clientId: clientId,
               taxPeriodId: period.id,
               estado: 'PENDIENTE'
-            }
+            } as Prisma.clientTaxUncheckedCreateInput)
           });
         }
       }
@@ -2106,7 +2106,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         // Crear nueva configuración
         const config = await prisma.storageConfig.create({
-          data: {
+          data: ({
             type,
             host,
             port: port ? parseInt(port) : null,
@@ -2114,7 +2114,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             encryptedPassword,
             basePath: basePath || (type === 'LOCAL' ? '/uploads' : '/'),
             isActive: true
-          }
+          } as any)
         });
 
         await storage.createActivityLog({
@@ -2869,12 +2869,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ==================== TAX CONTROL - REQUIREMENTS ====================
   app.get("/api/tax-requirements", authenticateToken, async (req: AuthRequest, res: Response) => {
     try {
-      const { PrismaClient } = await import("@prisma/client");
-      const prisma = new PrismaClient();
       const requirements = await prisma.clientTaxRequirement.findMany({
         include: { client: true }
       });
-      await prisma.$disconnect();
       res.json(requirements);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -2884,20 +2881,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/tax-requirements", authenticateToken, checkPermission("taxes:create"), async (req: AuthRequest, res: Response) => {
     try {
       const { clientId, taxModelCode, required = true, note, colorTag } = req.body;
-      const { PrismaClient } = await import("@prisma/client");
-      const prisma = new PrismaClient();
-      
       const requirement = await prisma.clientTaxRequirement.create({
-        data: {
+        data: ({
           clientId,
           taxModelCode,
           required,
           note,
           colorTag,
-        },
+        } as Prisma.clientTaxRequirementUncheckedCreateInput),
         include: { client: true }
       });
-      await prisma.$disconnect();
       res.json(requirement);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -2907,21 +2900,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.patch("/api/tax-requirements/:id/toggle", authenticateToken, checkPermission("taxes:update"), async (req: AuthRequest, res: Response) => {
     try {
       const { id } = req.params;
-      const { PrismaClient } = await import("@prisma/client");
-      const prisma = new PrismaClient();
-      
       const current = await prisma.clientTaxRequirement.findUnique({ where: { id } });
       if (!current) {
-        await prisma.$disconnect();
         return res.status(404).json({ error: "Requisito no encontrado" });
       }
 
       const updated = await prisma.clientTaxRequirement.update({
         where: { id },
-        data: { required: !current.required },
+        data: ({ required: !current.required } as Prisma.clientTaxRequirementUncheckedUpdateInput),
         include: { client: true }
       });
-      await prisma.$disconnect();
       res.json(updated);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -2932,15 +2920,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { id } = req.params;
       const { note, colorTag } = req.body;
-      const { PrismaClient } = await import("@prisma/client");
-      const prisma = new PrismaClient();
-      
       const updated = await prisma.clientTaxRequirement.update({
         where: { id },
-        data: { note, colorTag },
+        data: ({ note, colorTag } as Prisma.clientTaxRequirementUncheckedUpdateInput),
         include: { client: true }
       });
-      await prisma.$disconnect();
       res.json(updated);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -2950,12 +2934,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ==================== TAX CONTROL - FISCAL PERIODS ====================
   app.get("/api/fiscal-periods", authenticateToken, async (req: AuthRequest, res: Response) => {
     try {
-      const { PrismaClient } = await import("@prisma/client");
-      const prisma = new PrismaClient();
       const periods = await prisma.fiscalPeriod.findMany({
         orderBy: [{ year: 'desc' }, { quarter: 'asc' }]
       });
-      await prisma.$disconnect();
       res.json(periods);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -2971,13 +2952,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const periods = [];
       for (let q = 1; q <= 4; q++) {
         const period = await prisma.fiscalPeriod.create({
-          data: {
+          data: ({
             year: parseInt(year),
             quarter: q,
             label: `${q}T`,
             startsAt: new Date(`${year}-${(q-1)*3+1}-01`),
             endsAt: new Date(`${year}-${q*3}-${q === 4 ? '31' : '30'}`)
-          }
+          } as Prisma.fiscalPeriodUncheckedCreateInput)
         });
         periods.push(period);
       }
@@ -2995,7 +2976,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const prisma = new PrismaClient();
       
       const period = await prisma.fiscalPeriod.create({
-        data: { year: parseInt(year), quarter, label, startsAt: new Date(startsAt), endsAt: new Date(endsAt) }
+        data: ({ year: parseInt(year), quarter, label, startsAt: new Date(startsAt), endsAt: new Date(endsAt) } as Prisma.fiscalPeriodUncheckedCreateInput)
       });
       await prisma.$disconnect();
       res.json(period);
@@ -3007,12 +2988,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ==================== TAX CONTROL - FILINGS ====================
   app.get("/api/tax-filings", authenticateToken, async (req: AuthRequest, res: Response) => {
     try {
-      const { PrismaClient } = await import("@prisma/client");
-      const prisma = new PrismaClient();
       const filings = await prisma.clientTaxFiling.findMany({
         include: { client: true, period: true }
       });
-      await prisma.$disconnect();
       res.json(filings);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -3022,13 +3000,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/tax-filings", authenticateToken, checkPermission("taxes:create"), async (req: AuthRequest, res: Response) => {
     try {
       const { clientId, taxModelCode, periodId, status, notes } = req.body;
-      const { PrismaClient } = await import("@prisma/client");
-      const prisma = new PrismaClient();
-      
       const filing = await prisma.clientTaxFiling.create({
-        data: { clientId, taxModelCode, periodId, status: status || 'NOT_STARTED', notes }
+        data: ({ clientId, taxModelCode, periodId, status: status || 'NOT_STARTED', notes } as Prisma.clientTaxFilingUncheckedCreateInput)
       });
-      await prisma.$disconnect();
       res.json(filing);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -3061,21 +3035,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/tax-filings/batch", authenticateToken, checkPermission("taxes:create"), async (req: AuthRequest, res: Response) => {
     try {
       const { clientId, taxModelCode, periodIds } = req.body;
-      const { PrismaClient } = await import("@prisma/client");
-      const prisma = new PrismaClient();
-      
       const filings = await Promise.all(
         periodIds.map((periodId: string) =>
           prisma.clientTaxFiling.upsert({
             where: {
               clientId_taxModelCode_periodId: { clientId, taxModelCode, periodId }
             },
-            create: { clientId, taxModelCode, periodId, status: 'NOT_STARTED' },
+            create: ({ clientId, taxModelCode, periodId, status: 'NOT_STARTED' } as Prisma.clientTaxFilingUncheckedCreateInput),
             update: {}
           })
         )
       );
-      await prisma.$disconnect();
       res.json(filings);
     } catch (error: any) {
       res.status(500).json({ error: error.message });

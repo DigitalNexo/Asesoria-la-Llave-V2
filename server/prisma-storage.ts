@@ -462,7 +462,7 @@ export class PrismaStorage implements IStorage {
           }
         }
       },
-      orderBy: { fechaLimite: 'desc' }
+      orderBy: { fechaPresentacion: 'desc' }
     });
   }
 
@@ -491,7 +491,7 @@ export class PrismaStorage implements IStorage {
           }
         }
       },
-      orderBy: { fechaLimite: 'desc' }
+      orderBy: { fechaPresentacion: 'desc' }
     });
   }
 
@@ -510,7 +510,15 @@ export class PrismaStorage implements IStorage {
           }
         }
       },
-      orderBy: { fechaLimite: 'desc' }
+      orderBy: { fechaPresentacion: 'desc' }
+    });
+  }
+
+  // Calendarios por impuesto (implementación requerida por IStorage)
+  async getCalendariosByImpuesto(impuestoId: string) {
+    return await prisma.calendarioAEAT.findMany({
+      where: { modelo: impuestoId },
+      orderBy: [{ periodoContable: 'desc' }, { modelo: 'asc' }]
     });
   }
 
@@ -561,7 +569,7 @@ export class PrismaStorage implements IStorage {
     return task ? mapPrismaTask(task) : undefined;
   }
 
-  async createTask(insertTask: InsertTask): Promise<Task> {
+  async createTask(insertTask: any): Promise<Task> {
     const task = await prisma.task.create({
       data: {
         titulo: insertTask.titulo,
@@ -577,7 +585,7 @@ export class PrismaStorage implements IStorage {
     return mapPrismaTask(task);
   }
 
-  async updateTask(id: string, updateData: Partial<InsertTask>): Promise<Task | undefined> {
+  async updateTask(id: string, updateData: any): Promise<Task | undefined> {
     try {
       const task = await prisma.task.update({
         where: { id },
@@ -609,7 +617,7 @@ export class PrismaStorage implements IStorage {
     return manual ? mapPrismaManual(manual) : undefined;
   }
 
-  async createManual(insertManual: InsertManual): Promise<Manual> {
+  async createManual(insertManual: any): Promise<Manual> {
     const manual = await prisma.manual.create({
       data: {
         titulo: insertManual.titulo,
@@ -624,7 +632,7 @@ export class PrismaStorage implements IStorage {
     return mapPrismaManual(manual);
   }
 
-  async updateManual(id: string, updateData: Partial<InsertManual>): Promise<Manual | undefined> {
+  async updateManual(id: string, updateData: any): Promise<Manual | undefined> {
     try {
       const data: any = {};
       
@@ -754,7 +762,7 @@ export class PrismaStorage implements IStorage {
   }
 
   // ==================== ACTIVITY LOG METHODS ====================
-  async createActivityLog(insertLog: InsertActivityLog): Promise<ActivityLog> {
+  async createActivityLog(insertLog: any): Promise<ActivityLog> {
     const log = await prisma.activityLog.create({
       data: {
         usuarioId: insertLog.usuarioId,
@@ -774,7 +782,7 @@ export class PrismaStorage implements IStorage {
   }
 
   // ==================== AUDIT TRAIL METHODS ====================
-  async createAuditEntry(insertAudit: InsertAuditTrail): Promise<AuditTrail> {
+  async createAuditEntry(insertAudit: any): Promise<AuditTrail> {
     const audit = await prisma.auditTrail.create({
       data: {
         usuarioId: insertAudit.usuarioId,
@@ -989,16 +997,16 @@ export class PrismaStorage implements IStorage {
     };
   }
 
-  async updateSystemSettings(data: Partial<InsertSystemSettings>): Promise<SystemSettings> {
+  async updateSystemSettings(data: any): Promise<SystemSettings> {
     // Obtener o crear settings
     let settings = await prisma.systemSettings.findFirst();
     
     if (!settings) {
       // Crear registro inicial
       settings = await prisma.systemSettings.create({
-        data: {
-          registrationEnabled: data.registrationEnabled ?? true,
-        },
+        data: ({
+          registrationEnabled: data?.registrationEnabled ?? true,
+        } as any),
       });
     } else {
       // Actualizar existente

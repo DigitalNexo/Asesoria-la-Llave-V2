@@ -4,7 +4,7 @@
  * Crea datos iniciales para el sistema Asesoría La Llave
  */
 
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
@@ -216,20 +216,20 @@ async function main() {
   // ==================== ASIGNACIONES DE IMPUESTOS ====================
   console.log('\n💼 Asignando impuestos a clientes...');
   await prisma.clientTax.create({
-    data: {
+    data: ({
       clientId: client1.id,
       taxPeriodId: period2024Q1.id,
       estado: 'REALIZADO',
       notas: 'Presentado correctamente',
-    },
+    } as Prisma.clientTaxUncheckedCreateInput),
   });
 
   await prisma.clientTax.create({
-    data: {
+    data: ({
       clientId: client1.id,
       taxPeriodId: period2024Q2.id,
       estado: 'PENDIENTE',
-    },
+    } as Prisma.clientTaxUncheckedCreateInput),
   });
 
   console.log('  ✅ Impuestos asignados a clientes');

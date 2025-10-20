@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
@@ -37,8 +37,9 @@ async function seedVisualTaxData() {
     }
 
     // Refrescar modelos después de crear
-    const allModels = await prisma.taxModel.findMany();
-    const modelMap = new Map(allModels.map(m => [m.nombre, m.id]));
+  const allModels = await prisma.taxModel.findMany();
+  const modelMap = new Map(allModels.map(m => [m.nombre, m.id]));
+  const modelIdToName = new Map(allModels.map(m => [m.id, m.nombre]));
 
     // Crear periodos fiscales para 2024 - Trimestres
     const year = 2024;
@@ -82,9 +83,6 @@ async function seedVisualTaxData() {
         anio: 2024,
         trimestre: 1,
       },
-      include: {
-        modelo: true,
-      },
     });
 
     console.log(`📅 Periodos Q1 2024 encontrados: ${q1Periods.length}`);
@@ -114,16 +112,16 @@ async function seedVisualTaxData() {
           // Seleccionar un estado visual aleatorio
           const state = visualStates[Math.floor(Math.random() * visualStates.length)];
           
-          await prisma.clientTax.create({
-            data: {
-              clientId: client.id,
-              taxPeriodId: period.id,
-              estado: 'REALIZADO',
-              notas: `Estado generado automáticamente para ${period.modelo?.nombre}`,
-              displayText: state.displayText,
-              colorTag: state.colorTag,
-            },
-          });
+            await prisma.clientTax.create({
+              data: ({
+                clientId: client.id,
+                taxPeriodId: period.id,
+                estado: 'REALIZADO',
+                notas: `Estado generado automáticamente para ${modelIdToName.get(period.modeloId) ?? ''}`,
+                displayText: state.displayText,
+                colorTag: state.colorTag,
+              } as Prisma.clientTaxUncheckedCreateInput)
+            });
           created++;
         }
       }

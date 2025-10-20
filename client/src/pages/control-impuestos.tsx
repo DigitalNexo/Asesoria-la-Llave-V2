@@ -329,7 +329,7 @@ export default function ControlImpuestos() {
                           <SelectTrigger data-testid="select-impuesto">
                             <SelectValue placeholder="Selecciona un impuesto" />
                           </SelectTrigger>
-                          <SelectContent portal={false}>
+                          <SelectContent>
                             {impuestosActivos.map((impuesto) => (
                               <SelectItem key={impuesto.id} value={impuesto.id}>
                                 {impuesto.modelo} - {impuesto.nombre}
@@ -350,7 +350,7 @@ export default function ControlImpuestos() {
                         <SelectTrigger data-testid="select-periodicidad">
                           <SelectValue />
                         </SelectTrigger>
-                        <SelectContent portal={false}>
+                        <SelectContent>
                           <SelectItem value="MENSUAL">Mensual</SelectItem>
                           <SelectItem value="TRIMESTRAL">Trimestral</SelectItem>
                           <SelectItem value="ANUAL">Anual</SelectItem>

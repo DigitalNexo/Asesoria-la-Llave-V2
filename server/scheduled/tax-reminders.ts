@@ -75,7 +75,7 @@ async function runTaxReminders() {
       include: {
         clientTaxes: {
           include: {
-            taxPeriod: {
+            period: {
               include: {
                 modelo: true,
               },
@@ -83,7 +83,7 @@ async function runTaxReminders() {
           },
         },
       },
-    });
+    }) as any[];
 
     console.log(`📊 Clientes con impuestos: ${clientes.length}`);
 
@@ -91,11 +91,11 @@ async function runTaxReminders() {
       if (!cliente.clientTaxes || cliente.clientTaxes.length === 0) continue;
 
       for (const clientTax of cliente.clientTaxes) {
-        const { taxPeriod } = clientTax;
-        if (!taxPeriod) continue;
+        const period = clientTax.period;
+        if (!period) continue;
 
         const diasRestantes = Math.ceil(
-          (new Date(taxPeriod.finPresentacion).getTime() - now.getTime()) / (1000 * 60 * 60 * 24)
+          (new Date(period.finPresentacion).getTime() - now.getTime()) / (1000 * 60 * 60 * 24)
         );
 
         // Enviar recordatorio si faltan 7, 3 o 1 días
@@ -109,11 +109,11 @@ async function runTaxReminders() {
                 <h2 style="margin: 0;">${urgencia}: Obligación Fiscal Próxima</h2>
               </div>
               <div style="padding: 20px; background: #f9fafb;">
-                <h3>${taxPeriod.modelo.nombre} - ${taxPeriod.anio}</h3>
+                <h3>${period.modelo.nombre} - ${period.anio}</h3>
                 <p><strong>Cliente:</strong> ${cliente.razonSocial}</p>
                 <p><strong>NIF/CIF:</strong> ${cliente.nifCif}</p>
-                <p><strong>Periodo:</strong> ${taxPeriod.trimestre ? `Trimestre ${taxPeriod.trimestre}` : taxPeriod.mes ? `Mes ${taxPeriod.mes}` : taxPeriod.anio}</p>
-                <p><strong>Fecha límite:</strong> ${format(new Date(taxPeriod.finPresentacion), "dd 'de' MMMM, yyyy", { locale: es })}</p>
+                <p><strong>Periodo:</strong> ${period.trimestre ? `Trimestre ${period.trimestre}` : period.mes ? `Mes ${period.mes}` : period.anio}</p>
+                <p><strong>Fecha límite:</strong> ${format(new Date(period.finPresentacion), "dd 'de' MMMM, yyyy", { locale: es })}</p>
                 <p><strong>Días restantes:</strong> ${diasRestantes}</p>
                 <p><strong>Estado:</strong> ${clientTax.estado}</p>
                 <hr style="margin: 20px 0; border: none; border-top: 1px solid #e5e7eb;">
@@ -128,7 +128,7 @@ async function runTaxReminders() {
           if (cliente.email) {
             await sendEmail(
               cliente.email,
-              `${urgencia}: ${taxPeriod.modelo.nombre} - Vence en ${diasRestantes} día(s)`,
+              `${urgencia}: ${period.modelo.nombre} - Vence en ${diasRestantes} día(s)`,
               html
             );
           }

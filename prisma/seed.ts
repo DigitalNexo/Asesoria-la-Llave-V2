@@ -1,6 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcrypt';
 import { randomUUID } from 'crypto';
+import { Prisma } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
@@ -441,10 +442,10 @@ async function main() {
 
   for (const ct of clientTaxes) {
     await prisma.clientTax.create({
-      data: {
+      data: ({
         id: randomUUID(),
         ...ct,
-      },
+      } as Prisma.clientTaxUncheckedCreateInput),
     });
   }
 

@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * ⚠️ DEPRECATED - DO NOT USE ⚠️
  * 

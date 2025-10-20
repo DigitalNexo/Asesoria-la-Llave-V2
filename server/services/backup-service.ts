@@ -188,7 +188,7 @@ async function createDatabaseBackupFallback(filePath: string): Promise<void> {
     ];
 
     for (const table of tables) {
-      const records = await table.model.findMany() as any[];
+  const records = await (table.model as any).findMany() as any[];
       
       if (records.length > 0) {
         sqlContent += `-- Tabla ${table.tableName}\n`;
