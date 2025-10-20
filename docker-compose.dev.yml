@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  mariadb:
+    image: mariadb:10.11
+    container_name: asesoria-mariadb-dev
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-rootpassword}
+      MYSQL_DATABASE: ${DB_DATABASE:-asesoria_llave}
+      MYSQL_USER: ${DB_USER:-asesoria_user}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-asesoria_local_password}
+    volumes:
+      - mariadb_data:/var/lib/mysql
+    ports:
+      - "3306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  mariadb_data:
+    driver: local
