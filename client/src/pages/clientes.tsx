@@ -100,6 +100,8 @@ const CLIENT_TYPE_OPTIONS: { value: ClientType; label: string }[] = [
   { value: "PARTICULAR", label: "Particular" },
 ];
 
+const NO_RESPONSABLE_VALUE = "__none__";
+
 function formatInputDate(value?: string | null): string {
   if (!value) return "";
   const date = new Date(value);
@@ -121,7 +123,7 @@ const defaultFormState: FormState = {
   email: "",
   telefono: "",
   direccion: "",
-  responsableAsignado: "",
+  responsableAsignado: NO_RESPONSABLE_VALUE,
   fechaAlta: todayInputDate(),
   fechaBaja: "",
   isActive: true,
@@ -136,7 +138,8 @@ function buildClientPayload(form: FormState): ClientPayload {
     email: form.email.trim() ? form.email.trim() : null,
     telefono: form.telefono.trim() ? form.telefono.trim() : null,
     direccion: form.direccion.trim() ? form.direccion.trim() : null,
-    responsableAsignado: form.responsableAsignado || null,
+    responsableAsignado:
+      form.responsableAsignado === NO_RESPONSABLE_VALUE ? null : form.responsableAsignado,
     isActive: form.isActive,
     fechaAlta: form.fechaAlta || null,
     fechaBaja: form.fechaBaja || null,
@@ -193,7 +196,8 @@ export default function Clientes() {
       email: fetchedClientDetail.email ?? "",
       telefono: fetchedClientDetail.telefono ?? "",
       direccion: fetchedClientDetail.direccion ?? "",
-      responsableAsignado: fetchedClientDetail.responsableAsignado ?? "",
+      responsableAsignado:
+        fetchedClientDetail.responsableAsignado ?? NO_RESPONSABLE_VALUE,
       fechaAlta: formatInputDate(fetchedClientDetail.fechaAlta) || todayInputDate(),
       fechaBaja: formatInputDate(fetchedClientDetail.fechaBaja),
       isActive: fetchedClientDetail.isActive ?? true,
@@ -228,7 +232,7 @@ export default function Clientes() {
         email: client.email ?? "",
         telefono: client.telefono ?? "",
         direccion: client.direccion ?? "",
-        responsableAsignado: client.responsableAsignado ?? "",
+        responsableAsignado: client.responsableAsignado ?? NO_RESPONSABLE_VALUE,
         fechaAlta: formatInputDate(client.fechaAlta) || todayInputDate(),
         fechaBaja: formatInputDate(client.fechaBaja),
         isActive: client.isActive ?? true,
@@ -263,7 +267,7 @@ export default function Clientes() {
         email: client.email ?? "",
         telefono: client.telefono ?? "",
         direccion: client.direccion ?? "",
-        responsableAsignado: client.responsableAsignado ?? "",
+        responsableAsignado: client.responsableAsignado ?? NO_RESPONSABLE_VALUE,
         fechaAlta: formatInputDate(client.fechaAlta) || todayInputDate(),
         fechaBaja: formatInputDate(client.fechaBaja),
         isActive: client.isActive ?? true,
@@ -378,7 +382,7 @@ export default function Clientes() {
       email: client.email ?? "",
       telefono: client.telefono ?? "",
       direccion: client.direccion ?? "",
-      responsableAsignado: client.responsableAsignado ?? "",
+      responsableAsignado: client.responsableAsignado ?? NO_RESPONSABLE_VALUE,
       fechaAlta: formatInputDate(client.fechaAlta) || todayInputDate(),
       fechaBaja: formatInputDate(client.fechaBaja),
       isActive: client.isActive ?? true,
@@ -502,7 +506,7 @@ export default function Clientes() {
             </Button>
           </DialogTrigger>
           <DialogContent className="max-w-4xl">
-            <DialogHeader>
+            <DialogHeader className="space-y-1">
               <DialogTitle>{editingClient ? "Editar Cliente" : "Nuevo Cliente"}</DialogTitle>
               <DialogDescription>
                 {editingClient
@@ -510,14 +514,19 @@ export default function Clientes() {
                   : "Completa la información para crear un nuevo cliente"}
               </DialogDescription>
             </DialogHeader>
-            <form onSubmit={handleSubmit} className="space-y-6">
+            <form id="client-editor-form" onSubmit={handleSubmit} className="space-y-6 mt-6">
               <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as any)}>
-                <TabsList>
-                  <TabsTrigger value="general">Datos del cliente</TabsTrigger>
-                  <TabsTrigger value="fiscal" disabled={!currentClientId}>
-                    Datos fiscales y contables
-                  </TabsTrigger>
-                </TabsList>
+                <div className="flex items-center justify-between gap-4">
+                  <TabsList>
+                    <TabsTrigger value="general">Datos del cliente</TabsTrigger>
+                    <TabsTrigger value="fiscal" disabled={!currentClientId}>
+                      Datos fiscales y contables
+                    </TabsTrigger>
+                  </TabsList>
+                  <Button type="submit" disabled={isSaving} className="shrink-0">
+                    {isSaving ? "Guardando..." : "Guardar cambios"}
+                  </Button>
+                </div>
                 <TabsContent value="general">
                   <div className="grid gap-4 md:grid-cols-2">
                     <div className="space-y-2">
@@ -570,7 +579,7 @@ export default function Clientes() {
                     <div className="space-y-2">
                       <Label htmlFor="responsableAsignado">Responsable</Label>
                       <Select
-                        value={formData.responsableAsignado}
+                        value={formData.responsableAsignado ?? NO_RESPONSABLE_VALUE}
                         onValueChange={(value) =>
                           setFormData((prev) => ({ ...prev, responsableAsignado: value }))
                         }
@@ -579,7 +588,7 @@ export default function Clientes() {
                           <SelectValue placeholder="Sin asignar" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="">Sin asignar</SelectItem>
+                          <SelectItem value={NO_RESPONSABLE_VALUE}>Sin asignar</SelectItem>
                           {users.map((user) => (
                             <SelectItem value={user.id} key={user.id}>
                               {user.username}
@@ -776,9 +785,6 @@ export default function Clientes() {
                   disabled={isSaving}
                 >
                   Cancelar
-                </Button>
-                <Button type="submit" disabled={isSaving}>
-                  {isSaving ? "Guardando..." : "Guardar datos"}
                 </Button>
               </DialogFooter>
             </form>

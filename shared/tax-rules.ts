@@ -49,6 +49,36 @@ export const TAX_MODEL_METADATA: Record<
   "720": { name: "Bienes en el extranjero" },
 };
 
+export const TAX_CONTROL_MODEL_ORDER = [
+  "100",
+  "111",
+  "130",
+  "131",
+  "200",
+  "202",
+  "303",
+  "347",
+  "349",
+  "390",
+  "190",
+  "180",
+  "720",
+] as const;
+
+export const TAX_STATUS_DISPLAY: Record<string, string> = {
+  PRESENTADO: "Presentado",
+  PRESENTED: "Presentado",
+  CALCULADO: "Calculado",
+  CALCULATED: "Calculado",
+  PENDIENTE: "Pendiente",
+  PENDING: "Pendiente",
+  NOT_STARTED: "Pendiente",
+  EN_PROGRESO: "En progreso",
+  IN_PROGRESS: "En progreso",
+};
+
+export const NORMALIZED_TAX_STATUSES = ["PENDIENTE", "CALCULADO", "PRESENTADO"] as const;
+
 export function isTaxModelAllowedForClientType(
   taxModelCode: string,
   clientType: ClientType

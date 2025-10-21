@@ -30,6 +30,8 @@ import { performSystemUpdate, verifyGitSetup, getUpdateHistory } from "./service
 import { StorageFactory, encryptPassword, decryptPassword } from "./services/storage-factory";
 import { uploadToStorage } from "./middleware/storage-upload";
 import { TAX_RULES, type ClientType, type TaxPeriodicity } from "@shared/tax-rules";
+import { logger } from "./logger";
+import { buildTaxControlCsv, buildTaxControlXlsx } from "./services/tax-control-utils";
 
 const prisma = new PrismaClient();
 
@@ -231,7 +233,20 @@ async function createAudit(
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  await storage.ensureTaxModelsConfigSeeded();
+  try {
+    await storage.ensureTaxModelsConfigSeeded();
+  } catch (error: any) {
+    const message =
+      error instanceof Error ? error.message : "No se pudo inicializar tax_models_config";
+    logger.fatal(
+      {
+        err: error,
+        remediation: "Ejecuta `npx prisma db push` y reinicia el servidor",
+      },
+      message
+    );
+    throw error;
+  }
 
   // ==================== HEALTH CHECK ====================
   app.get("/api/health", async (req: Request, res: Response) => {
@@ -714,13 +729,56 @@ export async function registerRoutes(app: Express): Promise<Server> {
   );
 
   // ==================== CLIENT TAX ASSIGNMENTS ====================
+  const handleGetTaxConfigs = async (_req: Request, res: Response) => {
+    try {
+      const configs = await storage.getActiveTaxModelsConfig();
+      res.json(configs);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  };
+
   app.get(
     "/api/tax-models-config",
     authenticateToken,
-    async (_req: Request, res: Response) => {
+    checkPermission("taxes:read"),
+    handleGetTaxConfigs
+  );
+
+  app.get(
+    "/api/tax/config",
+    authenticateToken,
+    checkPermission("taxes:read"),
+    handleGetTaxConfigs
+  );
+
+  app.get(
+    "/api/tax/assignments",
+    authenticateToken,
+    checkPermission("taxes:read"),
+    async (req: Request, res: Response) => {
       try {
-        const configs = await storage.getActiveTaxModelsConfig();
-        res.json(configs);
+        const clientId = req.query.clientId as string | undefined;
+        if (!clientId) {
+          return res.status(400).json({ error: "clientId es requerido" });
+        }
+        const assignments = await storage.getClientTaxAssignments(clientId);
+        res.json(assignments);
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
+  app.get(
+    "/api/tax-assignments/:assignmentId/history",
+    authenticateToken,
+    checkPermission("taxes:read"),
+    async (req: Request, res: Response) => {
+      try {
+        const { assignmentId } = req.params;
+        const history = await storage.getTaxAssignmentHistory(assignmentId);
+        res.json(history);
       } catch (error: any) {
         res.status(500).json({ error: error.message });
       }
@@ -749,14 +807,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
           periodicity,
         });
 
-        const existing = await storage.findClientTaxAssignmentByCode(clientId, taxModelCode);
-        if (existing) {
-          return res.status(409).json({ error: `El modelo ${taxModelCode} ya está asignado al cliente` });
-        }
-
         const startDate = new Date(req.body.startDate);
         const endDate = req.body.endDate ? new Date(req.body.endDate) : null;
         const activeFlag = endDate ? false : req.body.activeFlag ?? true;
+
+        // Permitir nueva asignación del mismo modelo sólo si la previa está cerrada y no solapa
+        const existing = await storage.findClientTaxAssignmentByCode(clientId, taxModelCode);
+        if (existing) {
+          const existingEnd = existing.endDate ? new Date(existing.endDate) : null;
+          const overlaps = !existingEnd || existingEnd >= startDate;
+          if (overlaps) {
+            return res.status(409).json({ error: `El modelo ${taxModelCode} ya está asignado y vigente o solapa con la nueva fecha de alta` });
+          }
+        }
 
         const assignment = await storage.createClientTaxAssignment(clientId, {
           taxModelCode,
@@ -790,6 +853,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     }
   );
+
 
   app.patch(
     "/api/tax-assignments/:assignmentId",
@@ -1411,262 +1475,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   );
 
-  // ==================== CALENDARIO AEAT ROUTES ====================
-  // GET /api/calendario-aeat - Listar todos los calendarios AEAT
-  app.get(
-    "/api/calendario-aeat",
-    authenticateToken,
-    checkPermission("taxes:read"),
-    async (req: AuthRequest, res: Response) => {
-      try {
-        const { modelo, periodicidad, anio } = req.query;
-        let calendarios;
-
-        if (modelo || periodicidad || anio) {
-          // Filtros opcionales
-          const where: any = {};
-          if (modelo) where.modelo = modelo;
-          if (periodicidad) where.periodicidad = periodicidad;
-          if (anio) {
-            // Filtrar por año en periodoContable (ej: "2025-Q1", "2025-04", "2025")
-            where.periodoContable = { contains: anio };
-          }
-          calendarios = await prisma.calendarioAEAT.findMany({ where, orderBy: [{ periodoContable: 'desc' }, { modelo: 'asc' }] });
-        } else {
-          calendarios = await storage.getAllCalendariosAEAT();
-        }
-        
-        res.json(calendarios);
-      } catch (error: any) {
-        res.status(500).json({ error: error.message });
-      }
-    }
-  );
-
-  // GET /api/calendario-aeat/modelo/:modelo - Listar calendarios de un modelo
-  app.get(
-    "/api/calendario-aeat/modelo/:modelo",
-    authenticateToken,
-    checkPermission("taxes:read"),
-    async (req: AuthRequest, res: Response) => {
-      try {
-        const calendarios = await prisma.calendarioAEAT.findMany({
-          where: { modelo: req.params.modelo },
-          orderBy: { periodoContable: 'desc' }
-        });
-        res.json(calendarios);
-      } catch (error: any) {
-        res.status(500).json({ error: error.message });
-      }
-    }
-  );
-
-  // POST /api/calendario-aeat - Crear nuevo calendario AEAT
-  app.post(
-    "/api/calendario-aeat",
-    authenticateToken,
-    checkPermission("taxes:create"),
-    async (req: AuthRequest, res: Response) => {
-      try {
-        const { modelo, periodicidad, periodoContable, fechaInicio, fechaFin } = req.body;
-        
-        if (!modelo || !periodicidad || !periodoContable || !fechaInicio || !fechaFin) {
-          return res.status(400).json({ error: "Modelo, periodicidad, periodo contable, fecha inicio y fecha fin son requeridos" });
-        }
-
-        const calendario = await storage.createCalendarioAEAT({
-          modelo,
-          periodicidad,
-          periodoContable,
-          fechaInicio: new Date(fechaInicio),
-          fechaFin: new Date(fechaFin)
-        });
-        
-        await storage.createActivityLog({
-          usuarioId: req.user!.id,
-          accion: `Creó calendario AEAT`,
-          modulo: "impuestos",
-          detalles: `Modelo: ${modelo}, Periodo: ${periodoContable}, Periodicidad: ${periodicidad}`,
-        });
-
-        res.status(201).json(calendario);
-      } catch (error: any) {
-        if (error.code === 'P2002') {
-          return res.status(400).json({ error: "Ya existe un calendario para este modelo, periodicidad y periodo contable" });
-        }
-        res.status(500).json({ error: error.message });
-      }
-    }
-  );
-
-  // PATCH /api/calendario-aeat/:id - Actualizar calendario AEAT
-  app.patch(
-    "/api/calendario-aeat/:id",
-    authenticateToken,
-    checkPermission("taxes:update"),
-    async (req: AuthRequest, res: Response) => {
-      try {
-        const { fechaInicio, fechaFin } = req.body;
-        const updateData: any = {};
-        
-        if (fechaInicio) updateData.fechaInicio = new Date(fechaInicio);
-        if (fechaFin) updateData.fechaFin = new Date(fechaFin);
-
-        const calendario = await storage.updateCalendarioAEAT(req.params.id, updateData);
-        
-        await storage.createActivityLog({
-          usuarioId: req.user!.id,
-          accion: `Actualizó calendario AEAT`,
-          modulo: "impuestos",
-          detalles: `Modelo: ${calendario.modelo}, Periodo: ${calendario.periodoContable}`,
-        });
-
-        res.json(calendario);
-      } catch (error: any) {
-        res.status(500).json({ error: error.message });
-      }
-    }
-  );
-
-  // DELETE /api/calendario-aeat/:id - Eliminar calendario AEAT
-  app.delete(
-    "/api/calendario-aeat/:id",
-    authenticateToken,
-    checkPermission("taxes:delete"),
-    async (req: AuthRequest, res: Response) => {
-      try {
-        const calendario = await prisma.calendarioAEAT.findUnique({
-          where: { id: req.params.id }
-        });
-
-        await storage.deleteCalendarioAEAT(req.params.id);
-        
-        await storage.createActivityLog({
-          usuarioId: req.user!.id,
-          accion: `Eliminó calendario AEAT`,
-          modulo: "impuestos",
-          detalles: `Modelo: ${calendario?.modelo}, Periodo: ${calendario?.periodoContable}`,
-        });
-
-        res.json({ success: true });
-      } catch (error: any) {
-        res.status(500).json({ error: error.message });
-      }
-    }
-  );
-
-  // ==================== DECLARACIONES ROUTES ====================
-  // GET /api/declaraciones - Listar todas las declaraciones
-  app.get(
-    "/api/declaraciones",
-    authenticateToken,
-    async (req: AuthRequest, res: Response) => {
-      try {
-        const declaraciones = await storage.getAllDeclaraciones();
-        res.json(declaraciones);
-      } catch (error: any) {
-        res.status(500).json({ error: error.message });
-      }
-    }
-  );
-
-  // GET /api/declaraciones/cliente/:clienteId - Listar declaraciones de un cliente
-  app.get(
-    "/api/declaraciones/cliente/:clienteId",
-    authenticateToken,
-    async (req: AuthRequest, res: Response) => {
-      try {
-        const declaraciones = await storage.getDeclaracionesByCliente(req.params.clienteId);
-        res.json(declaraciones);
-      } catch (error: any) {
-        res.status(500).json({ error: error.message });
-      }
-    }
-  );
-
-  // POST /api/declaraciones - Crear nueva declaración
-  app.post(
-    "/api/declaraciones",
-    authenticateToken,
-    checkPermission("taxes:create"),
-    async (req: AuthRequest, res: Response) => {
-      try {
-        const { obligacionId, anio, periodo, fechaLimite, estado, resultado, observaciones } = req.body;
-        
-        if (!obligacionId || !anio || !periodo || !fechaLimite) {
-          return res.status(400).json({ error: "Obligación, año, periodo y fecha límite son requeridos" });
-        }
-
-        const declaracion = await storage.createDeclaracion({
-          obligacionId,
-          anio: parseInt(anio),
-          periodo,
-          fechaLimite: new Date(fechaLimite),
-          estado: estado || 'PENDIENTE',
-          resultado: resultado || null,
-          observaciones: observaciones || null,
-          fechaPresentacion: null
-        });
-        
-        await storage.createActivityLog({
-          usuarioId: req.user!.id,
-          accion: `Creó declaración`,
-          modulo: "impuestos",
-          detalles: `Periodo: ${periodo}/${anio}`,
-        });
-
-        res.status(201).json(declaracion);
-      } catch (error: any) {
-        res.status(500).json({ error: error.message });
-      }
-    }
-  );
-
-  // PATCH /api/declaraciones/:id - Actualizar declaración
-  app.patch(
-    "/api/declaraciones/:id",
-    authenticateToken,
-    checkPermission("taxes:update"),
-    async (req: AuthRequest, res: Response) => {
-      try {
-        const declaracion = await storage.updateDeclaracion(req.params.id, req.body);
-        
-        await storage.createActivityLog({
-          usuarioId: req.user!.id,
-          accion: `Actualizó declaración`,
-          modulo: "impuestos",
-          detalles: `ID: ${req.params.id}`,
-        });
-
-        res.json(declaracion);
-      } catch (error: any) {
-        res.status(500).json({ error: error.message });
-      }
-    }
-  );
-
-  // DELETE /api/declaraciones/:id - Eliminar declaración
-  app.delete(
-    "/api/declaraciones/:id",
-    authenticateToken,
-    checkPermission("taxes:delete"),
-    async (req: AuthRequest, res: Response) => {
-      try {
-        await storage.deleteDeclaracion(req.params.id);
-        
-        await storage.createActivityLog({
-          usuarioId: req.user!.id,
-          accion: `Eliminó declaración`,
-          modulo: "impuestos",
-          detalles: `ID: ${req.params.id}`,
-        });
-
-        res.json({ success: true });
-      } catch (error: any) {
-        res.status(500).json({ error: error.message });
-      }
-    }
-  );
 
   // ==================== TASK ROUTES ====================
   app.get("/api/tasks", authenticateToken, async (req: Request, res: Response) => {
@@ -3176,114 +2984,144 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/fiscal-periods/create-year", authenticateToken, checkPermission("taxes:create"), async (req: AuthRequest, res: Response) => {
-    try {
-      const { year } = req.body;
-      const { PrismaClient } = await import("@prisma/client");
-      const prisma = new PrismaClient();
-      
-      const periods = [];
-      for (let q = 1; q <= 4; q++) {
-        const period = await prisma.fiscalPeriod.create({
-          data: ({
-            year: parseInt(year),
-            quarter: q,
-            label: `${q}T`,
-            startsAt: new Date(`${year}-${(q-1)*3+1}-01`),
-            endsAt: new Date(`${year}-${q*3}-${q === 4 ? '31' : '30'}`)
-          } as Prisma.fiscalPeriodUncheckedCreateInput)
-        });
-        periods.push(period);
+  // ==================== TAX PERIODS ====================
+  app.get(
+    "/api/tax/periods",
+    authenticateToken,
+    checkPermission("taxes:read"),
+    async (req: Request, res: Response) => {
+      try {
+        const year = req.query.year ? parseInt(req.query.year as string, 10) : undefined;
+        const periods = await storage.getFiscalPeriodsSummary(year);
+        res.json(periods);
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
       }
-      await prisma.$disconnect();
-      res.json(periods);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
     }
-  });
+  );
 
-  app.post("/api/fiscal-periods", authenticateToken, checkPermission("taxes:create"), async (req: AuthRequest, res: Response) => {
-    try {
-      const { year, quarter, label, startsAt, endsAt } = req.body;
-      const { PrismaClient } = await import("@prisma/client");
-      const prisma = new PrismaClient();
-      
-      const period = await prisma.fiscalPeriod.create({
-        data: ({ year: parseInt(year), quarter, label, startsAt: new Date(startsAt), endsAt: new Date(endsAt) } as Prisma.fiscalPeriodUncheckedCreateInput)
-      });
-      await prisma.$disconnect();
-      res.json(period);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
+  app.get(
+    "/api/tax/periods/:id",
+    authenticateToken,
+    checkPermission("taxes:read"),
+    async (req: Request, res: Response) => {
+      try {
+        const period = await storage.getFiscalPeriod(req.params.id);
+        if (!period) {
+          return res.status(404).json({ error: "Periodo no encontrado" });
+        }
+        res.json(period);
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
     }
-  });
+  );
 
-  // ==================== TAX CONTROL - FILINGS ====================
-  app.get("/api/tax-filings", authenticateToken, async (req: AuthRequest, res: Response) => {
-    try {
-      const filings = await prisma.clientTaxFiling.findMany({
-        include: { client: true, period: true }
-      });
-      res.json(filings);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
+  app.post(
+    "/api/tax/periods/create-year",
+    authenticateToken,
+    checkPermission("taxes:create"),
+    async (req: AuthRequest, res: Response) => {
+      try {
+        const year = parseInt(req.body?.year, 10);
+        if (!Number.isFinite(year)) {
+          return res.status(400).json({ error: "Año inválido" });
+        }
+        const periods = await storage.createFiscalYear(year);
+        res.json(periods);
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
     }
-  });
+  );
 
-  app.post("/api/tax-filings", authenticateToken, checkPermission("taxes:create"), async (req: AuthRequest, res: Response) => {
-    try {
-      const { clientId, taxModelCode, periodId, status, notes } = req.body;
-      const filing = await prisma.clientTaxFiling.create({
-        data: ({ clientId, taxModelCode, periodId, status: status || 'NOT_STARTED', notes } as Prisma.clientTaxFilingUncheckedCreateInput)
-      });
-      res.json(filing);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
+  app.post(
+    "/api/tax/periods/create",
+    authenticateToken,
+    checkPermission("taxes:create"),
+    async (req: AuthRequest, res: Response) => {
+      try {
+        const { year, kind, label, quarter, startsAt, endsAt } = req.body;
+        if (!year || !kind || !label || !startsAt || !endsAt) {
+          return res.status(400).json({ error: "Faltan campos obligatorios" });
+        }
+        const summary = await storage.createFiscalPeriod({
+          year: parseInt(year, 10),
+          kind: kind,
+          label,
+          quarter: quarter ?? null,
+          startsAt: new Date(startsAt),
+          endsAt: new Date(endsAt),
+        });
+        res.json(summary);
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
     }
-  });
+  );
 
-  app.patch("/api/tax-filings/:id", authenticateToken, checkPermission("taxes:update"), async (req: AuthRequest, res: Response) => {
-    try {
-      const { id } = req.params;
-      const { status, notes, presentedAt } = req.body;
-      const { PrismaClient } = await import("@prisma/client");
-      const prisma = new PrismaClient();
-      
-      const data: any = {};
-      if (status) data.status = status;
-      if (notes !== undefined) data.notes = notes;
-      if (presentedAt) data.presentedAt = new Date(presentedAt);
-
-      const filing = await prisma.clientTaxFiling.update({
-        where: { id },
-        data
-      });
-      await prisma.$disconnect();
-      res.json(filing);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
+  app.patch(
+    "/api/tax/periods/:id/status",
+    authenticateToken,
+    checkPermission("taxes:update"),
+    async (req: AuthRequest, res: Response) => {
+      try {
+        const { id } = req.params;
+        const { status } = req.body;
+        if (!status) {
+          return res.status(400).json({ error: "Estado requerido" });
+        }
+        const updated = await storage.toggleFiscalPeriodStatus(id, status, req.user?.id);
+        res.json(updated);
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
     }
-  });
+  );
 
-  app.post("/api/tax-filings/batch", authenticateToken, checkPermission("taxes:create"), async (req: AuthRequest, res: Response) => {
-    try {
-      const { clientId, taxModelCode, periodIds } = req.body;
-      const filings = await Promise.all(
-        periodIds.map((periodId: string) =>
-          prisma.clientTaxFiling.upsert({
-            where: {
-              clientId_taxModelCode_periodId: { clientId, taxModelCode, periodId }
-            },
-            create: ({ clientId, taxModelCode, periodId, status: 'NOT_STARTED' } as Prisma.clientTaxFilingUncheckedCreateInput),
-            update: {}
-          })
-        )
-      );
-      res.json(filings);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
+  // ==================== TAX FILINGS ====================
+  app.get(
+    "/api/tax/filings",
+    authenticateToken,
+    checkPermission("taxes:read"),
+    async (req: Request, res: Response) => {
+      try {
+        const filings = await storage.getTaxFilings({
+          periodId: req.query.periodId as string | undefined,
+          status: req.query.status as string | undefined,
+          model: req.query.model as string | undefined,
+          search: req.query.search as string | undefined,
+        });
+        res.json(filings);
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
     }
-  });
+  );
+
+  app.patch(
+    "/api/tax/filings/:id",
+    authenticateToken,
+    checkPermission("taxes:update"),
+    async (req: AuthRequest, res: Response) => {
+      try {
+        const isAdmin = (req.user as any)?.roleName === "Administrador";
+        const updated = await storage.updateTaxFiling(
+          req.params.id,
+          {
+            status: req.body.status ?? undefined,
+            notes: req.body.notes ?? undefined,
+            presentedAt: req.body.presentedAt ? new Date(req.body.presentedAt) : req.body.presentedAt === null ? null : undefined,
+            assigneeId: req.body.assigneeId ?? undefined,
+          },
+          { allowClosed: isAdmin }
+        );
+        res.json(updated);
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
 
   // Ejecutar verificación de recordatorios cada hora
   setInterval(() => {

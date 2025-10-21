@@ -16,15 +16,12 @@ import NotFound from "@/pages/not-found";
 import AuthPage from "@/pages/auth-page";
 import Dashboard from "@/pages/dashboard";
 import Clientes from "@/pages/clientes";
-import Impuestos from "@/pages/impuestos";
 import Tareas from "@/pages/tareas";
 import Manuales from "@/pages/manuales";
 import ManualView from "@/pages/manual-view";
 import ManualEditor from "@/pages/manual-editor";
 import Admin from "@/pages/admin";
 import Auditoria from "@/pages/auditoria";
-import ControlImpuestos from "@/pages/control-impuestos";
-import CalendarioAEAT from "@/pages/calendario-aeat";
 import Notificaciones from "@/pages/notificaciones";
 
 function ConnectionIndicator() {
@@ -99,9 +96,6 @@ function Router() {
               <Route path="/" component={Dashboard} />
               <Route path="/auth" component={AuthPage} />
               <Route path="/clientes" component={Clientes} />
-              <Route path="/impuestos" component={Impuestos} />
-              <Route path="/control-impuestos" component={ControlImpuestos} />
-              <Route path="/calendario-aeat" component={CalendarioAEAT} />
               <Route path="/tareas" component={Tareas} />
               <Route path="/manuales" component={Manuales} />
               <Route path="/manuales/nuevo" component={ManualEditor} />

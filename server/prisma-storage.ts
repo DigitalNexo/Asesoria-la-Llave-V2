@@ -12,7 +12,16 @@ import type {
   SystemSettings, InsertSystemSettings
 } from '../shared/schema';
 import { encryptPassword, decryptPassword } from './crypto-utils';
-import { TAX_RULES, TAX_MODEL_METADATA, type ClientType, type TaxPeriodicity } from '@shared/tax-rules';
+import {
+  TAX_RULES,
+  TAX_MODEL_METADATA,
+  TAX_CONTROL_MODEL_ORDER,
+  TAX_STATUS_DISPLAY,
+  NORMALIZED_TAX_STATUSES,
+  type ClientType,
+  type TaxPeriodicity,
+} from '@shared/tax-rules';
+import { calculateDerivedFields } from './services/tax-calendar-service';
 
 // Validar que DATABASE_URL esté configurada
 if (!process.env.DATABASE_URL) {
@@ -76,6 +85,137 @@ function mapPrismaClientTaxAssignment(assignment: any) {
 
 function getTaxModelName(code: string): string {
   return TAX_MODEL_METADATA[code]?.name ?? `Modelo ${code}`;
+}
+
+const TAX_CONTROL_MODELS = [...TAX_CONTROL_MODEL_ORDER] as readonly string[];
+
+const STATUS_PRIORITY: Record<string, number> = {
+  PRESENTADO: 6,
+  PRESENTED: 6,
+  CALCULADO: 5,
+  CALCULATED: 5,
+  IN_PROGRESS: 4,
+  COMPLETED: 4,
+  PENDIENTE: 2,
+  PENDING: 2,
+  NOT_STARTED: 1,
+};
+
+export interface TaxControlCellSummary {
+  assignmentId?: string;
+  active: boolean;
+  periodicity?: TaxPeriodicity | null;
+  startDate?: Date | null;
+  endDate?: Date | null;
+  activeFlag?: boolean | null;
+  status?: string | null;
+  statusUpdatedAt?: Date | null;
+  filingId?: string | null;
+  periodId?: string | null;
+  periodLabel?: string | null;
+}
+
+export interface TaxControlRowSummary {
+  clientId: string;
+  clientName: string;
+  nifCif: string;
+  clientType: string;
+  gestorId: string | null;
+  gestorName: string | null;
+  gestorEmail: string | null;
+  cells: Record<string, TaxControlCellSummary>;
+}
+
+export interface TaxControlMatrixResult {
+  rows: TaxControlRowSummary[];
+  models: readonly string[];
+  metadata: {
+    year: number | null;
+    quarter: number | null;
+    totalClients: number;
+    filters: {
+      type?: string | null;
+      gestorId?: string | null;
+      search?: string | null;
+    };
+  };
+}
+
+export interface TaxControlMatrixParams {
+  year?: number | string | null;
+  quarter?: number | string | null;
+  search?: string | null;
+  type?: string | null;
+  gestorId?: string | null;
+  model?: string | null;
+  periodicity?: string | null;
+}
+
+function normalizeStatus(rawStatus: string | null | undefined, isActive: boolean): string | null {
+  if (!rawStatus) {
+    return isActive ? "PENDIENTE" : null;
+  }
+  const upper = rawStatus.toUpperCase();
+  if (upper === "NOT_STARTED") return "PENDIENTE";
+  if (upper === "IN_PROGRESS") return "CALCULADO";
+  if (upper === "PRESENTED") return "PRESENTADO";
+  if (upper === "CALCULATED") return "CALCULADO";
+  if (upper === "PENDING" || upper === "NOT_STARTED") return "PENDIENTE";
+  if (NORMALIZED_TAX_STATUSES.includes(upper as any)) return upper;
+  return upper;
+}
+
+function formatPeriodLabel(period: any): string | null {
+  if (!period) return null;
+  if (period.quarter != null) {
+    return `${period.quarter}T/${period.year}`;
+  }
+  if (period.label) {
+    return `${period.label} ${period.year}`;
+  }
+  return `${period.year}`;
+}
+
+export interface FiscalPeriodSummary {
+  id: string;
+  year: number;
+  quarter: number | null;
+  label: string;
+  kind: string;
+  status: string;
+  startsAt: Date;
+  endsAt: Date;
+  lockedAt: Date | null;
+  totals: {
+    total: number;
+    notStarted: number;
+    inProgress: number;
+    presented: number;
+  };
+}
+
+export interface TaxFilingsFilters {
+  periodId?: string;
+  status?: string;
+  model?: string;
+  search?: string;
+}
+
+export interface TaxFilingRecord {
+  id: string;
+  clientId: string;
+  clientName: string;
+  nifCif: string;
+  gestorId: string | null;
+  gestorName: string | null;
+  taxModelCode: string;
+  periodId: string;
+  periodLabel: string | null;
+  status: string;
+  notes: string | null;
+  presentedAt: Date | null;
+  assigneeId: string | null;
+  assigneeName: string | null;
 }
 
 function mapPrismaClient(client: any): any {
@@ -390,29 +530,38 @@ export class PrismaStorage implements IStorage {
 
   async ensureTaxModelsConfigSeeded(): Promise<void> {
     const codes = Object.keys(TAX_RULES);
-    await Promise.all(
-      codes.map(async (code) => {
-        const rule = TAX_RULES[code];
-        await prisma.taxModelsConfig.upsert({
-          where: { code },
-          create: {
-            code,
-            name: getTaxModelName(code),
-            allowedTypes: rule.allowedTypes as unknown as Prisma.JsonArray,
-            allowedPeriods: rule.allowedPeriods as unknown as Prisma.JsonArray,
-            labels: rule.labels ? (rule.labels as unknown as Prisma.JsonArray) : undefined,
-            isActive: true,
-          },
-          update: {
-            name: getTaxModelName(code),
-            allowedTypes: rule.allowedTypes as unknown as Prisma.JsonArray,
-            allowedPeriods: rule.allowedPeriods as unknown as Prisma.JsonArray,
-            labels: rule.labels ? (rule.labels as unknown as Prisma.JsonArray) : undefined,
-            isActive: true,
-          },
-        });
-      }),
-    );
+    try {
+      await Promise.all(
+        codes.map(async (code) => {
+          const rule = TAX_RULES[code];
+          await prisma.taxModelsConfig.upsert({
+            where: { code },
+            create: {
+              code,
+              name: getTaxModelName(code),
+              allowedTypes: rule.allowedTypes as unknown as Prisma.JsonArray,
+              allowedPeriods: rule.allowedPeriods as unknown as Prisma.JsonArray,
+              labels: rule.labels ? (rule.labels as unknown as Prisma.JsonArray) : undefined,
+              isActive: true,
+            },
+            update: {
+              name: getTaxModelName(code),
+              allowedTypes: rule.allowedTypes as unknown as Prisma.JsonArray,
+              allowedPeriods: rule.allowedPeriods as unknown as Prisma.JsonArray,
+              labels: rule.labels ? (rule.labels as unknown as Prisma.JsonArray) : undefined,
+              isActive: true,
+            },
+          });
+        }),
+      );
+    } catch (error: any) {
+      if (error?.code === "P2021") {
+        throw new Error(
+          "La tabla tax_models_config no existe. Ejecuta `npx prisma db push` o `npm run prisma:push` para aplicar el esquema antes de iniciar el servidor."
+        );
+      }
+      throw error;
+    }
   }
 
   async getActiveTaxModelsConfig() {
@@ -553,6 +702,736 @@ export class PrismaStorage implements IStorage {
     return count > 0;
   }
 
+  async getTaxAssignmentHistory(assignmentId: string) {
+    const assignment = await prisma.clientTaxAssignment.findUnique({
+      where: { id: assignmentId },
+    });
+    if (!assignment) {
+      return [];
+    }
+
+    const filings = await prisma.clientTaxFiling.findMany({
+      where: {
+        clientId: assignment.clientId,
+        taxModelCode: assignment.taxModelCode,
+      },
+      include: {
+        period: true,
+      },
+      orderBy: [
+        { period: { year: 'desc' } },
+        { period: { quarter: 'desc' } },
+        { presentedAt: 'desc' },
+      ],
+    });
+
+    return filings.map((filing) => ({
+      id: filing.id,
+      status: normalizeStatus(filing.status, true),
+      rawStatus: filing.status,
+      presentedAt: filing.presentedAt,
+      notes: filing.notes,
+      period: filing.period
+        ? {
+            id: filing.period.id,
+            year: filing.period.year,
+            quarter: filing.period.quarter,
+            label: filing.period.label,
+            startsAt: filing.period.startsAt,
+            endsAt: filing.period.endsAt,
+          }
+        : null,
+    }));
+  }
+
+  private async getTaxModelConfigMap(client: Prisma.PrismaClient | Prisma.TransactionClient) {
+    const configs = await client.taxModelsConfig.findMany({ where: { isActive: true } });
+    const map = new Map<string, ReturnType<typeof mapPrismaTaxModelsConfig>>();
+    configs.forEach((config) => {
+      map.set(config.code, mapPrismaTaxModelsConfig(config));
+    });
+    return map;
+  }
+
+  private periodDescriptorsForYear(year: number) {
+    const descriptors: Array<{
+      label: string;
+      quarter?: number;
+      kind: Prisma.TaxPeriodType;
+      startsAt: Date;
+      endsAt: Date;
+    }> = [];
+
+    const quarterLastDay = (quarter: number) => {
+      const endMonth = quarter * 3; // 3,6,9,12
+      return new Date(Date.UTC(year, endMonth, 0));
+    };
+
+    for (let q = 1; q <= 4; q++) {
+      const startMonth = (q - 1) * 3;
+      const startsAt = new Date(Date.UTC(year, startMonth, 1));
+      const endsAt = quarterLastDay(q);
+      descriptors.push({
+        label: `${q}T`,
+        quarter: q,
+        kind: Prisma.TaxPeriodType.QUARTERLY,
+        startsAt,
+        endsAt,
+      });
+    }
+
+    // Annual period
+    descriptors.push({
+      label: "ANUAL",
+      kind: Prisma.TaxPeriodType.ANNUAL,
+      startsAt: new Date(Date.UTC(year, 0, 1)),
+      endsAt: new Date(Date.UTC(year, 11, 31)),
+    });
+
+    const specialMonths = [
+      { label: "Abril", month: 3 },
+      { label: "Octubre", month: 9 },
+      { label: "Diciembre", month: 11 },
+    ];
+
+    specialMonths.forEach(({ label, month }) => {
+      const startsAt = new Date(Date.UTC(year, month, 1));
+      const endsAt = new Date(Date.UTC(year, month + 1, 0));
+      descriptors.push({
+        label,
+        kind: Prisma.TaxPeriodType.SPECIAL,
+        startsAt,
+        endsAt,
+      });
+    });
+
+    return descriptors;
+  }
+
+  private async generateFilingsForPeriods(
+    client: Prisma.PrismaClient | Prisma.TransactionClient,
+    periods: Array<{ id: string; kind: Prisma.TaxPeriodType; label: string; year: number }>
+  ) {
+    if (periods.length === 0) return;
+
+    const assignments = await client.clientTaxAssignment.findMany({
+      where: {
+        activeFlag: true,
+        endDate: null,
+        client: { isActive: true },
+      },
+      include: {
+        client: {
+          select: {
+            id: true,
+            razonSocial: true,
+            isActive: true,
+          },
+        },
+      },
+    });
+
+    if (assignments.length === 0) return;
+
+    const configMap = await this.getTaxModelConfigMap(client);
+
+    for (const period of periods) {
+      for (const assignment of assignments) {
+        if (!this.periodMatchesAssignment(period, assignment, configMap)) continue;
+
+        await client.clientTaxFiling.upsert({
+          where: {
+            clientId_taxModelCode_periodId: {
+              clientId: assignment.clientId,
+              taxModelCode: assignment.taxModelCode,
+              periodId: period.id,
+            },
+          },
+          create: {
+            clientId: assignment.clientId,
+            taxModelCode: assignment.taxModelCode,
+            periodId: period.id,
+            status: Prisma.FilingStatus.NOT_STARTED,
+          },
+          update: {},
+        });
+      }
+    }
+  }
+
+  private periodMatchesAssignment(
+    period: { kind: Prisma.TaxPeriodType; label: string; year: number },
+    assignment: any,
+    configMap: Map<string, ReturnType<typeof mapPrismaTaxModelsConfig>>
+  ) {
+    if (!assignment.activeFlag || assignment.endDate) return false;
+    const code = assignment.taxModelCode;
+    const periodicity = (assignment.periodicidad || '').toUpperCase();
+    const config = configMap.get(code);
+
+    switch (period.kind) {
+      case Prisma.TaxPeriodType.QUARTERLY:
+        return periodicity === 'TRIMESTRAL';
+      case Prisma.TaxPeriodType.ANNUAL:
+        return periodicity === 'ANUAL';
+      case Prisma.TaxPeriodType.SPECIAL:
+        if (code !== '202') return false;
+        if (!config?.labels || config.labels.length === 0) return true;
+        return config.labels.some((label) => label.toLowerCase() === period.label.toLowerCase());
+      default:
+        return false;
+    }
+  }
+
+  async getFiscalPeriodsSummary(year?: number): Promise<FiscalPeriodSummary[]> {
+    const where: Prisma.fiscalPeriodWhereInput = {};
+    if (year) where.year = year;
+
+    const periods = await prisma.fiscalPeriod.findMany({
+      where,
+      orderBy: [{ year: 'desc' }, { startsAt: 'desc' }],
+      include: {
+        filings: {
+          select: {
+            id: true,
+            status: true,
+          },
+        },
+      },
+    });
+
+    return periods.map((period) => {
+      const totals = period.filings.reduce(
+        (acc, filing) => {
+          const status = filing.status as Prisma.FilingStatus;
+          acc.total += 1;
+          if (status === Prisma.FilingStatus.NOT_STARTED) acc.notStarted += 1;
+          if (status === Prisma.FilingStatus.IN_PROGRESS) acc.inProgress += 1;
+          if (status === Prisma.FilingStatus.PRESENTED) acc.presented += 1;
+          return acc;
+        },
+        { total: 0, notStarted: 0, inProgress: 0, presented: 0 }
+      );
+
+      return {
+        id: period.id,
+        year: period.year,
+        quarter: period.quarter ?? null,
+        label: period.label,
+        kind: period.kind,
+        status: period.status,
+        startsAt: period.startsAt,
+        endsAt: period.endsAt,
+        lockedAt: period.lockedAt,
+        totals,
+      };
+    });
+  }
+
+  async createFiscalYear(year: number): Promise<FiscalPeriodSummary[]> {
+    const descriptors = this.periodDescriptorsForYear(year);
+    const created: Prisma.fiscalPeriod[] = [];
+
+    await prisma.$transaction(async (tx) => {
+      for (const descriptor of descriptors) {
+        const period = await tx.fiscalPeriod.upsert({
+          where: {
+            year_label: {
+              year,
+              label: descriptor.label,
+            },
+          },
+          update: {
+            startsAt: descriptor.startsAt,
+            endsAt: descriptor.endsAt,
+            kind: descriptor.kind,
+            quarter: descriptor.quarter ?? null,
+          },
+          create: {
+            year,
+            quarter: descriptor.quarter ?? null,
+            label: descriptor.label,
+            kind: descriptor.kind,
+            startsAt: descriptor.startsAt,
+            endsAt: descriptor.endsAt,
+          },
+        });
+        created.push(period);
+      }
+
+      await this.generateFilingsForPeriods(
+        tx,
+        created.map((period) => ({
+          id: period.id,
+          kind: period.kind,
+          label: period.label,
+          year: period.year,
+        }))
+      );
+    });
+
+    return this.getFiscalPeriodsSummary(year);
+  }
+
+  async createFiscalPeriod(data: {
+    year: number;
+    kind: Prisma.TaxPeriodType;
+    label: string;
+    quarter?: number | null;
+    startsAt: Date;
+    endsAt: Date;
+  }): Promise<FiscalPeriodSummary> {
+    const period = await prisma.fiscalPeriod.upsert({
+      where: {
+        year_label: {
+          year: data.year,
+          label: data.label,
+        },
+      },
+      update: {
+        quarter: data.quarter ?? null,
+        kind: data.kind,
+        startsAt: data.startsAt,
+        endsAt: data.endsAt,
+      },
+      create: {
+        year: data.year,
+        quarter: data.quarter ?? null,
+        label: data.label,
+        kind: data.kind,
+        startsAt: data.startsAt,
+        endsAt: data.endsAt,
+      },
+    });
+
+    await this.generateFilingsForPeriods(prisma, [
+      { id: period.id, kind: period.kind, label: period.label, year: period.year },
+    ]);
+
+    const summaries = await this.getFiscalPeriodsSummary(data.year);
+    return summaries.find((item) => item.id === period.id) ?? summaries[0];
+  }
+
+  async getTaxFilings(filters: TaxFilingsFilters): Promise<TaxFilingRecord[]> {
+    const where: Prisma.clientTaxFilingWhereInput = {};
+    if (filters.periodId) where.periodId = filters.periodId;
+    if (filters.status) where.status = filters.status as Prisma.FilingStatus;
+    if (filters.model) where.taxModelCode = filters.model;
+    if (filters.search) {
+      where.client = {
+        razonSocial: { contains: filters.search, mode: 'insensitive' },
+      };
+    }
+
+    const filings = await prisma.clientTaxFiling.findMany({
+      where,
+      include: {
+        client: {
+          select: {
+            id: true,
+            razonSocial: true,
+            nifCif: true,
+            responsableAsignado: true,
+            responsable: {
+              select: {
+                username: true,
+              },
+            },
+          },
+        },
+        period: true,
+        assignee: {
+          select: {
+            id: true,
+            username: true,
+          },
+        },
+      },
+      orderBy: [{ period: { startsAt: 'desc' } }, { client: { razonSocial: 'asc' } }],
+    });
+
+    return filings.map((filing) => ({
+      id: filing.id,
+      clientId: filing.clientId,
+      clientName: filing.client?.razonSocial ?? "",
+      nifCif: filing.client?.nifCif ?? "",
+      gestorId: filing.client?.responsableAsignado ?? null,
+      gestorName: filing.client?.responsable?.username ?? null,
+      taxModelCode: filing.taxModelCode,
+      periodId: filing.periodId,
+      periodLabel: formatPeriodLabel(filing.period),
+      status: filing.status,
+      notes: filing.notes ?? null,
+      presentedAt: filing.presentedAt ?? null,
+      assigneeId: filing.assignee?.id ?? null,
+      assigneeName: filing.assignee?.username ?? null,
+    }));
+  }
+
+  async updateTaxFiling(
+    id: string,
+    data: {
+      status?: Prisma.FilingStatus;
+      notes?: string | null;
+      presentedAt?: Date | null;
+      assigneeId?: string | null;
+    },
+    options: { allowClosed?: boolean } = {}
+  ) {
+    const filing = await prisma.clientTaxFiling.findUnique({
+      where: { id },
+      include: {
+        period: true,
+      },
+    });
+
+    if (!filing) {
+      throw new Error("Declaración no encontrada");
+    }
+
+    if (filing.period?.status === Prisma.PeriodStatus.CLOSED && !options.allowClosed) {
+      throw new Error("El periodo está cerrado. Solo un administrador puede modificarlo.");
+    }
+
+    const updated = await prisma.clientTaxFiling.update({
+      where: { id },
+      data: {
+        status: data.status ?? filing.status,
+        notes: data.notes !== undefined ? data.notes : filing.notes,
+        presentedAt: data.presentedAt !== undefined ? data.presentedAt : filing.presentedAt,
+        assigneeId: data.assigneeId !== undefined ? data.assigneeId : filing.assigneeId,
+      },
+      include: {
+        client: {
+          select: {
+            id: true,
+            razonSocial: true,
+            nifCif: true,
+            responsableAsignado: true,
+            responsable: { select: { username: true } },
+          },
+        },
+        period: true,
+        assignee: { select: { id: true, username: true } },
+      },
+    });
+
+    return {
+      id: updated.id,
+      clientId: updated.clientId,
+      clientName: updated.client?.razonSocial ?? "",
+      nifCif: updated.client?.nifCif ?? "",
+      gestorId: updated.client?.responsableAsignado ?? null,
+      gestorName: updated.client?.responsable?.username ?? null,
+      taxModelCode: updated.taxModelCode,
+      periodId: updated.periodId,
+      periodLabel: formatPeriodLabel(updated.period),
+      status: updated.status,
+      notes: updated.notes ?? null,
+      presentedAt: updated.presentedAt ?? null,
+      assigneeId: updated.assignee?.id ?? null,
+      assigneeName: updated.assignee?.username ?? null,
+    } as TaxFilingRecord;
+  }
+
+  async toggleFiscalPeriodStatus(
+    id: string,
+    status: Prisma.PeriodStatus,
+    userId?: string
+  ) {
+    const updates: Prisma.fiscalPeriodUpdateInput = {
+      status,
+    };
+
+    if (status === Prisma.PeriodStatus.CLOSED) {
+      updates.lockedAt = new Date();
+      updates.closedBy = userId ?? null;
+    } else {
+      updates.lockedAt = null;
+      updates.closedBy = null;
+    }
+
+    return prisma.fiscalPeriod.update({
+      where: { id },
+      data: updates,
+    });
+  }
+
+  async getFiscalPeriod(id: string): Promise<FiscalPeriodSummary | null> {
+    const periods = await this.getFiscalPeriodsSummary();
+    return periods.find((period) => period.id === id) ?? null;
+  }
+
+  async getTaxControlMatrix(params: TaxControlMatrixParams = {}): Promise<TaxControlMatrixResult> {
+    const { type, gestorId, model, periodicity } = params;
+    const clientWhere: Prisma.ClientWhereInput = {};
+
+    if (type) {
+      clientWhere.tipo = type.toString().toUpperCase() as any;
+    }
+
+    if (gestorId) {
+      clientWhere.responsableAsignado = gestorId;
+    }
+
+    const clients = await prisma.client.findMany({
+      where: clientWhere,
+      orderBy: { razonSocial: 'asc' },
+      include: {
+        responsable: {
+          select: {
+            id: true,
+            username: true,
+            email: true,
+          },
+        },
+        taxAssignments: {
+          include: { taxModel: true },
+        },
+      },
+    });
+
+    const currentYear = new Date().getFullYear();
+    const requestedYear =
+      params.year === undefined || params.year === null || params.year === ''
+        ? null
+        : Number(params.year);
+    const selectedYear = Number.isFinite(requestedYear) ? Number(requestedYear) : currentYear;
+
+    const parsedQuarter = (() => {
+      if (params.quarter === undefined || params.quarter === null || params.quarter === '') {
+        return null;
+      }
+      const raw = typeof params.quarter === 'number' ? params.quarter : Number(String(params.quarter).replace(/[^0-9]/g, ''));
+      return Number.isFinite(raw) ? Number(raw) : null;
+    })();
+
+    const periodWhere: Prisma.fiscalPeriodWhereInput = {};
+    if (selectedYear) {
+      periodWhere.year = selectedYear;
+    }
+    if (parsedQuarter !== null) {
+      periodWhere.quarter = parsedQuarter;
+    }
+
+    const fiscalPeriods = await prisma.fiscalPeriod.findMany({
+      where: periodWhere,
+      select: {
+        id: true,
+        year: true,
+        quarter: true,
+        endsAt: true,
+        label: true,
+      },
+    });
+
+    const periodIds = fiscalPeriods.map((period) => period.id);
+
+    const filingWhere: Prisma.clientTaxFilingWhereInput = {};
+    if (periodIds.length > 0) {
+      filingWhere.periodId = { in: periodIds };
+    } else if (selectedYear) {
+      filingWhere.period = { year: selectedYear };
+    }
+
+    const filings = await prisma.clientTaxFiling.findMany({
+      where: filingWhere,
+      include: {
+        period: true,
+      },
+    });
+
+    const filingsMap = new Map<
+      string,
+      {
+        filing: typeof filings[number];
+        rank: number;
+      }
+    >();
+
+    for (const filing of filings) {
+      const key = `${filing.clientId}_${filing.taxModelCode}`;
+      const statusKey = (filing.status || '').toUpperCase();
+      const rank = STATUS_PRIORITY[statusKey] ?? 0;
+      const existing = filingsMap.get(key);
+      if (!existing) {
+        filingsMap.set(key, { filing, rank });
+        continue;
+      }
+
+      const existingDate = existing.filing.period?.endsAt
+        ? new Date(existing.filing.period.endsAt).getTime()
+        : 0;
+      const candidateDate = filing.period?.endsAt ? new Date(filing.period.endsAt).getTime() : 0;
+
+      if (rank > existing.rank || (rank === existing.rank && candidateDate > existingDate)) {
+        filingsMap.set(key, { filing, rank });
+      }
+    }
+
+    const searchValue = typeof params.search === 'string' ? params.search.trim() : '';
+    const searchLower = searchValue.toLowerCase();
+    const searchUpper = searchValue.toUpperCase();
+    const hasSearch = searchValue.length > 0;
+
+    const rows: TaxControlRowSummary[] = [];
+
+    const startOfYear = new Date(Date.UTC(selectedYear, 0, 1, 0, 0, 0));
+    const endOfYear = new Date(Date.UTC(selectedYear, 11, 31, 23, 59, 59));
+
+    for (const client of clients) {
+      const cells: Record<string, TaxControlCellSummary> = {};
+      for (const code of TAX_CONTROL_MODELS) {
+        cells[code] = { active: false };
+      }
+
+      for (const assignment of client.taxAssignments) {
+        const code = assignment.taxModelCode;
+        if (!TAX_CONTROL_MODELS.includes(code)) continue;
+        if (model && code !== String(model).toUpperCase()) continue;
+        if (periodicity && String(assignment.periodicidad).toUpperCase() !== String(periodicity).toUpperCase()) continue;
+
+        const startDate = assignment.startDate ? new Date(assignment.startDate) : null;
+        const endDate = assignment.endDate ? new Date(assignment.endDate) : null;
+        const effectiveActive = Boolean(assignment.activeFlag) &&
+          (!startDate || startDate <= endOfYear) &&
+          (!endDate || endDate >= startOfYear);
+        const filingEntry = filingsMap.get(`${client.id}_${code}`);
+        const filing = filingEntry?.filing;
+        const normalizedStatus = normalizeStatus(filing?.status, effectiveActive);
+
+        cells[code] = {
+          assignmentId: assignment.id,
+          active: effectiveActive,
+          periodicity: assignment.periodicidad,
+          startDate: assignment.startDate,
+          endDate: assignment.endDate,
+          activeFlag: assignment.activeFlag,
+          status: normalizedStatus,
+          statusUpdatedAt: filing?.presentedAt ?? filing?.period?.endsAt ?? null,
+          filingId: filing?.id ?? null,
+          periodId: filing?.periodId ?? null,
+          periodLabel: formatPeriodLabel(filing?.period),
+        };
+      }
+
+      let matchesSearch = true;
+      if (hasSearch) {
+        const matchesClient =
+          client.razonSocial?.toLowerCase().includes(searchLower) ||
+          client.nifCif?.toLowerCase().includes(searchLower);
+        const matchesModel = TAX_CONTROL_MODELS.some(
+          (code) =>
+            code.includes(searchUpper) &&
+            (cells[code].assignmentId || cells[code].active || cells[code].status)
+        );
+        matchesSearch = matchesClient || matchesModel;
+      }
+
+      if (!matchesSearch) {
+        continue;
+      }
+
+      // Mostrar solo clientes con al menos un modelo activo
+      const hasAnyActive = Object.values(cells).some((c) => c.active === true);
+      if (!hasAnyActive) {
+        continue;
+      }
+
+      rows.push({
+        clientId: client.id,
+        clientName: client.razonSocial,
+        nifCif: client.nifCif,
+        clientType: client.tipo,
+        gestorId: client.responsableAsignado ?? null,
+        gestorName: client.responsable?.username ?? null,
+        gestorEmail: client.responsable?.email ?? null,
+        cells,
+      });
+    }
+
+    return {
+      rows,
+      models: TAX_CONTROL_MODELS,
+      metadata: {
+        year: selectedYear ?? null,
+        quarter: parsedQuarter,
+        totalClients: rows.length,
+        filters: {
+          type: type ?? null,
+          gestorId: gestorId ?? null,
+          search: hasSearch ? searchValue : null,
+        },
+      },
+    };
+  }
+
+  /**
+   * Genera declaraciones faltantes para un año dado a partir de obligaciones activas
+   */
+  async ensureDeclarationsForYear(year: number) {
+    const startOfYear = new Date(Date.UTC(year, 0, 1, 0, 0, 0));
+    const endOfYear = new Date(Date.UTC(year, 11, 31, 23, 59, 59));
+
+    // Obligaciones activas en el año (fechaInicio <= fin de año) y (fechaFin NULL o >= inicio de año) y activo=true
+    const obligaciones = await prisma.obligacionFiscal.findMany({
+      where: {
+        activo: true,
+        OR: [
+          { fechaFin: null },
+          { fechaFin: { gte: startOfYear } },
+        ],
+        fechaInicio: { lte: endOfYear },
+      },
+      include: { impuesto: true, cliente: true },
+    });
+
+    let created = 0;
+    let skipped = 0;
+
+    for (const ob of obligaciones) {
+      const modelCode = ob.impuesto?.modelo || null;
+      if (!modelCode) {
+        skipped++;
+        continue;
+      }
+
+      // Selección de periodos según periodicidad
+      const where: any = { modelCode, year };
+      // Para mensual: todos M01..M12; trimestral: 1T..4T; anual: ANUAL
+      if (ob.periodicidad === 'MENSUAL') {
+        where.period = { in: ['M01','M02','M03','M04','M05','M06','M07','M08','M09','M10','M11','M12'] };
+      } else if (ob.periodicidad === 'TRIMESTRAL') {
+        where.period = { in: ['1T','2T','3T','4T'] };
+      } else {
+        where.period = 'ANUAL';
+      }
+
+      const periods = await prisma.taxCalendar.findMany({ where, select: { id: true } });
+
+      for (const p of periods) {
+        const exists = await prisma.declaracion.findFirst({
+          where: { obligacionId: ob.id, taxCalendarId: p.id },
+          select: { id: true },
+        });
+        if (exists) {
+          skipped++;
+          continue;
+        }
+        await prisma.declaracion.create({
+          data: {
+            obligacionId: ob.id,
+            taxCalendarId: p.id,
+            estado: 'PENDIENTE',
+          },
+        });
+        created++;
+      }
+    }
+
+    return { year, obligaciones: obligaciones.length, created, skipped };
+  }
+
   // ==================== IMPUESTO METHODS ====================
   async getAllImpuestos() {
     return await prisma.impuesto.findMany({
@@ -652,49 +1531,124 @@ export class PrismaStorage implements IStorage {
     return true;
   }
 
-  // ==================== CALENDARIO AEAT METHODS ====================
-  async getAllCalendariosAEAT() {
-    return await prisma.calendarioAEAT.findMany({
+  // ==================== TAX CALENDAR METHODS ====================
+  async listTaxCalendar(params?: { year?: number; modelCode?: string; active?: boolean }) {
+    const where: any = {};
+
+    if (typeof params?.year === "number") {
+      where.year = params.year;
+    }
+
+    if (params?.modelCode) {
+      where.modelCode = params.modelCode;
+    }
+
+    if (typeof params?.active === "boolean") {
+      where.active = params.active;
+    }
+
+    return await prisma.taxCalendar.findMany({
+      where,
       orderBy: [
-        { periodoContable: 'desc' },
-        { modelo: 'asc' }
-      ]
+        { year: "desc" },
+        { modelCode: "asc" },
+        { period: "asc" },
+      ],
     });
   }
 
-  async getCalendarioAEAT(id: string) {
-    return await prisma.calendarioAEAT.findUnique({
-      where: { id }
-    });
-  }
-
-  async getCalendariosByModelo(modelo: string) {
-    return await prisma.calendarioAEAT.findMany({
-      where: { modelo },
-      orderBy: [
-        { periodoContable: 'desc' }
-      ]
-    });
-  }
-
-  async createCalendarioAEAT(data: any) {
-    return await prisma.calendarioAEAT.create({
-      data
-    });
-  }
-
-  async updateCalendarioAEAT(id: string, data: any) {
-    return await prisma.calendarioAEAT.update({
+  async getTaxCalendar(id: string) {
+    return await prisma.taxCalendar.findUnique({
       where: { id },
-      data
     });
   }
 
-  async deleteCalendarioAEAT(id: string) {
-    await prisma.calendarioAEAT.delete({
-      where: { id }
+  async createTaxCalendar(data: any) {
+    const startDate = new Date(data.startDate);
+    const endDate = new Date(data.endDate);
+    const derived = calculateDerivedFields(startDate, endDate);
+
+    return await prisma.taxCalendar.create({
+      data: {
+        ...data,
+        startDate,
+        endDate,
+        ...derived,
+      },
+    });
+  }
+
+  async updateTaxCalendar(id: string, data: any) {
+    const existing = await prisma.taxCalendar.findUnique({
+      where: { id },
+    });
+
+    if (!existing) {
+      throw new Error("Tax calendar entry not found");
+    }
+
+    const startDate = data.startDate ? new Date(data.startDate) : existing.startDate;
+    const endDate = data.endDate ? new Date(data.endDate) : existing.endDate;
+    const derived = calculateDerivedFields(startDate, endDate);
+
+    return await prisma.taxCalendar.update({
+      where: { id },
+      data: {
+        ...data,
+        startDate,
+        endDate,
+        ...derived,
+      },
+    });
+  }
+
+  async deleteTaxCalendar(id: string) {
+    await prisma.taxCalendar.delete({
+      where: { id },
     });
     return true;
+  }
+
+  async cloneTaxCalendarYear(year: number) {
+    const items = await prisma.taxCalendar.findMany({
+      where: { year },
+    });
+
+    if (!items.length) return [];
+
+    const targetYear = year + 1;
+    const now = new Date();
+
+    const clonesData = items.map(item => {
+      const start = new Date(item.startDate);
+      const end = new Date(item.endDate);
+      start.setFullYear(start.getFullYear() + 1);
+      end.setFullYear(end.getFullYear() + 1);
+
+      const derived = calculateDerivedFields(start, end);
+
+      return {
+        modelCode: item.modelCode,
+        period: item.period,
+        year: targetYear,
+        startDate: start,
+        endDate: end,
+        status: derived.status,
+        daysToStart: derived.daysToStart,
+        daysToEnd: derived.daysToEnd,
+        active: item.active,
+        createdAt: now,
+        updatedAt: now,
+      };
+    });
+
+    const created = await prisma.$transaction(
+      clonesData.map(data =>
+        prisma.taxCalendar.create({ data })
+      )
+    );
+
+    return created;
   }
 
   // ==================== DECLARACION METHODS ====================
@@ -757,14 +1711,6 @@ export class PrismaStorage implements IStorage {
         }
       },
       orderBy: { fechaPresentacion: 'desc' }
-    });
-  }
-
-  // Calendarios por impuesto (implementación requerida por IStorage)
-  async getCalendariosByImpuesto(impuestoId: string) {
-    return await prisma.calendarioAEAT.findMany({
-      where: { modelo: impuestoId },
-      orderBy: [{ periodoContable: 'desc' }, { modelo: 'asc' }]
     });
   }
 

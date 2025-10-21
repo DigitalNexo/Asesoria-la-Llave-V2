@@ -255,6 +255,13 @@ export function TaxAssignmentDialog({
                       Presentaciones en: {modelLabels.labels.join(", ")}
                     </p>
                   )}
+                  {selectedPeriodicity && (
+                    <p className="text-xs text-muted-foreground">
+                      {selectedPeriodicity === "MENSUAL" && "Se generarán periodos M01..M12 cada año."}
+                      {selectedPeriodicity === "TRIMESTRAL" && "Se generarán 1T, 2T, 3T y 4T cada año."}
+                      {selectedPeriodicity === "ANUAL" && "Una presentación anual por ejercicio."}
+                    </p>
+                  )}
                   <FormMessage />
                 </FormItem>
               )}

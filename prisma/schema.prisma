@@ -69,6 +69,23 @@ enum StorageType {
   SMB
 }
 
+enum PeriodStatus {
+  OPEN
+  CLOSED
+}
+
+enum FilingStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  PRESENTED
+}
+
+enum TaxPeriodType {
+  QUARTERLY
+  ANNUAL
+  SPECIAL
+}
+
 enum Periodicidad {
   MENSUAL
   TRIMESTRAL
@@ -85,6 +102,12 @@ enum EstadoDeclaracion {
 enum TipoNotificacion {
   SOLICITUD_INFO
   CONFIRMACION_PRESENTACION
+}
+
+enum TaxPeriodStatus {
+  PENDIENTE
+  ABIERTO
+  CERRADO
 }
 
 // ==================== ROLES & PERMISSIONS ====================
@@ -158,6 +181,8 @@ model User {
   scheduledNotificationsCreated ScheduledNotification[] @relation("ScheduledNotificationCreator")
   backupsCreated                SystemBackup[]          @relation("BackupCreator")
   updatesInitiated              SystemUpdate[]          @relation("UpdateInitiator")
+  filingsAssigned               clientTaxFiling[]       @relation("FilingAssignee")
+  periodsClosed                 fiscalPeriod[]          @relation("PeriodClosedBy")
 
   @@index([roleId])
   @@map("users")
@@ -633,32 +658,47 @@ model ObligacionFiscal {
   @@map("obligaciones_fiscales")
 }
 
-// Calendario oficial de la AEAT (períodos y fechas límite por modelo)
-model CalendarioAEAT {
-  id              String       @id @default(uuid()) @db.VarChar(36)
-  modelo          String       @db.VarChar(10) // Ej: 303, 111, 200
-  periodicidad    Periodicidad // MENSUAL, TRIMESTRAL, ANUAL
-  periodoContable String       @map("periodo_contable") @db.VarChar(20) // Ej: 2025-Q2, 2025-04, 2025
-  fechaInicio     DateTime     @map("fecha_inicio") @db.DateTime(3) // Inicio del período
-  fechaFin        DateTime     @map("fecha_fin") @db.DateTime(3) // Fecha límite de presentación
-  createdAt       DateTime     @default(now()) @map("created_at") @db.DateTime(3)
-  updatedAt       DateTime     @updatedAt @map("updated_at") @db.DateTime(3)
+// Calendario fiscal oficial (periodos y fechas por modelo)
+model TaxCalendar {
+  id          String          @id @default(cuid()) @db.VarChar(36)
+  modelCode   String          @db.VarChar(20)
+  period      String          @db.VarChar(20)
+  year        Int
+  startDate   DateTime        @map("start_date") @db.DateTime(3)
+  endDate     DateTime        @map("end_date") @db.DateTime(3)
+  status      TaxPeriodStatus @default(PENDIENTE)
+  daysToStart Int?            @map("days_to_start")
+  daysToEnd   Int?            @map("days_to_end")
+  active      Boolean         @default(true)
+  createdAt   DateTime        @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt   DateTime        @updatedAt @map("updated_at") @db.DateTime(3)
 
-  // Relations
-  declaraciones Declaracion[]
+  @@unique([modelCode, period, year])
+  @@index([year, status])
+  @@index([modelCode])
+  @@map("tax_calendar")
+}
 
-  @@unique([modelo, periodicidad, periodoContable])
-  @@index([periodoContable])
-  @@index([modelo])
-  @@index([fechaFin]) // Para búsquedas de vencimientos próximos
+/// Legacy table preserved for historical data migration. Ignored by Prisma to avoid accidental drops.
+model CalendarioAEATLegacy {
+  id              String        @id @default(uuid()) @db.VarChar(36)
+  modelo          String        @db.VarChar(10)
+  periodicidad    Periodicidad
+  periodoContable String        @map("periodo_contable") @db.VarChar(20)
+  fechaInicio     DateTime      @map("fecha_inicio") @db.DateTime(3)
+  fechaFin        DateTime      @map("fecha_fin") @db.DateTime(3)
+  createdAt       DateTime      @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt       DateTime      @updatedAt @map("updated_at") @db.DateTime(3)
+
   @@map("calendario_aeat")
+  @@ignore
 }
 
 // Declaraciones individuales (seguimiento de presentación por período)
 model Declaracion {
   id                String            @id @default(uuid()) @db.VarChar(36)
   obligacionId      String            @map("obligacion_id") @db.VarChar(36)
-  calendarioId      String            @map("calendario_id") @db.VarChar(36)
+  taxCalendarId     String?           @map("calendario_id") @db.VarChar(36)
   estado            EstadoDeclaracion @default(PENDIENTE) // PENDIENTE, CALCULADO, PRESENTADO
   fechaPresentacion DateTime?         @map("fecha_presentacion") @db.DateTime(3) // Solo si PRESENTADO
   archivoPdf        String?           @map("archivo_pdf") @db.VarChar(500) // Ruta al justificante
@@ -668,10 +708,8 @@ model Declaracion {
 
   // Relations
   obligacion ObligacionFiscal @relation(fields: [obligacionId], references: [id], onDelete: Cascade)
-  calendario CalendarioAEAT   @relation(fields: [calendarioId], references: [id], onDelete: Cascade)
-
   @@index([obligacionId])
-  @@index([calendarioId])
+  @@index([taxCalendarId])
   @@index([estado])
   @@index([fechaPresentacion])
   @@map("declaraciones")
@@ -786,31 +824,39 @@ model clientTaxRequirement {
 }
 
 model fiscalPeriod {
-  id       String   @id @default(uuid()) @db.VarChar(36)
+  id       String        @id @default(uuid()) @db.VarChar(36)
   year     Int
-  quarter  Int
-  label    String   @db.VarChar(50)
-  startsAt DateTime @map("starts_at") @db.DateTime(3)
-  endsAt   DateTime @map("ends_at") @db.DateTime(3)
+  quarter  Int?
+  label    String        @db.VarChar(50)
+  kind     TaxPeriodType @default(QUARTERLY)
+  startsAt DateTime      @map("starts_at") @db.DateTime(3)
+  endsAt   DateTime      @map("ends_at") @db.DateTime(3)
+  status   PeriodStatus  @default(OPEN)
+  lockedAt DateTime?     @map("locked_at") @db.DateTime(3)
+  closedBy String?       @map("closed_by") @db.VarChar(36)
 
   // Relations
-  filings clientTaxFiling[]
+  filings      clientTaxFiling[]
+  closedByUser User?             @relation("PeriodClosedBy", fields: [closedBy], references: [id], onDelete: SetNull)
 
+  @@unique([year, label])
   @@map("fiscal_periods")
 }
 
 model clientTaxFiling {
-  id           String    @id @default(uuid()) @db.VarChar(36)
-  clientId     String    @map("client_id") @db.VarChar(36)
-  taxModelCode String    @map("tax_model_code") @db.VarChar(50)
-  periodId     String    @map("period_id") @db.VarChar(36)
-  status       String    @db.VarChar(50)
-  notes        String?   @db.Text
-  presentedAt  DateTime? @map("presented_at") @db.DateTime(3)
+  id           String       @id @default(uuid()) @db.VarChar(36)
+  clientId     String       @map("client_id") @db.VarChar(36)
+  taxModelCode String       @map("tax_model_code") @db.VarChar(50)
+  periodId     String       @map("period_id") @db.VarChar(36)
+  status       FilingStatus @default(NOT_STARTED)
+  notes        String?      @db.Text
+  presentedAt  DateTime?    @map("presented_at") @db.DateTime(3)
+  assigneeId   String?      @map("assignee_id") @db.VarChar(36)
 
   // Relations
-  client Client?       @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  period fiscalPeriod? @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  client   Client?       @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  period   fiscalPeriod? @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  assignee User?         @relation("FilingAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
 
   @@unique([clientId, taxModelCode, periodId], map: "clientId_taxModelCode_periodId")
   @@map("client_tax_filings")

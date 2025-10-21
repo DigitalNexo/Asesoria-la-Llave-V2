@@ -59,8 +59,6 @@ export function GlobalSearch() {
       setLocation('/clientes');
     } else if (type === 'tarea') {
       setLocation('/tareas');
-    } else if (type === 'impuesto') {
-      setLocation('/impuestos');
     } else if (type === 'manual') {
       setLocation(`/manuales/${id}`);
     }
@@ -130,23 +128,7 @@ export function GlobalSearch() {
             </CommandGroup>
           )}
 
-          {results && results.impuestos.length > 0 && (
-            <CommandGroup heading="Impuestos">
-              {results.impuestos.map((impuesto: any) => (
-                <CommandItem
-                  key={impuesto.id}
-                  onSelect={() => handleSelect('impuesto', impuesto.id)}
-                  data-testid={`search-result-tax-${impuesto.id}`}
-                >
-                  <FileTextIcon className="mr-2 h-4 w-4" />
-                  <div className="flex flex-col">
-                    <span>{impuesto.client?.razonSocial} - Modelo {impuesto.model?.nombre}</span>
-                    <span className="text-xs text-muted-foreground">{impuesto.estado}</span>
-                  </div>
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          )}
+          {null}
 
           {results && results.manuales.length > 0 && (
             <CommandGroup heading="Manuales">

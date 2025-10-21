@@ -7,9 +7,7 @@ import {
   Settings,
   LogOut,
   Shield,
-  Grid3x3,
   Bell,
-  Calendar
 } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import {
@@ -27,7 +25,7 @@ import { useAuth } from "@/contexts/auth-context";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 
-const menuItems = [
+const mainMenuItems = [
   {
     title: "Dashboard",
     url: "/",
@@ -41,22 +39,7 @@ const menuItems = [
     roles: ["Administrador", "Gestor", "Solo Lectura"],
   },
   {
-    title: "Impuestos",
-    url: "/impuestos",
-    icon: FileText,
-    roles: ["Administrador", "Gestor", "Solo Lectura"],
-  },
-  {
-    title: "Control Impuestos",
-    url: "/control-impuestos",
-    icon: Grid3x3,
-    roles: ["Administrador", "Gestor", "Solo Lectura"],
-  },
-  {
-    title: "Calendario AEAT",
-    url: "/calendario-aeat",
-    icon: Calendar,
-    roles: ["Administrador", "Gestor", "Solo Lectura"],
+    // Impuestos eliminado
   },
   {
     title: "Tareas",
@@ -94,8 +77,8 @@ export function AppSidebar() {
   const [location] = useLocation();
   const { user, logout } = useAuth();
 
-  const filteredItems = menuItems.filter((item) => 
-    user && (user as any).roleName && item.roles.includes((user as any).roleName)
+  const filteredMain = mainMenuItems.filter((item) =>
+    user && (user as any).roleName && Array.isArray(item.roles) && item.roles.includes((user as any).roleName)
   );
 
   const getInitials = (name: string) => {
@@ -119,7 +102,7 @@ export function AppSidebar() {
           <SidebarGroupLabel>Navegación</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {filteredItems.map((item) => (
+              {filteredMain.map((item) => (
                 <SidebarMenuItem key={item.title}>
                   <SidebarMenuButton asChild isActive={location === item.url}>
                     <Link href={item.url} data-testid={`link-${item.title.toLowerCase()}`}>

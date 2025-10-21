@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { 
+import {
   type User, type InsertUser,
   type Client, type InsertClient,
   type Task, type InsertTask,
@@ -11,6 +11,7 @@ import {
   type SystemSettings, type InsertSystemSettings
 } from "@shared/schema";
 import { randomUUID } from "crypto";
+import { calculateDerivedFields } from "./services/tax-calendar-service";
 
 export interface IStorage {
   // Users
@@ -46,13 +47,13 @@ export interface IStorage {
   updateObligacionFiscal(id: string, data: any): Promise<any>;
   deleteObligacionFiscal(id: string): Promise<boolean>;
 
-  // Calendario AEAT
-  getAllCalendariosAEAT(): Promise<any[]>;
-  getCalendarioAEAT(id: string): Promise<any>;
-  getCalendariosByImpuesto(impuestoId: string): Promise<any[]>;
-  createCalendarioAEAT(data: any): Promise<any>;
-  updateCalendarioAEAT(id: string, data: any): Promise<any>;
-  deleteCalendarioAEAT(id: string): Promise<boolean>;
+  // Tax Calendar
+  listTaxCalendar(params?: { year?: number; modelCode?: string; active?: boolean }): Promise<any[]>;
+  getTaxCalendar(id: string): Promise<any>;
+  createTaxCalendar(data: any): Promise<any>;
+  updateTaxCalendar(id: string, data: any): Promise<any>;
+  deleteTaxCalendar(id: string): Promise<boolean>;
+  cloneTaxCalendarYear(year: number): Promise<any[]>;
 
   // Declaraciones
   getAllDeclaraciones(): Promise<any[]>;
@@ -141,6 +142,16 @@ export interface IStorage {
   createScheduledNotification(notification: any): Promise<any>;
   updateScheduledNotification(id: string, notification: any): Promise<any>;
   deleteScheduledNotification(id: string): Promise<boolean>;
+
+  // Tax control 2.0
+  getTaxAssignmentHistory(assignmentId: string): Promise<any[]>;
+  getFiscalPeriodsSummary(year?: number): Promise<any[]>;
+  getFiscalPeriod(id: string): Promise<any | null>;
+  createFiscalYear(year: number): Promise<any[]>;
+  createFiscalPeriod(data: any): Promise<any>;
+  toggleFiscalPeriodStatus(id: string, status: any, userId?: string): Promise<any>;
+  getTaxFilings(filters: any): Promise<any[]>;
+  updateTaxFiling(id: string, data: any, options?: any): Promise<any>;
 }
 
 export class MemStorage {
@@ -148,7 +159,7 @@ export class MemStorage {
   private clients: Map<string, any> = new Map();
   private impuestos: Map<string, any> = new Map();
   private obligacionesFiscales: Map<string, any> = new Map();
-  private calendariosAEAT: Map<string, any> = new Map();
+  private taxCalendars: Map<string, any> = new Map();
   private declaraciones: Map<string, any> = new Map();
   private tasks: Map<string, any> = new Map();
   private manuals: Map<string, any> = new Map();
@@ -509,36 +520,104 @@ export class MemStorage {
     return this.obligacionesFiscales.delete(id);
   }
 
-  // Calendario AEAT methods
-  async getAllCalendariosAEAT(): Promise<any[]> {
-    return Array.from(this.calendariosAEAT.values());
+  // Tax calendar methods
+  async listTaxCalendar(params?: { year?: number; modelCode?: string; active?: boolean }): Promise<any[]> {
+    let items = Array.from(this.taxCalendars.values());
+    if (!params) return items;
+
+    if (typeof params.year === "number") {
+      items = items.filter(item => item.year === params.year);
+    }
+
+    if (params.modelCode) {
+      items = items.filter(item => item.modelCode === params.modelCode);
+    }
+
+    if (typeof params.active === "boolean") {
+      items = items.filter(item => item.active === params.active);
+    }
+
+    return items;
   }
 
-  async getCalendarioAEAT(id: string): Promise<any> {
-    return this.calendariosAEAT.get(id);
+  async getTaxCalendar(id: string): Promise<any> {
+    return this.taxCalendars.get(id);
   }
 
-  async getCalendariosByImpuesto(impuestoId: string): Promise<any[]> {
-    return Array.from(this.calendariosAEAT.values()).filter(c => c.impuestoId === impuestoId);
-  }
-
-  async createCalendarioAEAT(data: any): Promise<any> {
+  async createTaxCalendar(data: any): Promise<any> {
     const id = randomUUID();
-    const calendario = { id, ...data };
-    this.calendariosAEAT.set(id, calendario);
+    const startDate = new Date(data.startDate);
+    const endDate = new Date(data.endDate);
+    const derived = calculateDerivedFields(startDate, endDate);
+    const calendario = {
+      id,
+      ...data,
+      startDate,
+      endDate,
+      status: derived.status,
+      daysToStart: derived.daysToStart,
+      daysToEnd: derived.daysToEnd,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    this.taxCalendars.set(id, calendario);
     return calendario;
   }
 
-  async updateCalendarioAEAT(id: string, data: any): Promise<any> {
-    const calendario = this.calendariosAEAT.get(id);
-    if (!calendario) throw new Error('Calendario not found');
-    const updated = { ...calendario, ...data };
-    this.calendariosAEAT.set(id, updated);
+  async updateTaxCalendar(id: string, data: any): Promise<any> {
+    const calendario = this.taxCalendars.get(id);
+    if (!calendario) throw new Error("Tax calendar not found");
+    const startDate = data.startDate ? new Date(data.startDate) : new Date(calendario.startDate);
+    const endDate = data.endDate ? new Date(data.endDate) : new Date(calendario.endDate);
+    const derived = calculateDerivedFields(startDate, endDate);
+    const updated = {
+      ...calendario,
+      ...data,
+      startDate,
+      endDate,
+      status: derived.status,
+      daysToStart: derived.daysToStart,
+      daysToEnd: derived.daysToEnd,
+      updatedAt: new Date(),
+    };
+    this.taxCalendars.set(id, updated);
     return updated;
   }
 
-  async deleteCalendarioAEAT(id: string): Promise<boolean> {
-    return this.calendariosAEAT.delete(id);
+  async deleteTaxCalendar(id: string): Promise<boolean> {
+    return this.taxCalendars.delete(id);
+  }
+
+  async cloneTaxCalendarYear(year: number): Promise<any[]> {
+    const source = Array.from(this.taxCalendars.values()).filter(item => item.year === year);
+    if (source.length === 0) return [];
+
+    const targetYear = year + 1;
+    const clones = source.map(item => {
+      const startDate = new Date(item.startDate);
+      const endDate = new Date(item.endDate);
+      startDate.setFullYear(startDate.getFullYear() + 1);
+      endDate.setFullYear(endDate.getFullYear() + 1);
+      const derived = calculateDerivedFields(startDate, endDate);
+
+      const cloned = {
+        ...item,
+        id: randomUUID(),
+        year: targetYear,
+        startDate,
+        endDate,
+        status: derived.status,
+        daysToStart: derived.daysToStart,
+        daysToEnd: derived.daysToEnd,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      this.taxCalendars.set(cloned.id, cloned);
+      return cloned;
+    });
+
+    return clones;
   }
 
   // Declaraciones methods

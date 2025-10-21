@@ -3,6 +3,8 @@ import type { PrismaClient } from "@prisma/client";
 import nodemailer from "nodemailer";
 import { addDays, format, isBefore, parseISO } from "date-fns";
 import { es } from "date-fns/locale";
+import { prismaStorage as storage } from "./prisma-storage";
+import { calculateDerivedFields } from "./services/tax-calendar-service";
 
 // Prisma client will be injected by server/index.ts
 let prisma: PrismaClient;
@@ -212,6 +214,59 @@ export const taxRemindersJob = cron.createTask("0 8 * * *", async () => {
 });
 
 /**
+ * Job: Recalcular estado del calendario fiscal (cada día a medianoche)
+ */
+export const taxCalendarRefreshJob = cron.createTask("0 0 * * *", async () => {
+  if (!prisma) {
+    console.warn("⚠️  taxCalendarRefreshJob: Prisma no inicializado");
+    return;
+  }
+
+  console.log("🗓️  Ejecutando job: refresco calendario fiscal");
+
+  try {
+    const entries = await prisma.taxCalendar.findMany();
+    let updated = 0;
+
+    for (const entry of entries) {
+      const derived = calculateDerivedFields(entry.startDate, entry.endDate);
+      if (
+        entry.status !== derived.status ||
+        entry.daysToStart !== derived.daysToStart ||
+        entry.daysToEnd !== derived.daysToEnd
+      ) {
+        await prisma.taxCalendar.update({
+          where: { id: entry.id },
+          data: {
+            status: derived.status,
+            daysToStart: derived.daysToStart,
+            daysToEnd: derived.daysToEnd,
+          },
+        });
+        updated++;
+      }
+    }
+
+    console.log(`✅ Calendario fiscal actualizado (${updated} registros)`); // ok to log
+  } catch (error) {
+    console.error("❌ Error actualizando calendario fiscal:", error);
+  }
+});
+
+/**
+ * Job: Generar declaraciones faltantes para el año en curso (01:10 diario)
+ */
+export const ensureDeclarationsDailyJob = cron.createTask("10 1 * * *", async () => {
+  const year = new Date().getFullYear();
+  try {
+    const result = await storage.ensureDeclarationsForYear(year);
+    console.log(`🧩 ensureDeclarationsDailyJob: año ${year} => creadas ${result.created}, omitidas ${result.skipped}`);
+  } catch (e) {
+    console.error("❌ Error en ensureDeclarationsDailyJob:", e);
+  }
+});
+
+/**
  * Job: Limpieza de sesiones expiradas (cada hora)
  */
 export const cleanupSessionsJob = cron.createTask("0 * * * *", async () => {
@@ -294,6 +349,8 @@ export function startAllJobs() {
   
   taxRemindersJob.start();
   console.log("  ✓ Recordatorios fiscales (08:00 diario)");
+
+  // Eliminados jobs de calendario/AEAT
   
   cleanupSessionsJob.start();
   console.log("  ✓ Limpieza de sesiones (cada hora)");
@@ -314,6 +371,7 @@ export function stopAllJobs() {
   
   taskRemindersJob.stop();
   taxRemindersJob.stop();
+  // Eliminados jobs de calendario/AEAT
   cleanupSessionsJob.stop();
   backupDatabaseJob.stop();
   console.log("🛑 Todos los jobs detenidos");

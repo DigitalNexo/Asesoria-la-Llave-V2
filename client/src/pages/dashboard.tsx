@@ -22,11 +22,7 @@ export default function Dashboard() {
     queryKey: ["/api/dashboard/stats"],
   });
 
-  const taxData = stats ? [
-    { name: "Pendientes", value: stats.impuestosPendientes, fill: "hsl(var(--chart-4))" },
-    { name: "Calculados", value: stats.impuestosCalculados, fill: "hsl(var(--chart-2))" },
-    { name: "Realizados", value: stats.impuestosRealizados, fill: "hsl(var(--chart-3))" },
-  ] : [];
+  const taxData: any[] = [];
 
   const taskData = stats ? [
     { name: "Pendientes", value: stats.tareasPendientes, fill: "hsl(var(--chart-4))" },
@@ -125,35 +121,7 @@ export default function Dashboard() {
       </div>
 
       <div className="grid gap-6 md:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <FileText className="h-5 w-5" />
-              Estado de Impuestos
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={taxData}>
-                <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-                <XAxis dataKey="name" className="text-xs" />
-                <YAxis className="text-xs" />
-                <Tooltip 
-                  contentStyle={{ 
-                    backgroundColor: "hsl(var(--card))",
-                    border: "1px solid hsl(var(--border))",
-                    borderRadius: "6px"
-                  }}
-                />
-                <Bar dataKey="value" radius={[8, 8, 0, 0]}>
-                  {taxData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.fill} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
+        {null}
 
         <Card>
           <CardHeader>

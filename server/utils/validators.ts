@@ -175,6 +175,12 @@ export function validateTaxAssignmentAgainstRules(
     taxModelCode: payload.taxModelCode,
     periodicity: payload.periodicity,
   });
+
+  // Reglas estrictas opcionales por entorno
+  const enforce303Monthly = String(process.env.ENFORCE_303_MONTHLY || '').toLowerCase() === 'true';
+  if (enforce303Monthly && payload.taxModelCode === '303' && payload.periodicity !== 'MENSUAL') {
+    throw new Error('El modelo 303 debe configurarse como MENSUAL (política vigente)');
+  }
 }
 
 export function validateZod(schema: z.ZodTypeAny) {
