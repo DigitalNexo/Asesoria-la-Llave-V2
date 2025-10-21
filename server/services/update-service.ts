@@ -67,13 +67,35 @@ export async function performSystemUpdate(
     }
 
     const repoUrl = repoUrlConfig.value;
-    const match = repoUrl.match(/github\.com\/([^\/]+)\/([^\/]+)/);
-    
-    if (!match) {
-      throw new Error('URL de GitHub no válida');
+    // Accept owner/repo or full GitHub URL. Normalize and validate safely.
+    let owner: string | null = null;
+    let repo: string | null = null;
+
+    if (/^[a-zA-Z0-9_-]+\/[a-zA-Z0-9_.-]+$/.test(repoUrl)) {
+      [owner, repo] = repoUrl.split('/');
+    } else {
+      try {
+        const candidate = repoUrl.startsWith('http://') || repoUrl.startsWith('https://') ? repoUrl : `https://${repoUrl}`;
+        const parsed = new URL(candidate);
+        const hostname = parsed.hostname.toLowerCase();
+        if (!(hostname === 'github.com' || hostname.endsWith('.github.com'))) {
+          throw new Error('URL de GitHub no válida');
+        }
+        if (parsed.username || parsed.password) {
+          throw new Error('URL de GitHub no válida');
+        }
+        const parts = parsed.pathname.split('/').filter(Boolean);
+        if (parts.length < 2) throw new Error('URL de GitHub no válida');
+        owner = parts[0];
+        repo = parts[1].replace(/\.git$/, '');
+      } catch (e) {
+        throw new Error('URL de GitHub no válida');
+      }
     }
 
-    const [, owner, repo] = match;
+    if (!owner || !repo) {
+      throw new Error('URL de GitHub no válida');
+    }
 
     // 3. Verificar si hay actualizaciones disponibles
     log('UPDATE_CHECK', 'Verificando actualizaciones disponibles...');

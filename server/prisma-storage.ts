@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 import type { IStorage } from './storage';
 import type {
   User, InsertUser,
@@ -12,6 +12,7 @@ import type {
   SystemSettings, InsertSystemSettings
 } from '../shared/schema';
 import { encryptPassword, decryptPassword } from './crypto-utils';
+import { TAX_RULES, TAX_MODEL_METADATA, type ClientType, type TaxPeriodicity } from '@shared/tax-rules';
 
 // Validar que DATABASE_URL esté configurada
 if (!process.env.DATABASE_URL) {
@@ -36,19 +37,63 @@ function mapPrismaUser(user: any): User {
   };
 }
 
+function mapJsonArray(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.map((item) => `${item}`);
+  }
+  return [];
+}
+
+function mapPrismaTaxModelsConfig(config: any) {
+  return {
+    code: config.code,
+    name: config.name,
+    allowedTypes: mapJsonArray(config.allowedTypes),
+    allowedPeriods: mapJsonArray(config.allowedPeriods),
+    labels: config.labels ? mapJsonArray(config.labels) : null,
+    isActive: config.isActive ?? true,
+    createdAt: config.createdAt,
+    updatedAt: config.updatedAt,
+  };
+}
+
+function mapPrismaClientTaxAssignment(assignment: any) {
+  return {
+    id: assignment.id,
+    clientId: assignment.clientId,
+    taxModelCode: assignment.taxModelCode,
+    periodicity: assignment.periodicidad,
+    startDate: assignment.startDate,
+    endDate: assignment.endDate,
+    activeFlag: assignment.activeFlag,
+    notes: assignment.notes,
+    createdAt: assignment.createdAt,
+    updatedAt: assignment.updatedAt,
+    effectiveActive: !assignment.endDate && Boolean(assignment.activeFlag),
+    taxModel: assignment.taxModel ? mapPrismaTaxModelsConfig(assignment.taxModel) : null,
+  };
+}
+
+function getTaxModelName(code: string): string {
+  return TAX_MODEL_METADATA[code]?.name ?? `Modelo ${code}`;
+}
+
 function mapPrismaClient(client: any): any {
   return {
     id: client.id,
     razonSocial: client.razonSocial,
     nifCif: client.nifCif,
-    tipo: client.tipo.toLowerCase() as 'autonomo' | 'empresa',
+    tipo: (client.tipo || '').toUpperCase(),
     email: client.email,
     telefono: client.telefono,
     direccion: client.direccion,
     fechaAlta: client.fechaAlta,
+    fechaBaja: client.fechaBaja,
     responsableAsignado: client.responsableAsignado,
     taxModels: client.taxModels || null,
     isActive: client.isActive ?? true,
+    notes: client.notes ?? null,
+    taxAssignments: client.taxAssignments ? client.taxAssignments.map(mapPrismaClientTaxAssignment) : [],
   };
 }
 
@@ -226,7 +271,12 @@ export class PrismaStorage implements IStorage {
               }
             }
           }
-        }
+        },
+        taxAssignments: {
+          include: {
+            taxModel: true
+          }
+        },
       }
     });
     return clients.map((client: any) => ({
@@ -249,7 +299,12 @@ export class PrismaStorage implements IStorage {
               }
             }
           }
-        }
+        },
+        taxAssignments: {
+          include: {
+            taxModel: true
+          }
+        },
       }
     });
     return client ? {
@@ -264,17 +319,33 @@ export class PrismaStorage implements IStorage {
   }
 
   async createClient(insertClient: any): Promise<any> {
+    const data: any = {
+      razonSocial: insertClient.razonSocial,
+      nifCif: insertClient.nifCif,
+      tipo: (insertClient.tipo || '').toUpperCase() as any,
+      email: insertClient.email ?? null,
+      telefono: insertClient.telefono ?? null,
+      direccion: insertClient.direccion ?? null,
+      responsableAsignado: insertClient.responsableAsignado || null,
+      taxModels: insertClient.taxModels || null,
+      isActive: insertClient.isActive ?? true,
+      notes: insertClient.notes ?? null,
+    };
+
+    if (insertClient.fechaAlta) {
+      data.fechaAlta = new Date(insertClient.fechaAlta);
+    }
+
+    if (insertClient.fechaBaja !== undefined) {
+      data.fechaBaja = insertClient.fechaBaja ? new Date(insertClient.fechaBaja) : null;
+    }
+
     const client = await prisma.client.create({
-      data: {
-        razonSocial: insertClient.razonSocial,
-        nifCif: insertClient.nifCif,
-        tipo: insertClient.tipo.toUpperCase() as any,
-        email: insertClient.email,
-        telefono: insertClient.telefono,
-        direccion: insertClient.direccion,
-        responsableAsignado: insertClient.responsableAsignado || null, // Convertir string vacío a null
-        taxModels: insertClient.taxModels || null,
-        isActive: insertClient.isActive ?? true,
+      data,
+      include: {
+        taxAssignments: {
+          include: { taxModel: true },
+        },
       },
     });
     return mapPrismaClient(client);
@@ -287,10 +358,20 @@ export class PrismaStorage implements IStorage {
       if (data.taxModels !== undefined) data.taxModels = data.taxModels;
       if (data.isActive !== undefined) data.isActive = data.isActive;
       if (data.responsableAsignado === "") data.responsableAsignado = null; // Convertir string vacío a null
+      if (data.fechaAlta) data.fechaAlta = new Date(data.fechaAlta);
+      if (data.fechaBaja !== undefined) {
+        data.fechaBaja = data.fechaBaja ? new Date(data.fechaBaja) : null;
+      }
+      if (data.notes === "") data.notes = null;
       
       const client = await prisma.client.update({
         where: { id },
         data,
+        include: {
+          taxAssignments: {
+            include: { taxModel: true },
+          },
+        },
       });
       return mapPrismaClient(client);
     } catch {
@@ -305,6 +386,171 @@ export class PrismaStorage implements IStorage {
     } catch {
       return false;
     }
+  }
+
+  async ensureTaxModelsConfigSeeded(): Promise<void> {
+    const codes = Object.keys(TAX_RULES);
+    await Promise.all(
+      codes.map(async (code) => {
+        const rule = TAX_RULES[code];
+        await prisma.taxModelsConfig.upsert({
+          where: { code },
+          create: {
+            code,
+            name: getTaxModelName(code),
+            allowedTypes: rule.allowedTypes as unknown as Prisma.JsonArray,
+            allowedPeriods: rule.allowedPeriods as unknown as Prisma.JsonArray,
+            labels: rule.labels ? (rule.labels as unknown as Prisma.JsonArray) : undefined,
+            isActive: true,
+          },
+          update: {
+            name: getTaxModelName(code),
+            allowedTypes: rule.allowedTypes as unknown as Prisma.JsonArray,
+            allowedPeriods: rule.allowedPeriods as unknown as Prisma.JsonArray,
+            labels: rule.labels ? (rule.labels as unknown as Prisma.JsonArray) : undefined,
+            isActive: true,
+          },
+        });
+      }),
+    );
+  }
+
+  async getActiveTaxModelsConfig() {
+    const configs = await prisma.taxModelsConfig.findMany({
+      where: { isActive: true },
+      orderBy: { code: 'asc' },
+    });
+    return configs.map(mapPrismaTaxModelsConfig);
+  }
+
+  async getTaxModelConfig(code: string) {
+    const config = await prisma.taxModelsConfig.findUnique({
+      where: { code },
+    });
+    return config ? mapPrismaTaxModelsConfig(config) : null;
+  }
+
+  async findClientTaxAssignmentByCode(clientId: string, taxModelCode: string) {
+    const assignment = await prisma.clientTaxAssignment.findFirst({
+      where: {
+        clientId,
+        taxModelCode,
+      },
+      include: {
+        taxModel: true,
+      },
+    });
+    return assignment ? mapPrismaClientTaxAssignment(assignment) : null;
+  }
+
+  async getClientTaxAssignments(clientId: string) {
+    const assignments = await prisma.clientTaxAssignment.findMany({
+      where: { clientId },
+      orderBy: [{ startDate: 'desc' }, { taxModelCode: 'asc' }],
+      include: { taxModel: true },
+    });
+    return assignments.map(mapPrismaClientTaxAssignment);
+  }
+
+  async getClientTaxAssignment(id: string) {
+    const assignment = await prisma.clientTaxAssignment.findUnique({
+      where: { id },
+      include: { taxModel: true },
+    });
+    return assignment ? mapPrismaClientTaxAssignment(assignment) : null;
+  }
+
+  private buildTaxAssignmentUpdateData(data: Partial<{
+    taxModelCode: string;
+    periodicity: TaxPeriodicity;
+    startDate: Date;
+    endDate: Date | null;
+    activeFlag: boolean;
+    notes: string | null;
+  }>) {
+    const payload: any = {};
+    if (data.taxModelCode !== undefined) payload.taxModelCode = data.taxModelCode;
+    if (data.periodicity !== undefined) payload.periodicidad = data.periodicity;
+    if (data.startDate !== undefined) payload.startDate = data.startDate;
+    if (data.endDate !== undefined) payload.endDate = data.endDate;
+    if (data.activeFlag !== undefined) payload.activeFlag = data.activeFlag;
+    if (data.notes !== undefined) payload.notes = data.notes;
+    return payload;
+  }
+
+  async createClientTaxAssignment(clientId: string, data: {
+    taxModelCode: string;
+    periodicity: TaxPeriodicity;
+    startDate: Date;
+    endDate?: Date | null;
+    activeFlag?: boolean;
+    notes?: string | null;
+  }) {
+    const assignment = await prisma.clientTaxAssignment.create({
+      data: {
+        clientId,
+        taxModelCode: data.taxModelCode,
+        periodicidad: data.periodicity,
+        startDate: data.startDate,
+        endDate: data.endDate ?? null,
+        activeFlag: data.activeFlag ?? true,
+        notes: data.notes ?? null,
+      },
+      include: {
+        taxModel: true,
+      },
+    });
+    return mapPrismaClientTaxAssignment(assignment);
+  }
+
+  async updateClientTaxAssignment(id: string, data: {
+    taxModelCode?: string;
+    periodicity?: TaxPeriodicity;
+    startDate?: Date;
+    endDate?: Date | null;
+    activeFlag?: boolean;
+    notes?: string | null;
+  }) {
+    const assignment = await prisma.clientTaxAssignment.update({
+      where: { id },
+      data: this.buildTaxAssignmentUpdateData(data),
+      include: {
+        taxModel: true,
+      },
+    });
+    return mapPrismaClientTaxAssignment(assignment);
+  }
+
+  async deleteClientTaxAssignment(id: string) {
+    const assignment = await prisma.clientTaxAssignment.delete({
+      where: { id },
+      include: { taxModel: true },
+    });
+    return mapPrismaClientTaxAssignment(assignment);
+  }
+
+  async softDeactivateClientTaxAssignment(id: string, endDate: Date) {
+    const assignment = await prisma.clientTaxAssignment.update({
+      where: { id },
+      data: {
+        endDate,
+        activeFlag: false,
+      },
+      include: {
+        taxModel: true,
+      },
+    });
+    return mapPrismaClientTaxAssignment(assignment);
+  }
+
+  async hasAssignmentHistoricFilings(clientId: string, taxModelCode: string) {
+    const count = await prisma.clientTaxFiling.count({
+      where: {
+        clientId,
+        taxModelCode,
+      },
+    });
+    return count > 0;
   }
 
   // ==================== IMPUESTO METHODS ====================

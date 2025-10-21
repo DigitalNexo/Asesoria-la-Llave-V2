@@ -5,7 +5,20 @@ import { prismaStorage as storage } from "./prisma-storage";
 import { PrismaClient, Prisma } from "@prisma/client";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
-import { body, validationResult } from "express-validator";
+import {
+  registerSchema,
+  validateZod,
+  userCreateSchema,
+  smtpConfigSchema,
+  smtpAccountSchema,
+  githubConfigSchema,
+  clientCreateSchema,
+  clientUpdateSchema,
+  taskCreateSchema,
+  taxAssignmentCreateSchema,
+  taxAssignmentUpdateSchema,
+  validateTaxAssignmentAgainstRules,
+} from "./utils/validators";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
@@ -16,6 +29,7 @@ import { createSystemBackup, listBackups, restoreFromBackup } from "./services/b
 import { performSystemUpdate, verifyGitSetup, getUpdateHistory } from "./services/update-service.js";
 import { StorageFactory, encryptPassword, decryptPassword } from "./services/storage-factory";
 import { uploadToStorage } from "./middleware/storage-upload";
+import { TAX_RULES, type ClientType, type TaxPeriodicity } from "@shared/tax-rules";
 
 const prisma = new PrismaClient();
 
@@ -216,62 +230,9 @@ async function createAudit(
   }
 }
 
-// Helper para generar impuestos automáticamente basándose en los modelos fiscales del cliente
-async function generateClientTaxes(clientId: string, taxModels: string[]) {
-  try {
-    console.log(`📋 Generando impuestos para cliente ${clientId} con modelos: ${taxModels.join(', ')}`);
-    
-    // Buscar los TaxModel que coincidan con los códigos proporcionados
-    const models = await prisma.taxModel.findMany({
-      where: {
-        nombre: { in: taxModels }
-      }
-    });
-
-    console.log(`  → Modelos encontrados: ${models.length}`);
-    
-    if (models.length === 0) {
-      console.warn(`⚠️  No se encontraron modelos fiscales para: ${taxModels.join(', ')}`);
-      return;
-    }
-
-    // Para cada modelo encontrado, obtener todos los períodos fiscales
-    for (const model of models) {
-      const periods = await prisma.taxPeriod.findMany({
-        where: { modeloId: model.id }
-      });
-
-      console.log(`  → Modelo ${model.nombre}: ${periods.length} períodos encontrados`);
-
-      // Para cada período, crear ClientTax si no existe
-      for (const period of periods) {
-        const existing = await prisma.clientTax.findFirst({
-          where: {
-            clientId: clientId,
-            taxPeriodId: period.id
-          }
-        });
-
-        if (!existing) {
-          await prisma.clientTax.create({
-            data: ({
-              clientId: clientId,
-              taxPeriodId: period.id,
-              estado: 'PENDIENTE'
-            } as Prisma.clientTaxUncheckedCreateInput)
-          });
-        }
-      }
-    }
-
-    console.log(`✅ Impuestos generados automáticamente para cliente ${clientId}`);
-  } catch (error) {
-    console.error('❌ Error al generar impuestos automáticos:', error);
-    throw error; // Re-lanzar el error para que se maneje en el endpoint
-  }
-}
-
 export async function registerRoutes(app: Express): Promise<Server> {
+  await storage.ensureTaxModelsConfigSeeded();
+
   // ==================== HEALTH CHECK ====================
   app.get("/api/health", async (req: Request, res: Response) => {
     try {
@@ -294,19 +255,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ==================== AUTH ROUTES ====================
   app.post(
     "/api/auth/register",
-    [
-      body("username").trim().isLength({ min: 3 }).withMessage("El usuario debe tener al menos 3 caracteres"),
-      body("email").isEmail().withMessage("Email inválido"),
-      body("password").isLength({ min: 6 }).withMessage("La contraseña debe tener al menos 6 caracteres"),
-    ],
+    validateZod(registerSchema),
     async (req: Request, res: Response) => {
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) {
-        return res.status(400).json({ errors: errors.array() });
-      }
 
       try {
-        const { username, email, password, roleId } = req.body;
+  const { username, email, password, roleId } = req.body;
 
         const existingUser = await storage.getUserByUsername(username);
         if (existingUser) {
@@ -436,6 +389,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     "/api/users",
     authenticateToken,
     checkPermission("users:create"),
+    validateZod(userCreateSchema),
     async (req: Request, res: Response) => {
       try {
         const { username, email, password, roleId } = req.body;
@@ -581,19 +535,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get(
+    "/api/clients/:id",
+    authenticateToken,
+    async (req: Request, res: Response) => {
+      try {
+        const client = await storage.getClient(req.params.id);
+        if (!client) {
+          return res.status(404).json({ error: "Cliente no encontrado" });
+        }
+        res.json(client);
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
   app.post(
     "/api/clients",
     authenticateToken,
     checkPermission("clients:create"),
+    validateZod(clientCreateSchema),
     async (req: Request, res: Response) => {
       try {
         const client = await storage.createClient(req.body);
-        
-        // Generar impuestos automáticamente si tiene modelos asignados
-        if (client.taxModels && Array.isArray(client.taxModels) && client.taxModels.length > 0) {
-          await generateClientTaxes(client.id, client.taxModels);
-        }
-        
+
         await storage.createActivityLog({
           usuarioId: (req as AuthRequest).user!.id,
           accion: `Creó el cliente ${client.razonSocial}`,
@@ -610,6 +576,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           null,
           client
         );
+
+        notifyClientChange("created", client);
         
         res.json(client);
       } catch (error: any) {
@@ -622,6 +590,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     "/api/clients/:id",
     authenticateToken,
     checkPermission("clients:update"),
+    validateZod(clientUpdateSchema),
     async (req: Request, res: Response) => {
       try {
         const { id } = req.params;
@@ -633,20 +602,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (!client) {
           return res.status(404).json({ error: "Cliente no encontrado" });
         }
-        
-        // Si se actualizaron los taxModels, regenerar impuestos
-        if (req.body.taxModels && Array.isArray(req.body.taxModels)) {
-          // Eliminar impuestos existentes
-          await prisma.clientTax.deleteMany({
-            where: { clientId: id }
-          });
-          
-          // Regenerar con los nuevos modelos
-          if (req.body.taxModels.length > 0) {
-            await generateClientTaxes(id, req.body.taxModels);
-          }
-        }
-        
+                
         await storage.createActivityLog({
           usuarioId: (req as AuthRequest).user!.id,
           accion: `Actualizó el cliente ${client.razonSocial}`,
@@ -663,6 +619,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           oldClient,
           client
         );
+
+        notifyClientChange("updated", client);
         
         res.json(client);
       } catch (error: any) {
@@ -689,7 +647,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           where: { clientId: id }
         });
         
-        if (clientTaxes.length > 0) {
+        const assignmentCount = await prisma.clientTaxAssignment.count({
+          where: { clientId: id },
+        });
+        
+        if (clientTaxes.length > 0 || assignmentCount > 0) {
           // SOFT DELETE: Solo desactivar si tiene impuestos
           const updated = await storage.updateClient(id, { isActive: false });
           
@@ -697,7 +659,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             usuarioId: (req as AuthRequest).user!.id,
             accion: `Desactivó el cliente ${client.razonSocial}`,
             modulo: "clientes",
-            detalles: `Cliente con ${clientTaxes.length} impuestos asociados`,
+            detalles: `Cliente con ${clientTaxes.length} impuestos y ${assignmentCount} asignaciones fiscales asociadas`,
           });
           
           // Registrar auditoría
@@ -711,7 +673,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           );
           
           res.json({ 
-            message: "Cliente desactivado (tiene impuestos asociados)",
+            message: "Cliente desactivado (posee impuestos o asignaciones fiscales)",
             softDelete: true,
             client: updated
           });
@@ -745,6 +707,239 @@ export async function registerRoutes(app: Express): Promise<Server> {
             hardDelete: true
           });
         }
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
+  // ==================== CLIENT TAX ASSIGNMENTS ====================
+  app.get(
+    "/api/tax-models-config",
+    authenticateToken,
+    async (_req: Request, res: Response) => {
+      try {
+        const configs = await storage.getActiveTaxModelsConfig();
+        res.json(configs);
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
+  app.post(
+    "/api/clients/:id/tax-assignments",
+    authenticateToken,
+    checkPermission("clients:update"),
+    validateZod(taxAssignmentCreateSchema),
+    async (req: AuthRequest, res: Response) => {
+      try {
+        const clientId = req.params.id;
+        const client = await storage.getClient(clientId);
+        if (!client) {
+          return res.status(404).json({ error: "Cliente no encontrado" });
+        }
+
+        const taxModelCode = String(req.body.taxModelCode).toUpperCase();
+        const periodicity = String(req.body.periodicity).toUpperCase() as TaxPeriodicity;
+        const clientType = String(client.tipo || "").toUpperCase() as ClientType;
+
+        validateTaxAssignmentAgainstRules(clientType, {
+          taxModelCode,
+          periodicity,
+        });
+
+        const existing = await storage.findClientTaxAssignmentByCode(clientId, taxModelCode);
+        if (existing) {
+          return res.status(409).json({ error: `El modelo ${taxModelCode} ya está asignado al cliente` });
+        }
+
+        const startDate = new Date(req.body.startDate);
+        const endDate = req.body.endDate ? new Date(req.body.endDate) : null;
+        const activeFlag = endDate ? false : req.body.activeFlag ?? true;
+
+        const assignment = await storage.createClientTaxAssignment(clientId, {
+          taxModelCode,
+          periodicity,
+          startDate,
+          endDate,
+          activeFlag,
+          notes: req.body.notes ?? null,
+        });
+
+        await storage.createActivityLog({
+          usuarioId: req.user!.id,
+          accion: `Asignó modelo ${taxModelCode} al cliente ${client.razonSocial}`,
+          modulo: "clientes",
+          detalles: `Periodicidad: ${periodicity}, Activo: ${assignment.effectiveActive ? "Sí" : "No"}`,
+        });
+
+        await createAudit(
+          req.user!.id,
+          'CREATE',
+          'client_tax_assignments',
+          assignment.id,
+          null,
+          assignment
+        );
+
+        notifyTaxChange("created", assignment);
+        res.status(201).json(assignment);
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
+  app.patch(
+    "/api/tax-assignments/:assignmentId",
+    authenticateToken,
+    checkPermission("clients:update"),
+    validateZod(taxAssignmentUpdateSchema),
+    async (req: AuthRequest, res: Response) => {
+      try {
+        const { assignmentId } = req.params;
+        const existing = await storage.getClientTaxAssignment(assignmentId);
+
+        if (!existing) {
+          return res.status(404).json({ error: "Asignación no encontrada" });
+        }
+
+        const client = await storage.getClient(existing.clientId);
+        if (!client) {
+          return res.status(404).json({ error: "Cliente asociado no encontrado" });
+        }
+
+        const taxModelCode = req.body.taxModelCode
+          ? String(req.body.taxModelCode).toUpperCase()
+          : existing.taxModelCode;
+        const periodicity = (req.body.periodicity
+          ? String(req.body.periodicity).toUpperCase()
+          : existing.periodicity) as TaxPeriodicity;
+        const clientType = String(client.tipo || "").toUpperCase() as ClientType;
+
+        validateTaxAssignmentAgainstRules(clientType, {
+          taxModelCode,
+          periodicity,
+        });
+
+        if (taxModelCode !== existing.taxModelCode) {
+          const duplicate = await storage.findClientTaxAssignmentByCode(existing.clientId, taxModelCode);
+          if (duplicate && duplicate.id !== assignmentId) {
+            return res.status(409).json({ error: `El modelo ${taxModelCode} ya está asignado al cliente` });
+          }
+        }
+
+        let endDate: Date | null | undefined;
+        if (Object.prototype.hasOwnProperty.call(req.body, "endDate")) {
+          if (req.body.endDate === null || req.body.endDate === undefined) {
+            endDate = null;
+          } else {
+            endDate = new Date(req.body.endDate);
+          }
+        }
+
+        const startDate =
+          req.body.startDate !== undefined ? new Date(req.body.startDate) : undefined;
+
+        const activeFlag =
+          endDate && endDate !== null
+            ? false
+            : req.body.activeFlag !== undefined
+              ? req.body.activeFlag
+              : undefined;
+
+        const updated = await storage.updateClientTaxAssignment(assignmentId, {
+          taxModelCode,
+          periodicity,
+          startDate,
+          endDate: endDate ?? undefined,
+          activeFlag: activeFlag ?? undefined,
+          notes: Object.prototype.hasOwnProperty.call(req.body, "notes")
+            ? req.body.notes ?? null
+            : undefined,
+        });
+
+        await storage.createActivityLog({
+          usuarioId: req.user!.id,
+          accion: `Actualizó modelo ${taxModelCode} del cliente ${client.razonSocial}`,
+          modulo: "clientes",
+          detalles: `Activo: ${updated.effectiveActive ? "Sí" : "No"}`,
+        });
+
+        await createAudit(
+          req.user!.id,
+          'UPDATE',
+          'client_tax_assignments',
+          assignmentId,
+          existing,
+          updated
+        );
+
+        notifyTaxChange("updated", updated);
+        res.json(updated);
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
+  app.delete(
+    "/api/tax-assignments/:assignmentId",
+    authenticateToken,
+    checkPermission("clients:update"),
+    async (req: AuthRequest, res: Response) => {
+      try {
+        const { assignmentId } = req.params;
+        const existing = await storage.getClientTaxAssignment(assignmentId);
+        if (!existing) {
+          return res.status(404).json({ error: "Asignación no encontrada" });
+        }
+
+        const hasHistory = await storage.hasAssignmentHistoricFilings(
+          existing.clientId,
+          existing.taxModelCode
+        );
+
+        let result;
+        let message;
+        let action: "DELETE" | "UPDATE" = "DELETE";
+
+        if (hasHistory) {
+          result = await storage.softDeactivateClientTaxAssignment(assignmentId, new Date());
+          message = "Asignación desactivada. Posee histórico de presentaciones.";
+          action = "UPDATE";
+        } else {
+          result = await storage.deleteClientTaxAssignment(assignmentId);
+          message = "Asignación eliminada correctamente.";
+        }
+
+        await storage.createActivityLog({
+          usuarioId: req.user!.id,
+          accion:
+            action === "DELETE"
+              ? `Eliminó modelo ${existing.taxModelCode} del cliente`
+              : `Desactivó modelo ${existing.taxModelCode} del cliente`,
+          modulo: "clientes",
+          detalles: message,
+        });
+
+        await createAudit(
+          req.user!.id,
+          action,
+          'client_tax_assignments',
+          assignmentId,
+          existing,
+          action === "DELETE" ? null : result
+        );
+
+        notifyTaxChange(action === "DELETE" ? "deleted" : "updated", result);
+
+        res.json({
+          assignment: result,
+          softDeleted: hasHistory,
+          message,
+        });
       } catch (error: any) {
         res.status(500).json({ error: error.message });
       }
@@ -854,7 +1049,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       try {
         const { id, userId } = req.params;
         const { isPrimary } = req.body;
-
         const client = await storage.getClient(id);
         if (!client) {
           return res.status(404).json({ error: "Cliente no encontrado" });
@@ -1497,6 +1691,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     "/api/tasks",
     authenticateToken,
     checkPermission("tasks:create"),
+    validateZod(taskCreateSchema),
     async (req: Request, res: Response) => {
       try {
         // Convertir fecha YYYY-MM-DD a ISO DateTime si es necesario
@@ -1851,6 +2046,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     "/api/admin/smtp-config",
     authenticateToken,
     checkPermission("admin:settings"),
+    validateZod(smtpConfigSchema),
     async (req: AuthRequest, res: Response) => {
       try {
         const { host, port, user, pass } = req.body;
@@ -1859,7 +2055,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(400).json({ error: "Faltan parámetros de configuración SMTP" });
         }
 
-        configureSMTP({ host, port: parseInt(port), user, pass });
+        // Basic host validation: allow hostnames and IPs, no credentials
+        if (typeof host !== 'string' || host.length > 200) {
+          return res.status(400).json({ error: "Host SMTP inválido" });
+        }
+
+        // Simple hostname/ip regex (doesn't validate everything but prevents suspicious input)
+        const hostPattern = /^[a-zA-Z0-9._:-]+$/;
+        if (!hostPattern.test(host)) {
+          return res.status(400).json({ error: "Host SMTP inválido" });
+        }
+
+        const portNum = parseInt(String(port), 10);
+        if (Number.isNaN(portNum) || portNum <= 0 || portNum > 65535) {
+          return res.status(400).json({ error: "Puerto SMTP inválido" });
+        }
+
+        configureSMTP({ host, port: portNum, user, pass });
         
         await storage.createActivityLog({
           usuarioId: req.user!.id,
@@ -1923,6 +2135,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     "/api/admin/smtp-accounts",
     authenticateToken,
     checkPermission("admin:smtp_manage"),
+    validateZod(smtpAccountSchema),
     async (req: AuthRequest, res: Response) => {
       try {
         const { nombre, host, port, user, password, isPredeterminada, activa } = req.body;
@@ -2391,19 +2604,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
     "/api/admin/github-config",
     authenticateToken,
     checkPermission("admin:settings"),
+    validateZod(githubConfigSchema),
     async (req: AuthRequest, res: Response) => {
       try {
         const { repoUrl, branch } = req.body;
 
-        // Validar formato owner/repo
+        // Hardened validation for repoUrl: accept owner/repo or a GitHub URL (no credentials, host github.com)
         if (repoUrl) {
+          if (typeof repoUrl !== 'string' || repoUrl.length > 300) {
+            return res.status(400).json({ error: "Formato inválido de repoUrl" });
+          }
+
           const ownerRepoMatch = repoUrl.match(/^([a-zA-Z0-9_-]+)\/([a-zA-Z0-9_.-]+)$/);
-          const githubUrlMatch = repoUrl.match(/github\.com\/([^\/]+)\/([^\/]+)/);
-          
-          if (!ownerRepoMatch && !githubUrlMatch) {
-            return res.status(400).json({ 
-              error: "Formato inválido. Use 'owner/repo' o una URL completa de GitHub" 
-            });
+          if (!ownerRepoMatch) {
+            try {
+              const candidate = repoUrl.startsWith('http://') || repoUrl.startsWith('https://') ? repoUrl : `https://${repoUrl}`;
+              const parsed = new URL(candidate);
+              const hostname = parsed.hostname.toLowerCase();
+              if (!(hostname === 'github.com' || hostname.endsWith('.github.com'))) {
+                return res.status(400).json({ error: "Solo se permiten URLs de GitHub en repoUrl" });
+              }
+              if (parsed.username || parsed.password) {
+                return res.status(400).json({ error: "URL inválida en repoUrl" });
+              }
+              const parts = parsed.pathname.split('/').filter(Boolean);
+              if (parts.length < 2) {
+                return res.status(400).json({ error: "URL de GitHub inválida, debe apuntar a owner/repo" });
+              }
+              const owner = parts[0];
+              const repo = parts[1];
+              req.body.repoUrl = `https://github.com/${owner}/${repo}`;
+            } catch (e) {
+              return res.status(400).json({ error: "Formato inválido. Use 'owner/repo' o una URL válida de GitHub" });
+            }
           }
         }
 

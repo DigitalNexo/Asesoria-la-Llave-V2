@@ -5,8 +5,12 @@ import crypto from "crypto";
 import path from "path";
 
 // Configuración S3
+import { normalizeS3Endpoint } from './utils/validation';
+
+const normalizedS3Endpoint = normalizeS3Endpoint(process.env.S3_ENDPOINT) || undefined;
+
 const s3Client = new S3Client({
-  endpoint: process.env.S3_ENDPOINT,
+  endpoint: normalizedS3Endpoint,
   region: process.env.S3_REGION || "us-east-1",
   credentials: {
     accessKeyId: process.env.S3_ACCESS_KEY || "",
@@ -104,8 +108,9 @@ export async function uploadFile(
     await upload.done();
 
     // Generar URL
-    const url = process.env.S3_ENDPOINT
-      ? `${process.env.S3_ENDPOINT}/${BUCKET}/${key}`
+    const s3EndpointToUse = normalizedS3Endpoint || process.env.S3_ENDPOINT;
+    const url = s3EndpointToUse
+      ? `${s3EndpointToUse}/${BUCKET}/${key}`
       : `https://${BUCKET}.s3.${process.env.S3_REGION}.amazonaws.com/${key}`;
 
     return {

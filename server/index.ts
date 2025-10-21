@@ -390,17 +390,61 @@ async function createInitialAdmin() {
   // It is the only port that is not firewalled.
   const port = parseInt(process.env.PORT || '5000', 10);
   
-  server.listen({
+  // Some platforms (macOS, others) may not support SO_REUSEPORT and Node will
+  // throw ENOTSUP when trying to listen with reusePort: true. Only enable
+  // reusePort on platforms where it's commonly supported (Linux).
+  const listenOptions: any = {
     port,
     host: "0.0.0.0",
-    reusePort: true,
-  }, () => {
-    logger.info({
-      port,
-      env: process.env.NODE_ENV,
-      nodeVersion: process.version,
-    }, `🚀 Server listening on port ${port}`);
-  });
+  };
+
+  if (process.platform === "linux") {
+    listenOptions.reusePort = true;
+  }
+
+  // Try listening on the desired port; if it's in use, try the next one up to +10
+  const maxAttempts = 10;
+  let attempts = 0;
+  const startPort = port;
+
+  const tryListen = (p: number) => {
+    attempts += 1;
+    const opts = { ...listenOptions, port: p };
+
+    // Attach one-time handlers: 'error' to retry on EADDRINUSE, and 'listening' to log the actual bound port
+    const onError = (err: any) => {
+      if (err && err.code === 'EADDRINUSE') {
+        logger.warn({ port: p }, `Puerto ${p} en uso, intentando puerto ${p + 1}...`);
+        if (attempts <= maxAttempts) {
+          // small delay before retrying to avoid tight loop
+          setTimeout(() => tryListen(p + 1), 200);
+          return;
+        }
+      }
+      // if not handled above, rethrow/log and exit
+      logger.fatal({ err }, `Error iniciando servidor en puerto ${p}`);
+      process.exit(1);
+    };
+
+    const onListening = () => {
+      // Remove the error handler now that listen succeeded
+      server.removeListener('error', onError as any);
+      const addr = server.address();
+      const boundPort = typeof addr === 'object' && addr ? (addr as any).port : p;
+      logger.info({
+        port: boundPort,
+        env: process.env.NODE_ENV,
+        nodeVersion: process.version,
+        reusePort: Boolean(listenOptions.reusePort),
+      }, `🚀 Server listening on port ${boundPort}`);
+    };
+
+    server.once('error', onError);
+    server.once('listening', onListening as any);
+    server.listen(opts);
+  };
+
+  tryListen(startPort);
 
   // Graceful shutdown
   const shutdown = async (signal: string) => {

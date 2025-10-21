@@ -2040,7 +2040,65 @@ var prismaStorage = new PrismaStorage();
 import { PrismaClient as PrismaClient6 } from "@prisma/client";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
-import { body, validationResult } from "express-validator";
+
+// server/utils/validators.ts
+import { z } from "zod";
+var registerSchema = z.object({
+  username: z.string().min(3, "El usuario debe tener al menos 3 caracteres").trim(),
+  email: z.string().email("Email inv\xE1lido"),
+  password: z.string().min(6, "La contrase\xF1a debe tener al menos 6 caracteres"),
+  roleId: z.string().optional()
+});
+var userCreateSchema = z.object({
+  username: z.string().min(3).trim(),
+  email: z.string().email(),
+  password: z.string().min(6),
+  roleId: z.string().optional()
+});
+var smtpConfigSchema = z.object({
+  host: z.string().min(1).max(200),
+  port: z.union([z.string(), z.number()]).transform((val) => typeof val === "string" ? parseInt(val, 10) : val).refine((n) => Number.isFinite(n) && n > 0 && n <= 65535, { message: "Puerto SMTP inv\xE1lido" }),
+  user: z.string().min(1),
+  pass: z.string().min(1)
+});
+var smtpAccountSchema = z.object({
+  nombre: z.string().min(1),
+  host: z.string().min(1).max(200),
+  port: z.union([z.string(), z.number()]).transform((val) => typeof val === "string" ? parseInt(val, 10) : val).refine((n) => Number.isFinite(n) && n > 0 && n <= 65535),
+  user: z.string().min(1),
+  password: z.string().min(1),
+  isPredeterminada: z.boolean().optional(),
+  activa: z.boolean().optional()
+});
+var githubConfigSchema = z.object({
+  repoUrl: z.string().min(1).max(500)
+});
+var clientCreateSchema = z.object({
+  razonSocial: z.string().min(1),
+  nifCif: z.string().min(1),
+  taxModels: z.array(z.string()).optional()
+});
+var taskCreateSchema = z.object({
+  titulo: z.string().min(1),
+  descripcion: z.string().optional(),
+  fechaVencimiento: z.string().optional(),
+  asignadoA: z.string().optional(),
+  clienteId: z.string().optional(),
+  visibilidad: z.string().optional()
+});
+function validateZod(schema) {
+  return (req, _res, next) => {
+    const result = schema.safeParse(req.body);
+    if (!result.success) {
+      const errors = result.error.errors.map((e) => ({ path: e.path.join("."), message: e.message }));
+      return _res.status(400).json({ errors });
+    }
+    req.body = result.data;
+    return next();
+  };
+}
+
+// server/routes.ts
 import multer from "multer";
 import path7 from "path";
 import fs4 from "fs";
@@ -2396,12 +2454,12 @@ async function createDatabaseBackup(fileName) {
   const backupDir = join2(__dirname2, "../../backups/db");
   await fs.mkdir(backupDir, { recursive: true });
   const filePath = join2(backupDir, fileName);
-  const dbUrl = process.env.DATABASE_URL;
-  if (!dbUrl) {
+  const dbUrl2 = process.env.DATABASE_URL;
+  if (!dbUrl2) {
     throw new Error("DATABASE_URL no est\xE1 definida");
   }
   try {
-    const match = dbUrl.match(/mysql:\/\/([^:]+):([^@]+)@([^:]+):(\d+)\/(.+)/);
+    const match = dbUrl2.match(/mysql:\/\/([^:]+):([^@]+)@([^:]+):(\d+)\/(.+)/);
     if (!match) {
       throw new Error("Formato de DATABASE_URL no v\xE1lido");
     }
@@ -2688,11 +2746,11 @@ async function extractBackupFiles(zipPath) {
   }
 }
 async function restoreDatabase(sqlPath) {
-  const dbUrl = process.env.DATABASE_URL;
-  if (!dbUrl) {
+  const dbUrl2 = process.env.DATABASE_URL;
+  if (!dbUrl2) {
     throw new Error("DATABASE_URL no est\xE1 definida");
   }
-  const match = dbUrl.match(/mysql:\/\/([^:]+):([^@]+)@([^:]+):(\d+)\/(.+)/);
+  const match = dbUrl2.match(/mysql:\/\/([^:]+):([^@]+)@([^:]+):(\d+)\/(.+)/);
   if (!match) {
     throw new Error("Formato de DATABASE_URL no v\xE1lido");
   }
@@ -2743,11 +2801,32 @@ async function performSystemUpdate(userId, onProgress) {
       throw new Error("URL del repositorio de GitHub no configurada");
     }
     const repoUrl = repoUrlConfig.value;
-    const match = repoUrl.match(/github\.com\/([^\/]+)\/([^\/]+)/);
-    if (!match) {
+    let owner = null;
+    let repo = null;
+    if (/^[a-zA-Z0-9_-]+\/[a-zA-Z0-9_.-]+$/.test(repoUrl)) {
+      [owner, repo] = repoUrl.split("/");
+    } else {
+      try {
+        const candidate = repoUrl.startsWith("http://") || repoUrl.startsWith("https://") ? repoUrl : `https://${repoUrl}`;
+        const parsed = new URL(candidate);
+        const hostname = parsed.hostname.toLowerCase();
+        if (!(hostname === "github.com" || hostname.endsWith(".github.com"))) {
+          throw new Error("URL de GitHub no v\xE1lida");
+        }
+        if (parsed.username || parsed.password) {
+          throw new Error("URL de GitHub no v\xE1lida");
+        }
+        const parts = parsed.pathname.split("/").filter(Boolean);
+        if (parts.length < 2) throw new Error("URL de GitHub no v\xE1lida");
+        owner = parts[0];
+        repo = parts[1].replace(/\.git$/, "");
+      } catch (e) {
+        throw new Error("URL de GitHub no v\xE1lida");
+      }
+    }
+    if (!owner || !repo) {
       throw new Error("URL de GitHub no v\xE1lida");
     }
-    const [, owner, repo] = match;
     log2("UPDATE_CHECK", "Verificando actualizaciones disponibles...");
     const versionInfo = await checkForUpdates(owner, repo.replace(".git", ""));
     if (!versionInfo.updateAvailable) {
@@ -3230,16 +3309,8 @@ async function registerRoutes(app2) {
   });
   app2.post(
     "/api/auth/register",
-    [
-      body("username").trim().isLength({ min: 3 }).withMessage("El usuario debe tener al menos 3 caracteres"),
-      body("email").isEmail().withMessage("Email inv\xE1lido"),
-      body("password").isLength({ min: 6 }).withMessage("La contrase\xF1a debe tener al menos 6 caracteres")
-    ],
+    validateZod(registerSchema),
     async (req, res) => {
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) {
-        return res.status(400).json({ errors: errors.array() });
-      }
       try {
         const { username, email, password, roleId } = req.body;
         const existingUser = await prismaStorage.getUserByUsername(username);
@@ -3339,6 +3410,7 @@ async function registerRoutes(app2) {
     "/api/users",
     authenticateToken,
     checkPermission("users:create"),
+    validateZod(userCreateSchema),
     async (req, res) => {
       try {
         const { username, email, password, roleId } = req.body;
@@ -3465,6 +3537,7 @@ async function registerRoutes(app2) {
     "/api/clients",
     authenticateToken,
     checkPermission("clients:create"),
+    validateZod(clientCreateSchema),
     async (req, res) => {
       try {
         const client = await prismaStorage.createClient(req.body);
@@ -4206,6 +4279,7 @@ async function registerRoutes(app2) {
     "/api/tasks",
     authenticateToken,
     checkPermission("tasks:create"),
+    validateZod(taskCreateSchema),
     async (req, res) => {
       try {
         const taskData = { ...req.body };
@@ -4502,13 +4576,25 @@ async function registerRoutes(app2) {
     "/api/admin/smtp-config",
     authenticateToken,
     checkPermission("admin:settings"),
+    validateZod(smtpConfigSchema),
     async (req, res) => {
       try {
         const { host, port, user, pass } = req.body;
         if (!host || !port || !user || !pass) {
           return res.status(400).json({ error: "Faltan par\xE1metros de configuraci\xF3n SMTP" });
         }
-        configureSMTP({ host, port: parseInt(port), user, pass });
+        if (typeof host !== "string" || host.length > 200) {
+          return res.status(400).json({ error: "Host SMTP inv\xE1lido" });
+        }
+        const hostPattern = /^[a-zA-Z0-9._:-]+$/;
+        if (!hostPattern.test(host)) {
+          return res.status(400).json({ error: "Host SMTP inv\xE1lido" });
+        }
+        const portNum = parseInt(String(port), 10);
+        if (Number.isNaN(portNum) || portNum <= 0 || portNum > 65535) {
+          return res.status(400).json({ error: "Puerto SMTP inv\xE1lido" });
+        }
+        configureSMTP({ host, port: portNum, user, pass });
         await prismaStorage.createActivityLog({
           usuarioId: req.user.id,
           accion: "Configur\xF3 los par\xE1metros SMTP",
@@ -4563,6 +4649,7 @@ async function registerRoutes(app2) {
     "/api/admin/smtp-accounts",
     authenticateToken,
     checkPermission("admin:smtp_manage"),
+    validateZod(smtpAccountSchema),
     async (req, res) => {
       try {
         const { nombre, host, port, user, password, isPredeterminada, activa } = req.body;
@@ -4945,16 +5032,36 @@ async function registerRoutes(app2) {
     "/api/admin/github-config",
     authenticateToken,
     checkPermission("admin:settings"),
+    validateZod(githubConfigSchema),
     async (req, res) => {
       try {
         const { repoUrl, branch } = req.body;
         if (repoUrl) {
+          if (typeof repoUrl !== "string" || repoUrl.length > 300) {
+            return res.status(400).json({ error: "Formato inv\xE1lido de repoUrl" });
+          }
           const ownerRepoMatch = repoUrl.match(/^([a-zA-Z0-9_-]+)\/([a-zA-Z0-9_.-]+)$/);
-          const githubUrlMatch = repoUrl.match(/github\.com\/([^\/]+)\/([^\/]+)/);
-          if (!ownerRepoMatch && !githubUrlMatch) {
-            return res.status(400).json({
-              error: "Formato inv\xE1lido. Use 'owner/repo' o una URL completa de GitHub"
-            });
+          if (!ownerRepoMatch) {
+            try {
+              const candidate = repoUrl.startsWith("http://") || repoUrl.startsWith("https://") ? repoUrl : `https://${repoUrl}`;
+              const parsed = new URL(candidate);
+              const hostname = parsed.hostname.toLowerCase();
+              if (!(hostname === "github.com" || hostname.endsWith(".github.com"))) {
+                return res.status(400).json({ error: "Solo se permiten URLs de GitHub en repoUrl" });
+              }
+              if (parsed.username || parsed.password) {
+                return res.status(400).json({ error: "URL inv\xE1lida en repoUrl" });
+              }
+              const parts = parsed.pathname.split("/").filter(Boolean);
+              if (parts.length < 2) {
+                return res.status(400).json({ error: "URL de GitHub inv\xE1lida, debe apuntar a owner/repo" });
+              }
+              const owner = parts[0];
+              const repo = parts[1];
+              req.body.repoUrl = `https://github.com/${owner}/${repo}`;
+            } catch (e) {
+              return res.status(400).json({ error: "Formato inv\xE1lido. Use 'owner/repo' o una URL v\xE1lida de GitHub" });
+            }
           }
         }
         if (repoUrl !== void 0) {
@@ -6246,6 +6353,39 @@ import bcrypt2 from "bcrypt";
 var SALT_ROUNDS2 = 10;
 var app = express2();
 app.set("trust proxy", 1);
+var dbUrl = process.env.DATABASE_URL;
+if (!dbUrl) {
+  logger.fatal("\n\n\u274C FATAL: DATABASE_URL no est\xE1 configurada. Este proyecto requiere una base de datos MariaDB externa.\nPor favor a\xF1ade DATABASE_URL en tu archivo .env con el formato:\n  mysql://USER:PASS@HOST:3306/asesoria_llave?socket_timeout=60&connect_timeout=60\no\n  mariadb://USER:PASS@HOST:3306/asesoria_llave\n\n");
+  process.exit(1);
+}
+if (!/^mysql:\/\//i.test(dbUrl) && !/^mariadb:\/\//i.test(dbUrl)) {
+  logger.fatal(`
+
+\u274C FATAL: DATABASE_URL debe usar el driver MySQL/MariaDB (mysql:// o mariadb://).
+Valor actual: ${dbUrl}
+Aseg\xFArate de usar MariaDB como base de datos externa.
+
+`);
+  process.exit(1);
+}
+try {
+  const parsed = new URL(dbUrl);
+  const host = parsed.hostname;
+  const allowLocal = process.env.ALLOW_LOCAL_DB === "true";
+  const localHosts = ["localhost", "127.0.0.1", "::1", "db"];
+  if (!allowLocal && localHosts.includes(host)) {
+    logger.fatal(`
+
+\u274C FATAL: Se requiere una base de datos MariaDB EXTERNA.
+DATABASE_URL apunta a un host local/internal: ${host}
+Si quieres permitir uso de una base de datos local (ej. docker-compose) define ALLOW_LOCAL_DB=true en tu .env
+
+`);
+    process.exit(1);
+  }
+} catch (e) {
+  logger.warn({ err: e }, "No se pudo parsear DATABASE_URL para validaci\xF3n de host");
+}
 var prisma8 = new PrismaClient7({
   log: [
     { level: "query", emit: "event" },
@@ -6496,15 +6636,19 @@ async function createInitialAdmin() {
     serveStatic(app);
   }
   const port = parseInt(process.env.PORT || "5000", 10);
-  server.listen({
+  const listenOptions = {
     port,
-    host: "0.0.0.0",
-    reusePort: true
-  }, () => {
+    host: "0.0.0.0"
+  };
+  if (process.platform === "linux") {
+    listenOptions.reusePort = true;
+  }
+  server.listen(listenOptions, () => {
     logger.info({
       port,
       env: process.env.NODE_ENV,
-      nodeVersion: process.version
+      nodeVersion: process.version,
+      reusePort: Boolean(listenOptions.reusePort)
     }, `\u{1F680} Server listening on port ${port}`);
   });
   const shutdown = async (signal) => {

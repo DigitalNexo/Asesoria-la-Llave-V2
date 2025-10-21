@@ -73,6 +73,7 @@ enum Periodicidad {
   MENSUAL
   TRIMESTRAL
   ANUAL
+  ESPECIAL_FRACCIONADO
 }
 
 enum EstadoDeclaracion {
@@ -144,19 +145,19 @@ model User {
   createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
 
   // Relations
-  role            Role?           @relation(fields: [roleId], references: [id], onDelete: SetNull)
-  clientsManaged  Client[]        @relation("ClientManager")
-  clientsAssigned ClientEmployee[] @relation("ClientEmployees")
-  tasksAssigned   Task[]          @relation("TaskAssignee")
-  manualsAuthored Manual[]        @relation("ManualAuthor")
-  activityLogs    ActivityLog[]
-  auditTrails     AuditTrail[]
-  smtpAccountsCreated SMTPAccount[]           @relation("SMTPCreator")
-  notificationTemplatesCreated NotificationTemplate[] @relation("TemplateCreator")
-  notificationsSent NotificationLog[]         @relation("NotificationSender")
+  role                          Role?                   @relation(fields: [roleId], references: [id], onDelete: SetNull)
+  clientsManaged                Client[]                @relation("ClientManager")
+  clientsAssigned               ClientEmployee[]        @relation("ClientEmployees")
+  tasksAssigned                 Task[]                  @relation("TaskAssignee")
+  manualsAuthored               Manual[]                @relation("ManualAuthor")
+  activityLogs                  ActivityLog[]
+  auditTrails                   AuditTrail[]
+  smtpAccountsCreated           SMTPAccount[]           @relation("SMTPCreator")
+  notificationTemplatesCreated  NotificationTemplate[]  @relation("TemplateCreator")
+  notificationsSent             NotificationLog[]       @relation("NotificationSender")
   scheduledNotificationsCreated ScheduledNotification[] @relation("ScheduledNotificationCreator")
-  backupsCreated  SystemBackup[]  @relation("BackupCreator")
-  updatesInitiated SystemUpdate[] @relation("UpdateInitiator")
+  backupsCreated                SystemBackup[]          @relation("BackupCreator")
+  updatesInitiated              SystemUpdate[]          @relation("UpdateInitiator")
 
   @@index([roleId])
   @@map("users")
@@ -164,34 +165,73 @@ model User {
 
 // ==================== CLIENTS ====================
 model Client {
-  id                  String    @id @default(uuid()) @db.VarChar(36)
-  razonSocial         String    @map("razon_social") @db.Text
-  nifCif              String    @unique @map("nif_cif") @db.VarChar(191)
+  id                  String                @id @default(uuid()) @db.VarChar(36)
+  razonSocial         String                @map("razon_social") @db.Text
+  nifCif              String                @unique @map("nif_cif") @db.VarChar(191)
   tipo                ClientType
-  email               String?   @db.Text
-  telefono            String?   @db.Text
-  direccion           String?   @db.Text
-  fechaAlta           DateTime  @default(now()) @map("fecha_alta") @db.DateTime(3)
-  fechaBaja           DateTime? @map("fecha_baja") @db.DateTime(3) // NULL = cliente activo
-  responsableAsignado String?   @map("responsable_asignado") @db.VarChar(36)
-  taxModels           Json?     @map("tax_models") // Array de modelos fiscales: ["303", "390", "130", "131"]
-  isActive            Boolean   @default(true) @map("is_active") // Cliente activo o deshabilitado
+  email               String?               @db.Text
+  telefono            String?               @db.Text
+  direccion           String?               @db.Text
+  fechaAlta           DateTime              @default(now()) @map("fecha_alta") @db.DateTime(3)
+  fechaBaja           DateTime?             @map("fecha_baja") @db.DateTime(3) // NULL = cliente activo
+  responsableAsignado String?               @map("responsable_asignado") @db.VarChar(36)
+  taxModels           Json?                 @map("tax_models") // Array de modelos fiscales: ["303", "390", "130", "131"]
+  isActive            Boolean               @default(true) @map("is_active") // Cliente activo o deshabilitado
+  notes               String?               @db.Text
+  taxAssignments      ClientTaxAssignment[]
 
   // Relations
-  responsable         User?                  @relation("ClientManager", fields: [responsableAsignado], references: [id], onDelete: SetNull)
-  tasks               Task[]
-  employees           ClientEmployee[]
-  clientTaxes         clientTax[]
+  responsable           User?                  @relation("ClientManager", fields: [responsableAsignado], references: [id], onDelete: SetNull)
+  tasks                 Task[]
+  employees             ClientEmployee[]
+  clientTaxes           clientTax[]
   clientTaxRequirements clientTaxRequirement[]
-  taxFilings          clientTaxFiling[]
-  obligacionesFiscales ObligacionFiscal[]
-  notificaciones      Notificacion[]
+  taxFilings            clientTaxFiling[]
+  obligacionesFiscales  ObligacionFiscal[]
+  notificaciones        Notificacion[]
 
   @@index([responsableAsignado])
   @@index([tipo])
   @@index([isActive])
   @@index([fechaBaja])
   @@map("clients")
+}
+
+model ClientTaxAssignment {
+  id           String       @id @default(uuid()) @db.VarChar(36)
+  clientId     String       @map("client_id") @db.VarChar(36)
+  taxModelCode String       @map("tax_model_code") @db.VarChar(20)
+  periodicidad Periodicidad
+  startDate    DateTime     @map("start_date") @db.DateTime(3)
+  endDate      DateTime?    @map("end_date") @db.DateTime(3)
+  activeFlag   Boolean      @default(true) @map("active_flag")
+  notes        String?      @db.Text
+  createdAt    DateTime     @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt    DateTime     @updatedAt @map("updated_at") @db.DateTime(3)
+
+  // Relations
+  client   Client          @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  taxModel TaxModelsConfig @relation(fields: [taxModelCode], references: [code], onDelete: Restrict)
+
+  @@unique([clientId, taxModelCode])
+  @@index([taxModelCode])
+  @@map("client_tax_assignments")
+}
+
+model TaxModelsConfig {
+  code           String   @id @db.VarChar(20)
+  name           String   @db.VarChar(191)
+  allowedTypes   Json     @map("allowed_types")
+  allowedPeriods Json     @map("allowed_periods")
+  labels         Json?
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.DateTime(3)
+
+  // Relations
+  assignments ClientTaxAssignment[]
+
+  @@map("tax_models_config")
 }
 
 // ==================== CLIENT EMPLOYEES (Many-to-Many) ====================
@@ -213,17 +253,17 @@ model ClientEmployee {
 
 // ==================== TASKS ====================
 model Task {
-  id                  String         @id @default(uuid()) @db.VarChar(36)
-  titulo              String         @db.Text
-  descripcion         String?        @db.Text
-  clienteId           String?        @map("cliente_id") @db.VarChar(36)
-  asignadoA           String?        @map("asignado_a") @db.VarChar(36)
-  prioridad           TaskPriority   @default(MEDIA)
-  estado              TaskStatus     @default(PENDIENTE)
-  visibilidad         TaskVisibility @default(GENERAL)
-  fechaVencimiento    DateTime?      @map("fecha_vencimiento") @db.DateTime(3)
-  fechaCreacion       DateTime       @default(now()) @map("fecha_creacion") @db.DateTime(3)
-  fechaActualizacion  DateTime       @updatedAt @map("fecha_actualizacion") @db.DateTime(3)
+  id                 String         @id @default(uuid()) @db.VarChar(36)
+  titulo             String         @db.Text
+  descripcion        String?        @db.Text
+  clienteId          String?        @map("cliente_id") @db.VarChar(36)
+  asignadoA          String?        @map("asignado_a") @db.VarChar(36)
+  prioridad          TaskPriority   @default(MEDIA)
+  estado             TaskStatus     @default(PENDIENTE)
+  visibilidad        TaskVisibility @default(GENERAL)
+  fechaVencimiento   DateTime?      @map("fecha_vencimiento") @db.DateTime(3)
+  fechaCreacion      DateTime       @default(now()) @map("fecha_creacion") @db.DateTime(3)
+  fechaActualizacion DateTime       @updatedAt @map("fecha_actualizacion") @db.DateTime(3)
 
   // Relations
   cliente  Client? @relation(fields: [clienteId], references: [id], onDelete: SetNull)
@@ -238,19 +278,19 @@ model Task {
 
 // ==================== MANUALS ====================
 model Manual {
-  id                  String       @id @default(uuid()) @db.VarChar(36)
-  titulo              String       @db.Text
-  contenidoHtml       String       @map("contenido_html") @db.Text
-  autorId             String       @map("autor_id") @db.VarChar(36)
-  etiquetas           String?      @db.Text // JSON array stored as text
-  categoria           String?      @db.VarChar(191)
-  status              ManualStatus @default(DRAFT)
-  fechaCreacion       DateTime     @default(now()) @map("fecha_creacion") @db.DateTime(3)
-  fechaActualizacion  DateTime     @updatedAt @map("fecha_actualizacion") @db.DateTime(3)
-  fechaPublicacion    DateTime?    @map("fecha_publicacion") @db.DateTime(3)
+  id                 String       @id @default(uuid()) @db.VarChar(36)
+  titulo             String       @db.Text
+  contenidoHtml      String       @map("contenido_html") @db.Text
+  autorId            String       @map("autor_id") @db.VarChar(36)
+  etiquetas          String?      @db.Text // JSON array stored as text
+  categoria          String?      @db.VarChar(191)
+  status             ManualStatus @default(DRAFT)
+  fechaCreacion      DateTime     @default(now()) @map("fecha_creacion") @db.DateTime(3)
+  fechaActualizacion DateTime     @updatedAt @map("fecha_actualizacion") @db.DateTime(3)
+  fechaPublicacion   DateTime?    @map("fecha_publicacion") @db.DateTime(3)
 
   // Relations
-  autor       User              @relation("ManualAuthor", fields: [autorId], references: [id], onDelete: Cascade)
+  autor       User               @relation("ManualAuthor", fields: [autorId], references: [id], onDelete: Cascade)
   attachments ManualAttachment[]
   versions    ManualVersion[]
 
@@ -262,15 +302,15 @@ model Manual {
 
 // ==================== MANUAL ATTACHMENTS ====================
 model ManualAttachment {
-  id               String   @id @default(uuid()) @db.VarChar(36)
-  manualId         String   @map("manual_id") @db.VarChar(36)
-  fileName         String   @map("file_name") @db.VarChar(255)
-  originalName     String   @map("original_name") @db.VarChar(255)
-  filePath         String   @map("file_path") @db.Text
-  fileType         String   @map("file_type") @db.VarChar(100)
-  fileSize         Int      @map("file_size") // bytes
-  uploadedBy       String   @map("uploaded_by") @db.VarChar(36)
-  uploadedAt       DateTime @default(now()) @map("uploaded_at") @db.DateTime(3)
+  id           String   @id @default(uuid()) @db.VarChar(36)
+  manualId     String   @map("manual_id") @db.VarChar(36)
+  fileName     String   @map("file_name") @db.VarChar(255)
+  originalName String   @map("original_name") @db.VarChar(255)
+  filePath     String   @map("file_path") @db.Text
+  fileType     String   @map("file_type") @db.VarChar(100)
+  fileSize     Int      @map("file_size") // bytes
+  uploadedBy   String   @map("uploaded_by") @db.VarChar(36)
+  uploadedAt   DateTime @default(now()) @map("uploaded_at") @db.DateTime(3)
 
   // Relations
   manual Manual @relation(fields: [manualId], references: [id], onDelete: Cascade)
@@ -281,15 +321,15 @@ model ManualAttachment {
 
 // ==================== MANUAL VERSIONS ====================
 model ManualVersion {
-  id             String   @id @default(uuid()) @db.VarChar(36)
-  manualId       String   @map("manual_id") @db.VarChar(36)
-  versionNumber  Int      @map("version_number")
-  titulo         String   @db.Text
-  contenidoHtml  String   @map("contenido_html") @db.Text
-  etiquetas      String?  @db.Text
-  categoria      String?  @db.VarChar(191)
-  createdBy      String   @map("created_by") @db.VarChar(36)
-  createdAt      DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  id            String   @id @default(uuid()) @db.VarChar(36)
+  manualId      String   @map("manual_id") @db.VarChar(36)
+  versionNumber Int      @map("version_number")
+  titulo        String   @db.Text
+  contenidoHtml String   @map("contenido_html") @db.Text
+  etiquetas     String?  @db.Text
+  categoria     String?  @db.VarChar(191)
+  createdBy     String   @map("created_by") @db.VarChar(36)
+  createdAt     DateTime @default(now()) @map("created_at") @db.DateTime(3)
 
   // Relations
   manual Manual @relation(fields: [manualId], references: [id], onDelete: Cascade)
@@ -318,16 +358,16 @@ model ActivityLog {
 
 // ==================== AUDIT TRAIL ====================
 model AuditTrail {
-  id             String      @id @default(uuid()) @db.VarChar(36)
-  usuarioId      String      @map("usuario_id") @db.VarChar(36)
-  accion         AuditAction
-  tabla          String      @db.VarChar(191)
-  registroId     String      @map("registro_id") @db.VarChar(36)
-  valorAnterior  String?     @map("valor_anterior") @db.Text
-  valorNuevo     String?     @map("valor_nuevo") @db.Text
-  cambios        String?     @db.Text
-  requestId      String?     @map("request_id") @db.VarChar(191)
-  fecha          DateTime    @default(now()) @db.DateTime(3)
+  id            String      @id @default(uuid()) @db.VarChar(36)
+  usuarioId     String      @map("usuario_id") @db.VarChar(36)
+  accion        AuditAction
+  tabla         String      @db.VarChar(191)
+  registroId    String      @map("registro_id") @db.VarChar(36)
+  valorAnterior String?     @map("valor_anterior") @db.Text
+  valorNuevo    String?     @map("valor_nuevo") @db.Text
+  cambios       String?     @db.Text
+  requestId     String?     @map("request_id") @db.VarChar(191)
+  fecha         DateTime    @default(now()) @db.DateTime(3)
 
   // Relations
   usuario User @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
@@ -352,14 +392,14 @@ model SmtpConfig {
 
 // ==================== JOB RUNS (CRON TRACKING) ====================
 model JobRun {
-  id             String   @id @default(uuid()) @db.VarChar(36)
-  jobName        String   @map("job_name") @db.VarChar(191)
-  startedAt      DateTime @map("started_at") @db.DateTime(3)
-  completedAt    DateTime? @map("completed_at") @db.DateTime(3)
-  status         String   @db.VarChar(50) // SUCCESS, FAILED, RUNNING
-  recordsProcessed Int?   @map("records_processed")
-  errorMessage   String?  @map("error_message") @db.Text
-  metadata       String?  @db.Text // JSON metadata
+  id               String    @id @default(uuid()) @db.VarChar(36)
+  jobName          String    @map("job_name") @db.VarChar(191)
+  startedAt        DateTime  @map("started_at") @db.DateTime(3)
+  completedAt      DateTime? @map("completed_at") @db.DateTime(3)
+  status           String    @db.VarChar(50) // SUCCESS, FAILED, RUNNING
+  recordsProcessed Int?      @map("records_processed")
+  errorMessage     String?   @map("error_message") @db.Text
+  metadata         String?   @db.Text // JSON metadata
 
   @@index([jobName, startedAt])
   @@index([status])
@@ -368,9 +408,9 @@ model JobRun {
 
 // ==================== SYSTEM SETTINGS ====================
 model SystemSettings {
-  id                   String   @id @default(uuid()) @db.VarChar(36)
-  registrationEnabled  Boolean  @default(true) @map("registration_enabled")
-  updatedAt            DateTime @updatedAt @map("updated_at") @db.DateTime(3)
+  id                  String   @id @default(uuid()) @db.VarChar(36)
+  registrationEnabled Boolean  @default(true) @map("registration_enabled")
+  updatedAt           DateTime @updatedAt @map("updated_at") @db.DateTime(3)
 
   @@map("system_settings")
 }
@@ -378,19 +418,19 @@ model SystemSettings {
 // ==================== NOTIFICATIONS SYSTEM ====================
 // Múltiples cuentas SMTP
 model SMTPAccount {
-  id             String   @id @default(uuid()) @db.VarChar(36)
-  nombre         String   @db.VarChar(191)
-  host           String   @db.VarChar(191)
-  port           Int
-  user           String   @db.VarChar(191) // Email usado para enviar
-  password       String   @db.Text // Encriptada
-  isPredeterminada Boolean @default(false) @map("is_predeterminada")
-  activa         Boolean  @default(true)
-  creadaPor      String?  @map("creada_por") @db.VarChar(36)
-  fechaCreacion  DateTime @default(now()) @map("fecha_creacion") @db.DateTime(3)
+  id               String   @id @default(uuid()) @db.VarChar(36)
+  nombre           String   @db.VarChar(191)
+  host             String   @db.VarChar(191)
+  port             Int
+  user             String   @db.VarChar(191) // Email usado para enviar
+  password         String   @db.Text // Encriptada
+  isPredeterminada Boolean  @default(false) @map("is_predeterminada")
+  activa           Boolean  @default(true)
+  creadaPor        String?  @map("creada_por") @db.VarChar(36)
+  fechaCreacion    DateTime @default(now()) @map("fecha_creacion") @db.DateTime(3)
 
   // Relations
-  creador   User?                @relation("SMTPCreator", fields: [creadaPor], references: [id], onDelete: SetNull)
+  creador   User?                   @relation("SMTPCreator", fields: [creadaPor], references: [id], onDelete: SetNull)
   logs      NotificationLog[]
   scheduled ScheduledNotification[]
 
@@ -401,19 +441,19 @@ model SMTPAccount {
 
 // Plantillas de notificaciones
 model NotificationTemplate {
-  id             String   @id @default(uuid()) @db.VarChar(36)
-  nombre         String   @db.VarChar(191)
-  asunto         String   @db.Text // Puede contener variables: {nombre_cliente}
-  contenidoHTML  String   @map("contenido_html") @db.Text
-  variables      Json?    // Array de variables disponibles: ["cliente", "impuesto", "fecha"]
-  tipo           String   @db.VarChar(50) // RECORDATORIO, INFORMATIVO, URGENTE
-  activa         Boolean  @default(true)
-  creadoPor      String?  @map("creado_por") @db.VarChar(36)
-  fechaCreacion  DateTime @default(now()) @map("fecha_creacion") @db.DateTime(3)
+  id                 String   @id @default(uuid()) @db.VarChar(36)
+  nombre             String   @db.VarChar(191)
+  asunto             String   @db.Text // Puede contener variables: {nombre_cliente}
+  contenidoHTML      String   @map("contenido_html") @db.Text
+  variables          Json? // Array de variables disponibles: ["cliente", "impuesto", "fecha"]
+  tipo               String   @db.VarChar(50) // RECORDATORIO, INFORMATIVO, URGENTE
+  activa             Boolean  @default(true)
+  creadoPor          String?  @map("creado_por") @db.VarChar(36)
+  fechaCreacion      DateTime @default(now()) @map("fecha_creacion") @db.DateTime(3)
   fechaActualizacion DateTime @updatedAt @map("fecha_actualizacion") @db.DateTime(3)
 
   // Relations
-  creador   User?                  @relation("TemplateCreator", fields: [creadoPor], references: [id], onDelete: SetNull)
+  creador   User?                   @relation("TemplateCreator", fields: [creadoPor], references: [id], onDelete: SetNull)
   logs      NotificationLog[]
   scheduled ScheduledNotification[]
 
@@ -424,17 +464,17 @@ model NotificationTemplate {
 
 // Historial de notificaciones enviadas
 model NotificationLog {
-  id              String   @id @default(uuid()) @db.VarChar(36)
-  plantillaId     String?  @map("plantilla_id") @db.VarChar(36)
-  smtpAccountId   String?  @map("smtp_account_id") @db.VarChar(36)
-  destinatarios   Json     // Array de emails
-  asunto          String   @db.Text
-  contenido       String   @db.Text
-  tipo            String   @db.VarChar(50) // EMAIL
-  estado          String   @db.VarChar(50) // ENVIADO, FALLIDO, PENDIENTE
-  fechaEnvio      DateTime @map("fecha_envio") @db.DateTime(3)
-  enviadoPor      String?  @map("enviado_por") @db.VarChar(36)
-  metadata        Json?    // Información adicional
+  id            String   @id @default(uuid()) @db.VarChar(36)
+  plantillaId   String?  @map("plantilla_id") @db.VarChar(36)
+  smtpAccountId String?  @map("smtp_account_id") @db.VarChar(36)
+  destinatarios Json // Array de emails
+  asunto        String   @db.Text
+  contenido     String   @db.Text
+  tipo          String   @db.VarChar(50) // EMAIL
+  estado        String   @db.VarChar(50) // ENVIADO, FALLIDO, PENDIENTE
+  fechaEnvio    DateTime @map("fecha_envio") @db.DateTime(3)
+  enviadoPor    String?  @map("enviado_por") @db.VarChar(36)
+  metadata      Json? // Información adicional
 
   // Relations
   plantilla   NotificationTemplate? @relation(fields: [plantillaId], references: [id], onDelete: SetNull)
@@ -449,15 +489,15 @@ model NotificationLog {
 
 // Notificaciones programadas
 model ScheduledNotification {
-  id                    String   @id @default(uuid()) @db.VarChar(36)
-  plantillaId           String   @map("plantilla_id") @db.VarChar(36)
-  smtpAccountId         String?  @map("smtp_account_id") @db.VarChar(36)
-  destinatariosSeleccionados Json @map("destinatarios_seleccionados") // Filtros o clientes específicos
-  fechaProgramada       DateTime @map("fecha_programada") @db.DateTime(3)
-  estado                String   @db.VarChar(50) @default("PENDIENTE") // PENDIENTE, ENVIADA, CANCELADA
-  recurrencia           String   @db.VarChar(50) @default("NINGUNA") // NINGUNA, DIARIA, SEMANAL, MENSUAL
-  creadoPor             String?  @map("creado_por") @db.VarChar(36)
-  fechaCreacion         DateTime @default(now()) @map("fecha_creacion") @db.DateTime(3)
+  id                         String   @id @default(uuid()) @db.VarChar(36)
+  plantillaId                String   @map("plantilla_id") @db.VarChar(36)
+  smtpAccountId              String?  @map("smtp_account_id") @db.VarChar(36)
+  destinatariosSeleccionados Json     @map("destinatarios_seleccionados") // Filtros o clientes específicos
+  fechaProgramada            DateTime @map("fecha_programada") @db.DateTime(3)
+  estado                     String   @default("PENDIENTE") @db.VarChar(50) // PENDIENTE, ENVIADA, CANCELADA
+  recurrencia                String   @default("NINGUNA") @db.VarChar(50) // NINGUNA, DIARIA, SEMANAL, MENSUAL
+  creadoPor                  String?  @map("creado_por") @db.VarChar(36)
+  fechaCreacion              DateTime @default(now()) @map("fecha_creacion") @db.DateTime(3)
 
   // Relations
   plantilla   NotificationTemplate @relation(fields: [plantillaId], references: [id], onDelete: Cascade)
@@ -473,30 +513,30 @@ model ScheduledNotification {
 
 // Configuración del sistema
 model SystemConfig {
-  id                 String   @id @default(uuid()) @db.VarChar(36)
-  key                String   @unique @db.VarChar(100) // Clave única de configuración
-  value              String   @db.Text // Valor de la configuración
-  description        String?  @db.Text // Descripción de qué hace esta config
-  isEditable         Boolean  @default(true) @map("is_editable") // Si se puede editar desde la UI
-  createdAt          DateTime @default(now()) @map("created_at") @db.DateTime(3)
-  updatedAt          DateTime @updatedAt @map("updated_at") @db.DateTime(3)
+  id          String   @id @default(uuid()) @db.VarChar(36)
+  key         String   @unique @db.VarChar(100) // Clave única de configuración
+  value       String   @db.Text // Valor de la configuración
+  description String?  @db.Text // Descripción de qué hace esta config
+  isEditable  Boolean  @default(true) @map("is_editable") // Si se puede editar desde la UI
+  createdAt   DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.DateTime(3)
 
   @@map("system_config")
 }
 
 // Registro de backups del sistema
 model SystemBackup {
-  id                 String       @id @default(uuid()) @db.VarChar(36)
-  version            String       @db.VarChar(50) // Versión del sistema al momento del backup
-  dbFile             String       @map("db_file") @db.VarChar(500) // Ruta al archivo .sql
-  filesFile          String       @map("files_file") @db.VarChar(500) // Ruta al archivo .zip
-  dbSize             BigInt       @default(0) @map("db_size") // Tamaño del backup de BD en bytes
-  filesSize          BigInt       @default(0) @map("files_size") // Tamaño del backup de archivos en bytes
-  status             BackupStatus @default(CREATING)
-  errorMessage       String?      @map("error_message") @db.Text
-  createdBy          String?      @map("created_by") @db.VarChar(36)
-  createdAt          DateTime     @default(now()) @map("created_at") @db.DateTime(3)
-  completedAt        DateTime?    @map("completed_at") @db.DateTime(3)
+  id           String       @id @default(uuid()) @db.VarChar(36)
+  version      String       @db.VarChar(50) // Versión del sistema al momento del backup
+  dbFile       String       @map("db_file") @db.VarChar(500) // Ruta al archivo .sql
+  filesFile    String       @map("files_file") @db.VarChar(500) // Ruta al archivo .zip
+  dbSize       BigInt       @default(0) @map("db_size") // Tamaño del backup de BD en bytes
+  filesSize    BigInt       @default(0) @map("files_size") // Tamaño del backup de archivos en bytes
+  status       BackupStatus @default(CREATING)
+  errorMessage String?      @map("error_message") @db.Text
+  createdBy    String?      @map("created_by") @db.VarChar(36)
+  createdAt    DateTime     @default(now()) @map("created_at") @db.DateTime(3)
+  completedAt  DateTime?    @map("completed_at") @db.DateTime(3)
 
   // Relations
   creator User? @relation("BackupCreator", fields: [createdBy], references: [id], onDelete: SetNull)
@@ -508,16 +548,16 @@ model SystemBackup {
 
 // Registro de actualizaciones del sistema
 model SystemUpdate {
-  id                 String       @id @default(uuid()) @db.VarChar(36)
-  fromVersion        String       @map("from_version") @db.VarChar(50) // Versión inicial
-  toVersion          String       @map("to_version") @db.VarChar(50) // Versión destino
-  status             UpdateStatus @default(CHECKING)
-  logs               Json?        // Logs del proceso de actualización
-  backupId           String?      @map("backup_id") @db.VarChar(36) // ID del backup creado
-  errorMessage       String?      @map("error_message") @db.Text
-  initiatedBy        String?      @map("initiated_by") @db.VarChar(36)
-  createdAt          DateTime     @default(now()) @map("created_at") @db.DateTime(3)
-  completedAt        DateTime?    @map("completed_at") @db.DateTime(3)
+  id           String       @id @default(uuid()) @db.VarChar(36)
+  fromVersion  String       @map("from_version") @db.VarChar(50) // Versión inicial
+  toVersion    String       @map("to_version") @db.VarChar(50) // Versión destino
+  status       UpdateStatus @default(CHECKING)
+  logs         Json? // Logs del proceso de actualización
+  backupId     String?      @map("backup_id") @db.VarChar(36) // ID del backup creado
+  errorMessage String?      @map("error_message") @db.Text
+  initiatedBy  String?      @map("initiated_by") @db.VarChar(36)
+  createdAt    DateTime     @default(now()) @map("created_at") @db.DateTime(3)
+  completedAt  DateTime?    @map("completed_at") @db.DateTime(3)
 
   // Relations
   initiator User? @relation("UpdateInitiator", fields: [initiatedBy], references: [id], onDelete: SetNull)
@@ -533,7 +573,7 @@ model StorageConfig {
   type              StorageType @default(LOCAL)
   name              String      @db.VarChar(200) // Nombre descriptivo del storage
   host              String?     @db.VarChar(500) // Host/IP para FTP/SMB
-  port              Int?        // Puerto para FTP/SMB
+  port              Int? // Puerto para FTP/SMB
   username          String?     @db.VarChar(200) // Usuario para FTP/SMB
   encryptedPassword String?     @map("encrypted_password") @db.Text // Contraseña cifrada AES-256-GCM
   basePath          String      @default("/uploads") @map("base_path") @db.VarChar(1000) // Ruta base de almacenamiento
@@ -552,9 +592,9 @@ model StorageConfig {
 model Impuesto {
   id          String   @id @default(uuid()) @db.VarChar(36)
   nombre      String   @db.VarChar(100) // Ej: IVA, IRPF, Sociedades
-  modelo      String   @db.VarChar(10)  // Ej: 303, 111, 200
+  modelo      String   @db.VarChar(10) // Ej: 303, 111, 200
   descripcion String?  @db.Text
-  activo      Boolean  @default(true)   // Si el impuesto está activo
+  activo      Boolean  @default(true) // Si el impuesto está activo
   createdAt   DateTime @default(now()) @map("created_at") @db.DateTime(3)
   updatedAt   DateTime @updatedAt @map("updated_at") @db.DateTime(3)
 
@@ -568,18 +608,18 @@ model Impuesto {
 
 // Obligaciones fiscales de cada cliente (qué impuestos presenta y con qué periodicidad)
 model ObligacionFiscal {
-  id              String        @id @default(uuid()) @db.VarChar(36)
-  clienteId       String        @map("cliente_id") @db.VarChar(36)
-  impuestoId      String        @map("impuesto_id") @db.VarChar(36)
-  periodicidad    Periodicidad  // MENSUAL, TRIMESTRAL, ANUAL
-  diaVencimiento  Int?          @map("dia_vencimiento") // Día del mes para vencimiento (1-31)
-  fechaInicio     DateTime      @map("fecha_inicio") @db.DateTime(3) // Desde cuándo aplica
-  fechaFin        DateTime?     @map("fecha_fin") @db.DateTime(3)    // NULL = vigente
-  observaciones   String?       @db.Text
-  fechaAsignacion DateTime      @default(now()) @map("fecha_asignacion") @db.DateTime(3)
-  activo          Boolean       @default(true)
-  createdAt       DateTime      @default(now()) @map("created_at") @db.DateTime(3)
-  updatedAt       DateTime      @updatedAt @map("updated_at") @db.DateTime(3)
+  id              String       @id @default(uuid()) @db.VarChar(36)
+  clienteId       String       @map("cliente_id") @db.VarChar(36)
+  impuestoId      String       @map("impuesto_id") @db.VarChar(36)
+  periodicidad    Periodicidad // MENSUAL, TRIMESTRAL, ANUAL
+  diaVencimiento  Int?         @map("dia_vencimiento") // Día del mes para vencimiento (1-31)
+  fechaInicio     DateTime     @map("fecha_inicio") @db.DateTime(3) // Desde cuándo aplica
+  fechaFin        DateTime?    @map("fecha_fin") @db.DateTime(3) // NULL = vigente
+  observaciones   String?      @db.Text
+  fechaAsignacion DateTime     @default(now()) @map("fecha_asignacion") @db.DateTime(3)
+  activo          Boolean      @default(true)
+  createdAt       DateTime     @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt       DateTime     @updatedAt @map("updated_at") @db.DateTime(3)
 
   // Relations
   cliente       Client        @relation(fields: [clienteId], references: [id], onDelete: Cascade)
@@ -595,14 +635,14 @@ model ObligacionFiscal {
 
 // Calendario oficial de la AEAT (períodos y fechas límite por modelo)
 model CalendarioAEAT {
-  id              String        @id @default(uuid()) @db.VarChar(36)
-  modelo          String        @db.VarChar(10)  // Ej: 303, 111, 200
-  periodicidad    Periodicidad  // MENSUAL, TRIMESTRAL, ANUAL
-  periodoContable String        @map("periodo_contable") @db.VarChar(20) // Ej: 2025-Q2, 2025-04, 2025
-  fechaInicio     DateTime      @map("fecha_inicio") @db.DateTime(3)     // Inicio del período
-  fechaFin        DateTime      @map("fecha_fin") @db.DateTime(3)        // Fecha límite de presentación
-  createdAt       DateTime      @default(now()) @map("created_at") @db.DateTime(3)
-  updatedAt       DateTime      @updatedAt @map("updated_at") @db.DateTime(3)
+  id              String       @id @default(uuid()) @db.VarChar(36)
+  modelo          String       @db.VarChar(10) // Ej: 303, 111, 200
+  periodicidad    Periodicidad // MENSUAL, TRIMESTRAL, ANUAL
+  periodoContable String       @map("periodo_contable") @db.VarChar(20) // Ej: 2025-Q2, 2025-04, 2025
+  fechaInicio     DateTime     @map("fecha_inicio") @db.DateTime(3) // Inicio del período
+  fechaFin        DateTime     @map("fecha_fin") @db.DateTime(3) // Fecha límite de presentación
+  createdAt       DateTime     @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt       DateTime     @updatedAt @map("updated_at") @db.DateTime(3)
 
   // Relations
   declaraciones Declaracion[]
@@ -616,15 +656,15 @@ model CalendarioAEAT {
 
 // Declaraciones individuales (seguimiento de presentación por período)
 model Declaracion {
-  id                 String            @id @default(uuid()) @db.VarChar(36)
-  obligacionId       String            @map("obligacion_id") @db.VarChar(36)
-  calendarioId       String            @map("calendario_id") @db.VarChar(36)
-  estado             EstadoDeclaracion @default(PENDIENTE) // PENDIENTE, CALCULADO, PRESENTADO
-  fechaPresentacion  DateTime?         @map("fecha_presentacion") @db.DateTime(3) // Solo si PRESENTADO
-  archivoPdf         String?           @map("archivo_pdf") @db.VarChar(500)       // Ruta al justificante
-  notas              String?           @db.Text
-  createdAt          DateTime          @default(now()) @map("created_at") @db.DateTime(3)
-  updatedAt          DateTime          @updatedAt @map("updated_at") @db.DateTime(3)
+  id                String            @id @default(uuid()) @db.VarChar(36)
+  obligacionId      String            @map("obligacion_id") @db.VarChar(36)
+  calendarioId      String            @map("calendario_id") @db.VarChar(36)
+  estado            EstadoDeclaracion @default(PENDIENTE) // PENDIENTE, CALCULADO, PRESENTADO
+  fechaPresentacion DateTime?         @map("fecha_presentacion") @db.DateTime(3) // Solo si PRESENTADO
+  archivoPdf        String?           @map("archivo_pdf") @db.VarChar(500) // Ruta al justificante
+  notas             String?           @db.Text
+  createdAt         DateTime          @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt         DateTime          @updatedAt @map("updated_at") @db.DateTime(3)
 
   // Relations
   obligacion ObligacionFiscal @relation(fields: [obligacionId], references: [id], onDelete: Cascade)
@@ -639,15 +679,15 @@ model Declaracion {
 
 // Notificaciones enviadas a clientes
 model Notificacion {
-  id          String            @id @default(uuid()) @db.VarChar(36)
-  clienteId   String            @map("cliente_id") @db.VarChar(36)
-  periodo     String            @db.VarChar(20) // Ej: 2025-Q2, 2025-04
-  tipo        TipoNotificacion  // SOLICITUD_INFO, CONFIRMACION_PRESENTACION
-  fechaEnvio  DateTime          @map("fecha_envio") @db.DateTime(3)
-  enviada     Boolean           @default(true)
-  asunto      String?           @db.VarChar(500)
-  mensaje     String?           @db.Text
-  createdAt   DateTime          @default(now()) @map("created_at") @db.DateTime(3)
+  id         String           @id @default(uuid()) @db.VarChar(36)
+  clienteId  String           @map("cliente_id") @db.VarChar(36)
+  periodo    String           @db.VarChar(20) // Ej: 2025-Q2, 2025-04
+  tipo       TipoNotificacion // SOLICITUD_INFO, CONFIRMACION_PRESENTACION
+  fechaEnvio DateTime         @map("fecha_envio") @db.DateTime(3)
+  enviada    Boolean          @default(true)
+  asunto     String?          @db.VarChar(500)
+  mensaje    String?          @db.Text
+  createdAt  DateTime         @default(now()) @map("created_at") @db.DateTime(3)
 
   // Relations
   cliente Client @relation(fields: [clienteId], references: [id], onDelete: Cascade)
@@ -667,47 +707,47 @@ model Notificacion {
 // sin modificar el resto de la aplicación.
 
 model taxModel {
-  id          String   @id @default(uuid()) @db.VarChar(36)
-  nombre      String   @db.VarChar(191)
-  descripcion String?  @db.Text
+  id          String  @id @default(uuid()) @db.VarChar(36)
+  nombre      String  @db.VarChar(191)
+  descripcion String? @db.Text
 
   // Relations
-  periods taxPeriod[]  @relation("TaxModelPeriods")
+  periods taxPeriod[] @relation("TaxModelPeriods")
 
   @@map("tax_models")
 }
 
 model taxPeriod {
-  id                  String    @id @default(uuid()) @db.VarChar(36)
-  modeloId            String    @map("modelo_id") @db.VarChar(36)
-  anio                Int
-  trimestre           Int?
-  mes                 Int?
-  inicioPresentacion  DateTime  @map("inicio_presentacion") @db.DateTime(3)
-  finPresentacion     DateTime  @map("fin_presentacion") @db.DateTime(3)
+  id                 String   @id @default(uuid()) @db.VarChar(36)
+  modeloId           String   @map("modelo_id") @db.VarChar(36)
+  anio               Int
+  trimestre          Int?
+  mes                Int?
+  inicioPresentacion DateTime @map("inicio_presentacion") @db.DateTime(3)
+  finPresentacion    DateTime @map("fin_presentacion") @db.DateTime(3)
 
   // Relations
-  modelo taxModel @relation("TaxModelPeriods", fields: [modeloId], references: [id], onDelete: Cascade)
+  modelo      taxModel    @relation("TaxModelPeriods", fields: [modeloId], references: [id], onDelete: Cascade)
   clientTaxes clientTax[]
 
   @@map("tax_periods")
 }
 
 model clientTax {
-  id               String   @id @default(uuid()) @db.VarChar(36)
-  clientId         String   @map("client_id") @db.VarChar(36)
-  taxPeriodId      String   @map("tax_period_id") @db.VarChar(36)
-  estado           String   @db.VarChar(50)
-  notas            String?  @db.Text
-  displayText      String?  @map("display_text")
-  colorTag         String?  @map("color_tag")
-  fechaCreacion    DateTime @map("fecha_creacion") @db.DateTime(3)
+  id                 String   @id @default(uuid()) @db.VarChar(36)
+  clientId           String   @map("client_id") @db.VarChar(36)
+  taxPeriodId        String   @map("tax_period_id") @db.VarChar(36)
+  estado             String   @db.VarChar(50)
+  notas              String?  @db.Text
+  displayText        String?  @map("display_text")
+  colorTag           String?  @map("color_tag")
+  fechaCreacion      DateTime @map("fecha_creacion") @db.DateTime(3)
   fechaActualizacion DateTime @map("fecha_actualizacion") @db.DateTime(3)
 
   // Relations
-  client Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  client Client    @relation(fields: [clientId], references: [id], onDelete: Cascade)
   period taxPeriod @relation(fields: [taxPeriodId], references: [id], onDelete: Cascade)
-  files taxFile[]
+  files  taxFile[]
 
   @@map("client_tax")
 }
@@ -746,10 +786,10 @@ model clientTaxRequirement {
 }
 
 model fiscalPeriod {
-  id      String   @id @default(uuid()) @db.VarChar(36)
-  year    Int
-  quarter Int
-  label   String   @db.VarChar(50)
+  id       String   @id @default(uuid()) @db.VarChar(36)
+  year     Int
+  quarter  Int
+  label    String   @db.VarChar(50)
   startsAt DateTime @map("starts_at") @db.DateTime(3)
   endsAt   DateTime @map("ends_at") @db.DateTime(3)
 
@@ -760,16 +800,16 @@ model fiscalPeriod {
 }
 
 model clientTaxFiling {
-  id           String  @id @default(uuid()) @db.VarChar(36)
-  clientId     String  @map("client_id") @db.VarChar(36)
-  taxModelCode String  @map("tax_model_code") @db.VarChar(50)
-  periodId     String  @map("period_id") @db.VarChar(36)
-  status       String  @db.VarChar(50)
-  notes        String? @db.Text
+  id           String    @id @default(uuid()) @db.VarChar(36)
+  clientId     String    @map("client_id") @db.VarChar(36)
+  taxModelCode String    @map("tax_model_code") @db.VarChar(50)
+  periodId     String    @map("period_id") @db.VarChar(36)
+  status       String    @db.VarChar(50)
+  notes        String?   @db.Text
   presentedAt  DateTime? @map("presented_at") @db.DateTime(3)
 
   // Relations
-  client Client? @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  client Client?       @relation(fields: [clientId], references: [id], onDelete: Cascade)
   period fiscalPeriod? @relation(fields: [periodId], references: [id], onDelete: Cascade)
 
   @@unique([clientId, taxModelCode, periodId], map: "clientId_taxModelCode_periodId")

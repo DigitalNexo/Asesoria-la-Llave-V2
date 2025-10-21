@@ -1,23 +1,58 @@
-import { useState } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useEffect, useMemo, useState } from "react";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import Papa from "papaparse";
+import {
+  Plus,
+  Search,
+  Download,
+  Edit,
+  Trash2,
+  UserCircle,
+  Building2,
+  User,
+} from "lucide-react";
+
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Search, Download, Edit, Trash2, Building2, User, FileText, CheckCircle2, XCircle, UserCircle } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
-import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useToast } from "@/hooks/use-toast";
 import type { User as UserType } from "@shared/schema";
-import { getAvailableTaxModelsForClientType, ALL_TAX_MODELS } from "@/lib/tax-helpers";
+import type { ClientType } from "@shared/tax-rules";
+import {
+  ClientFiscalForm,
+} from "@/features/clients/ClientFiscalForm";
+import {
+  createClient as createClientApi,
+  updateClient as updateClientApi,
+  fetchClientDetail,
+  fetchTaxModelsConfig,
+} from "@/features/clients/api";
+import type {
+  ClientDetail,
+  ClientTaxAssignment,
+  ClientPayload,
+  TaxModelsConfig,
+} from "@/features/clients/types";
 
-// Tipo Client compatible con Prisma (incluye taxModels, isActive y employees)
 interface ClientEmployee {
   userId: string;
   isPrimary: boolean;
@@ -28,7 +63,7 @@ interface ClientEmployee {
   };
 }
 
-interface Client {
+interface ClientListItem {
   id: string;
   razonSocial: string;
   nifCif: string;
@@ -36,63 +71,221 @@ interface Client {
   email: string | null;
   telefono: string | null;
   direccion: string | null;
-  fechaAlta: Date;
+  fechaAlta: string;
+  fechaBaja: string | null;
   responsableAsignado: string | null;
-  taxModels?: string[];
-  isActive?: boolean;
+  isActive: boolean;
+  notes?: string | null;
   employees?: ClientEmployee[];
+  taxAssignments?: ClientTaxAssignment[];
 }
-import Papa from "papaparse";
+
+type FormState = {
+  razonSocial: string;
+  nifCif: string;
+  tipo: ClientType;
+  email: string;
+  telefono: string;
+  direccion: string;
+  responsableAsignado: string;
+  fechaAlta: string;
+  fechaBaja: string;
+  isActive: boolean;
+  notes: string;
+};
+
+const CLIENT_TYPE_OPTIONS: { value: ClientType; label: string }[] = [
+  { value: "AUTONOMO", label: "Autónomo" },
+  { value: "EMPRESA", label: "Empresa" },
+  { value: "PARTICULAR", label: "Particular" },
+];
+
+function formatInputDate(value?: string | null): string {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function todayInputDate(): string {
+  return formatInputDate(new Date().toISOString());
+}
+
+const defaultFormState: FormState = {
+  razonSocial: "",
+  nifCif: "",
+  tipo: "AUTONOMO",
+  email: "",
+  telefono: "",
+  direccion: "",
+  responsableAsignado: "",
+  fechaAlta: todayInputDate(),
+  fechaBaja: "",
+  isActive: true,
+  notes: "",
+};
+
+function buildClientPayload(form: FormState): ClientPayload {
+  return {
+    razonSocial: form.razonSocial.trim(),
+    nifCif: form.nifCif.trim(),
+    tipo: form.tipo,
+    email: form.email.trim() ? form.email.trim() : null,
+    telefono: form.telefono.trim() ? form.telefono.trim() : null,
+    direccion: form.direccion.trim() ? form.direccion.trim() : null,
+    responsableAsignado: form.responsableAsignado || null,
+    isActive: form.isActive,
+    fechaAlta: form.fechaAlta || null,
+    fechaBaja: form.fechaBaja || null,
+    notes: form.notes.trim() ? form.notes.trim() : null,
+  };
+}
 
 export default function Clientes() {
   const { toast } = useToast();
   const [searchTerm, setSearchTerm] = useState("");
   const [filterTipo, setFilterTipo] = useState<string>("todos");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [editingClient, setEditingClient] = useState<Client | null>(null);
+  const [activeTab, setActiveTab] = useState<"general" | "fiscal">("general");
+  const [editingClient, setEditingClient] = useState<ClientListItem | null>(null);
+  const [clientDetail, setClientDetail] = useState<ClientDetail | null>(null);
+  const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
+  const [assignments, setAssignments] = useState<ClientTaxAssignment[]>([]);
   const [selectedEmployees, setSelectedEmployees] = useState<string[]>([]);
   const [primaryEmployeeId, setPrimaryEmployeeId] = useState<string>("");
-  const [formData, setFormData] = useState({
-    razonSocial: "",
-    nifCif: "",
-    tipo: "autonomo",
-    email: "",
-    telefono: "",
-    direccion: "",
-    responsableAsignado: "",
-    taxModels: [] as string[],
-    isActive: true,
-  });
+  const [formData, setFormData] = useState<FormState>(defaultFormState);
 
-  const { data: clients, isLoading } = useQuery<Client[]>({
+  const { data: clients = [], isLoading } = useQuery<ClientListItem[]>({
     queryKey: ["/api/clients"],
   });
 
-  const { data: users } = useQuery<UserType[]>({
+  const { data: users = [] } = useQuery<UserType[]>({
     queryKey: ["/api/users"],
   });
 
+  const { data: taxModelsConfig = [] } = useQuery<TaxModelsConfig[]>({
+    queryKey: ["tax-models-config"],
+    queryFn: () => fetchTaxModelsConfig(),
+  });
+
+  const {
+    data: fetchedClientDetail,
+    isFetching: isFetchingDetail,
+  } = useQuery<ClientDetail>({
+    queryKey: ["client-detail", selectedClientId],
+    queryFn: () => fetchClientDetail(selectedClientId!),
+    enabled: Boolean(selectedClientId && isDialogOpen),
+  });
+
+  useEffect(() => {
+    if (!fetchedClientDetail) {
+      return;
+    }
+    setClientDetail(fetchedClientDetail);
+    setAssignments(fetchedClientDetail.taxAssignments ?? []);
+    setFormData({
+      razonSocial: fetchedClientDetail.razonSocial ?? "",
+      nifCif: fetchedClientDetail.nifCif ?? "",
+      tipo: (fetchedClientDetail.tipo || "AUTONOMO") as ClientType,
+      email: fetchedClientDetail.email ?? "",
+      telefono: fetchedClientDetail.telefono ?? "",
+      direccion: fetchedClientDetail.direccion ?? "",
+      responsableAsignado: fetchedClientDetail.responsableAsignado ?? "",
+      fechaAlta: formatInputDate(fetchedClientDetail.fechaAlta) || todayInputDate(),
+      fechaBaja: formatInputDate(fetchedClientDetail.fechaBaja),
+      isActive: fetchedClientDetail.isActive ?? true,
+      notes: fetchedClientDetail.notes ?? "",
+    });
+    const employeeIds =
+      fetchedClientDetail.employees?.map((employee) => employee.userId) ?? [];
+    const primary =
+      fetchedClientDetail.employees?.find((employee) => employee.isPrimary)?.userId ?? "";
+    setSelectedEmployees(employeeIds);
+    setPrimaryEmployeeId(primary);
+  }, [fetchedClientDetail]);
+
   const createMutation = useMutation({
-    mutationFn: async (data: typeof formData) => {
-      return await apiRequest("POST", "/api/clients", data);
+    mutationFn: async (payload: ClientPayload) => {
+      const created = await createClientApi(payload);
+      return created;
     },
-    onSuccess: () => {
+    onSuccess: (client) => {
       queryClient.invalidateQueries({ queryKey: ["/api/clients"] });
+      setEditingClient({
+        ...client,
+        tipo: client.tipo,
+        fechaAlta: client.fechaAlta,
+        fechaBaja: client.fechaBaja,
+      });
+      setClientDetail(client);
+      setFormData({
+        razonSocial: client.razonSocial ?? "",
+        nifCif: client.nifCif ?? "",
+        tipo: (client.tipo || "AUTONOMO") as ClientType,
+        email: client.email ?? "",
+        telefono: client.telefono ?? "",
+        direccion: client.direccion ?? "",
+        responsableAsignado: client.responsableAsignado ?? "",
+        fechaAlta: formatInputDate(client.fechaAlta) || todayInputDate(),
+        fechaBaja: formatInputDate(client.fechaBaja),
+        isActive: client.isActive ?? true,
+        notes: client.notes ?? "",
+      });
+      setSelectedClientId(client.id);
+      setAssignments(client.taxAssignments ?? []);
+      setActiveTab("fiscal");
       toast({ title: "Cliente creado exitosamente" });
-      setIsDialogOpen(false);
-      resetForm();
+    },
+    onError: (error: any) => {
+      toast({
+        title: "No se pudo crear el cliente",
+        description: error?.message ?? "Intenta de nuevo",
+        variant: "destructive",
+      });
     },
   });
 
   const updateMutation = useMutation({
-    mutationFn: async ({ id, data }: { id: string; data: typeof formData }) => {
-      return await apiRequest("PATCH", `/api/clients/${id}`, data);
+    mutationFn: async ({ id, payload }: { id: string; payload: ClientPayload }) => {
+      const updated = await updateClientApi(id, payload);
+      return updated;
     },
-    onSuccess: () => {
+    onSuccess: (client) => {
       queryClient.invalidateQueries({ queryKey: ["/api/clients"] });
+      setClientDetail(client);
+      setFormData({
+        razonSocial: client.razonSocial ?? "",
+        nifCif: client.nifCif ?? "",
+        tipo: (client.tipo || "AUTONOMO") as ClientType,
+        email: client.email ?? "",
+        telefono: client.telefono ?? "",
+        direccion: client.direccion ?? "",
+        responsableAsignado: client.responsableAsignado ?? "",
+        fechaAlta: formatInputDate(client.fechaAlta) || todayInputDate(),
+        fechaBaja: formatInputDate(client.fechaBaja),
+        isActive: client.isActive ?? true,
+        notes: client.notes ?? "",
+      });
+      setAssignments(client.taxAssignments ?? []);
+      setEditingClient((prev) =>
+        prev
+          ? {
+              ...prev,
+              ...client,
+            }
+          : null
+      );
       toast({ title: "Cliente actualizado exitosamente" });
-      setIsDialogOpen(false);
-      resetForm();
+    },
+    onError: (error: any) => {
+      toast({
+        title: "No se pudo actualizar el cliente",
+        description: error?.message ?? "Intenta de nuevo",
+        variant: "destructive",
+      });
     },
   });
 
@@ -103,6 +296,9 @@ export default function Clientes() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/clients"] });
       toast({ title: "Cliente eliminado exitosamente" });
+      if (isDialogOpen) {
+        handleCloseDialog();
+      }
     },
   });
 
@@ -119,58 +315,19 @@ export default function Clientes() {
     },
   });
 
-  const filteredClients = clients?.filter((client) => {
-    const matchesSearch = client.razonSocial.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      client.nifCif.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesTipo = filterTipo === "todos" || client.tipo === filterTipo;
-    return matchesSearch && matchesTipo;
-  }) || [];
-
-  const resetForm = () => {
-    setFormData({
-      razonSocial: "",
-      nifCif: "",
-      tipo: "autonomo",
-      email: "",
-      telefono: "",
-      direccion: "",
-      responsableAsignado: "",
-      taxModels: [],
-      isActive: true,
-    });
-    setSelectedEmployees([]);
-    setPrimaryEmployeeId("");
-    setEditingClient(null);
-  };
-
-  const handleEdit = (client: Client) => {
-    setEditingClient(client);
-    setFormData({
-      razonSocial: client.razonSocial,
-      nifCif: client.nifCif,
-      tipo: client.tipo,
-      email: client.email || "",
-      telefono: client.telefono || "",
-      direccion: client.direccion || "",
-      responsableAsignado: client.responsableAsignado || "",
-      taxModels: client.taxModels || [],
-      isActive: client.isActive !== false, // Default to true if undefined
-    });
-    
-    // Cargar empleados asignados
-    const employeeIds = client.employees?.map(e => e.userId) || [];
-    const primary = client.employees?.find(e => e.isPrimary)?.userId || "";
-    setSelectedEmployees(employeeIds);
-    setPrimaryEmployeeId(primary);
-    
-    setIsDialogOpen(true);
-  };
-
   const updateEmployeesMutation = useMutation({
-    mutationFn: async ({ clientId, employeeIds, primaryId }: { clientId: string; employeeIds: string[]; primaryId: string }) => {
+    mutationFn: async ({
+      clientId,
+      employeeIds,
+      primaryId,
+    }: {
+      clientId: string;
+      employeeIds: string[];
+      primaryId: string;
+    }) => {
       return await apiRequest("PUT", `/api/clients/${clientId}/employees`, {
         employeeIds,
-        primaryEmployeeId: primaryId
+        primaryEmployeeId: primaryId,
       });
     },
     onSuccess: () => {
@@ -178,37 +335,98 @@ export default function Clientes() {
     },
   });
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
+  const filteredClients = useMemo(() => {
+    return clients.filter((client) => {
+      const matchesSearch =
+        client.razonSocial.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        client.nifCif.toLowerCase().includes(searchTerm.toLowerCase());
+      const matchesTipo =
+        filterTipo === "todos" || client.tipo.toUpperCase() === filterTipo.toUpperCase();
+      return matchesSearch && matchesTipo;
+    });
+  }, [clients, searchTerm, filterTipo]);
+
+  const handleCloseDialog = () => {
+    setIsDialogOpen(false);
+    setTimeout(() => {
+      resetForm();
+    }, 200);
+  };
+
+  const resetForm = () => {
+    setFormData(defaultFormState);
+    setSelectedEmployees([]);
+    setPrimaryEmployeeId("");
+    setEditingClient(null);
+    setClientDetail(null);
+    setSelectedClientId(null);
+    setAssignments([]);
+    setActiveTab("general");
+  };
+
+  const handleOpenCreate = () => {
+    resetForm();
+    setIsDialogOpen(true);
+  };
+
+  const handleEdit = (client: ClientListItem) => {
+    setEditingClient(client);
+    setFormData({
+      razonSocial: client.razonSocial,
+      nifCif: client.nifCif,
+      tipo: (client.tipo || "AUTONOMO").toUpperCase() as ClientType,
+      email: client.email ?? "",
+      telefono: client.telefono ?? "",
+      direccion: client.direccion ?? "",
+      responsableAsignado: client.responsableAsignado ?? "",
+      fechaAlta: formatInputDate(client.fechaAlta) || todayInputDate(),
+      fechaBaja: formatInputDate(client.fechaBaja),
+      isActive: client.isActive ?? true,
+      notes: client.notes ?? "",
+    });
+    const employeeIds = client.employees?.map((employee) => employee.userId) ?? [];
+    const primary =
+      client.employees?.find((employee) => employee.isPrimary)?.userId ?? "";
+    setSelectedEmployees(employeeIds);
+    setPrimaryEmployeeId(primary);
+    setAssignments(client.taxAssignments ?? []);
+    setSelectedClientId(client.id);
+    setActiveTab("general");
+    setIsDialogOpen(true);
+  };
+
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const payload = buildClientPayload(formData);
+
     try {
-      let clientId = editingClient?.id;
-      
-      if (editingClient) {
-        await updateMutation.mutateAsync({ id: editingClient.id, data: formData });
-        clientId = editingClient.id;
+      let clientId = editingClient?.id || clientDetail?.id || selectedClientId;
+      if (clientId) {
+        const updated = await updateMutation.mutateAsync({
+          id: clientId,
+          payload,
+        });
+        clientId = updated.id;
       } else {
-        const newClient = await createMutation.mutateAsync(formData);
-        clientId = newClient.id;
+        const created = await createMutation.mutateAsync(payload);
+        clientId = created.id;
       }
-      
-      // Actualizar empleados asignados (incluye caso de array vacío para desasignar todos)
+
       if (clientId) {
         await updateEmployeesMutation.mutateAsync({
           clientId,
           employeeIds: selectedEmployees,
-          primaryId: selectedEmployees.length > 0 ? (primaryEmployeeId || selectedEmployees[0]) : ""
+          primaryId:
+            selectedEmployees.length > 0
+              ? primaryEmployeeId || selectedEmployees[0]
+              : "",
         });
       }
-      
-      toast({ title: editingClient ? "Cliente actualizado exitosamente" : "Cliente creado exitosamente" });
-      setIsDialogOpen(false);
-      resetForm();
-    } catch (error) {
-      toast({ 
-        title: "Error", 
-        description: error instanceof Error ? error.message : "Error al guardar el cliente",
-        variant: "destructive" 
+    } catch (error: any) {
+      toast({
+        title: "Error al guardar el cliente",
+        description: error?.message ?? "Intenta de nuevo más tarde",
+        variant: "destructive",
       });
     }
   };
@@ -227,9 +445,18 @@ export default function Clientes() {
 
   const getUserName = (userId: string | null) => {
     if (!userId) return "Sin asignar";
-    const user = users?.find(u => u.id === userId);
+    const user = users.find((u) => u.id === userId);
     return user?.username || "Sin asignar";
   };
+
+  const handleDeleteClient = async (id: string) => {
+    await deleteMutation.mutateAsync(id);
+  };
+
+  const isSaving =
+    createMutation.isPending || updateMutation.isPending || updateEmployeesMutation.isPending;
+
+  const currentClientId = clientDetail?.id ?? editingClient?.id ?? null;
 
   if (isLoading) {
     return (
@@ -242,8 +469,8 @@ export default function Clientes() {
         </div>
         <Card>
           <CardContent className="p-6">
-            {[...Array(5)].map((_, i) => (
-              <Skeleton key={i} className="h-12 w-full mb-2" />
+            {[...Array(5)].map((_, index) => (
+              <Skeleton key={index} className="h-12 w-full mb-2" />
             ))}
           </CardContent>
         </Card>
@@ -258,208 +485,300 @@ export default function Clientes() {
           <h1 className="text-3xl font-display font-bold">Clientes</h1>
           <p className="text-muted-foreground mt-1">Gestión de clientes y contactos</p>
         </div>
-        <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+        <Dialog
+          open={isDialogOpen}
+          onOpenChange={(open) => {
+            if (!open) {
+              handleCloseDialog();
+            } else {
+              setIsDialogOpen(true);
+            }
+          }}
+        >
           <DialogTrigger asChild>
-            <Button onClick={resetForm} data-testid="button-add-client">
-              <Plus className="h-4 w-4 mr-2" />
+            <Button onClick={handleOpenCreate} data-testid="button-add-client">
+              <Plus className="mr-2 h-4 w-4" />
               Nuevo Cliente
             </Button>
           </DialogTrigger>
-          <DialogContent className="max-w-2xl">
+          <DialogContent className="max-w-4xl">
             <DialogHeader>
               <DialogTitle>{editingClient ? "Editar Cliente" : "Nuevo Cliente"}</DialogTitle>
               <DialogDescription>
-                {editingClient ? "Actualiza los datos del cliente" : "Completa la información del nuevo cliente"}
+                {editingClient
+                  ? "Actualiza la información del cliente"
+                  : "Completa la información para crear un nuevo cliente"}
               </DialogDescription>
             </DialogHeader>
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="razonSocial">Razón Social *</Label>
-                  <Input
-                    id="razonSocial"
-                    value={formData.razonSocial}
-                    onChange={(e) => setFormData({ ...formData, razonSocial: e.target.value })}
-                    required
-                    data-testid="input-razon-social"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="nifCif">NIF/CIF *</Label>
-                  <Input
-                    id="nifCif"
-                    value={formData.nifCif}
-                    onChange={(e) => setFormData({ ...formData, nifCif: e.target.value })}
-                    required
-                    data-testid="input-nif-cif"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="tipo">Tipo *</Label>
-                  <Select 
-                    value={formData.tipo} 
-                    onValueChange={(value) => {
-                      // Limpiar modelos fiscales cuando cambia el tipo
-                      setFormData({ ...formData, tipo: value, taxModels: [] });
-                    }}
-                  >
-                    <SelectTrigger data-testid="select-tipo">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="autonomo">Autónomo</SelectItem>
-                      <SelectItem value="empresa">Empresa</SelectItem>
-                      <SelectItem value="particular">Particular</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-3 col-span-2">
-                  <Label className="flex items-center gap-2">
-                    <UserCircle className="h-4 w-4" />
-                    Empleados Asignados
-                  </Label>
-                  <div className="border rounded-md p-4 space-y-3 max-h-48 overflow-y-auto">
-                    {users?.filter(u => u.role !== "LECTURA").map((user) => {
-                      const isSelected = selectedEmployees.includes(user.id);
-                      const isPrimary = primaryEmployeeId === user.id;
-                      
-                      return (
-                        <div key={user.id} className="flex items-center justify-between gap-3 p-2 rounded-md hover-elevate">
-                          <div className="flex items-center gap-3">
-                            <Checkbox
-                              id={`employee-${user.id}`}
-                              checked={isSelected}
-                              onCheckedChange={(checked) => {
-                                if (checked) {
-                                  const newEmployees = [...selectedEmployees, user.id];
-                                  setSelectedEmployees(newEmployees);
-                                  // Si es el primer empleado, marcarlo como primario
-                                  if (newEmployees.length === 1) {
-                                    setPrimaryEmployeeId(user.id);
-                                  }
-                                } else {
-                                  setSelectedEmployees(selectedEmployees.filter(id => id !== user.id));
-                                  // Si era el primario, limpiar o asignar otro
-                                  if (isPrimary) {
-                                    const remaining = selectedEmployees.filter(id => id !== user.id);
-                                    setPrimaryEmployeeId(remaining[0] || "");
-                                  }
-                                }
-                              }}
-                              data-testid={`checkbox-employee-${user.id}`}
-                            />
-                            <Label 
-                              htmlFor={`employee-${user.id}`} 
-                              className="text-sm font-medium cursor-pointer flex items-center gap-2"
-                            >
+            <form onSubmit={handleSubmit} className="space-y-6">
+              <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as any)}>
+                <TabsList>
+                  <TabsTrigger value="general">Datos del cliente</TabsTrigger>
+                  <TabsTrigger value="fiscal" disabled={!currentClientId}>
+                    Datos fiscales y contables
+                  </TabsTrigger>
+                </TabsList>
+                <TabsContent value="general">
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label htmlFor="razonSocial">Razón Social *</Label>
+                      <Input
+                        id="razonSocial"
+                        value={formData.razonSocial}
+                        onChange={(event) =>
+                          setFormData((prev) => ({ ...prev, razonSocial: event.target.value }))
+                        }
+                        required
+                        data-testid="input-razon-social"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="nifCif">NIF/CIF *</Label>
+                      <Input
+                        id="nifCif"
+                        value={formData.nifCif}
+                        onChange={(event) =>
+                          setFormData((prev) => ({ ...prev, nifCif: event.target.value }))
+                        }
+                        required
+                        data-testid="input-nif-cif"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="tipo">Tipo *</Label>
+                      <Select
+                        value={formData.tipo}
+                        onValueChange={(value) =>
+                          setFormData((prev) => ({
+                            ...prev,
+                            tipo: value as ClientType,
+                          }))
+                        }
+                      >
+                        <SelectTrigger data-testid="select-tipo">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {CLIENT_TYPE_OPTIONS.map((option) => (
+                            <SelectItem value={option.value} key={option.value}>
+                              {option.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="responsableAsignado">Responsable</Label>
+                      <Select
+                        value={formData.responsableAsignado}
+                        onValueChange={(value) =>
+                          setFormData((prev) => ({ ...prev, responsableAsignado: value }))
+                        }
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Sin asignar" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="">Sin asignar</SelectItem>
+                          {users.map((user) => (
+                            <SelectItem value={user.id} key={user.id}>
                               {user.username}
-                              {isPrimary && (
-                                <Badge variant="default" className="text-xs">
-                                  Primario
-                                </Badge>
-                              )}
-                            </Label>
-                          </div>
-                          {isSelected && !isPrimary && (
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => setPrimaryEmployeeId(user.id)}
-                              data-testid={`button-set-primary-${user.id}`}
-                            >
-                              Marcar como primario
-                            </Button>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                  {selectedEmployees.length === 0 && (
-                    <p className="text-xs text-muted-foreground">
-                      Selecciona al menos un empleado para asignar al cliente
-                    </p>
-                  )}
-                  {selectedEmployees.length > 0 && (
-                    <p className="text-xs text-muted-foreground">
-                      {selectedEmployees.length} empleado{selectedEmployees.length > 1 ? 's' : ''} seleccionado{selectedEmployees.length > 1 ? 's' : ''}
-                      {primaryEmployeeId && ` • ${users?.find(u => u.id === primaryEmployeeId)?.username} es el responsable principal`}
-                    </p>
-                  )}
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="email">Email</Label>
-                  <Input
-                    id="email"
-                    type="email"
-                    value={formData.email}
-                    onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                    data-testid="input-email"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="telefono">Teléfono</Label>
-                  <Input
-                    id="telefono"
-                    value={formData.telefono}
-                    onChange={(e) => setFormData({ ...formData, telefono: e.target.value })}
-                    data-testid="input-telefono"
-                  />
-                </div>
-                <div className="space-y-2 col-span-2">
-                  <Label htmlFor="direccion">Dirección</Label>
-                  <Input
-                    id="direccion"
-                    value={formData.direccion}
-                    onChange={(e) => setFormData({ ...formData, direccion: e.target.value })}
-                    data-testid="input-direccion"
-                  />
-                </div>
-                
-                <div className="space-y-3 col-span-2">
-                  <Label className="flex items-center gap-2">
-                    <FileText className="h-4 w-4" />
-                    Modelos Fiscales Asignados
-                  </Label>
-                  <div className="flex flex-wrap gap-4">
-                    {getAvailableTaxModelsForClientType(formData.tipo.toUpperCase()).map((modelCode) => {
-                      const modelInfo = ALL_TAX_MODELS.find(m => m.codigo === modelCode);
-                      return (
-                        <div key={modelCode} className="flex items-center space-x-2">
-                          <Checkbox
-                            id={`tax-model-${modelCode}`}
-                            checked={formData.taxModels.includes(modelCode)}
-                            onCheckedChange={(checked) => {
-                              if (checked) {
-                                setFormData({ ...formData, taxModels: [...formData.taxModels, modelCode] });
-                              } else {
-                                setFormData({ ...formData, taxModels: formData.taxModels.filter(m => m !== modelCode) });
-                              }
-                            }}
-                            data-testid={`checkbox-tax-model-${modelCode}`}
-                          />
-                          <Label 
-                            htmlFor={`tax-model-${modelCode}`} 
-                            className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
-                            title={modelInfo?.nombre}
-                          >
-                            {modelCode}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="fechaAlta">Fecha de alta</Label>
+                      <Input
+                        id="fechaAlta"
+                        type="date"
+                        value={formData.fechaAlta}
+                        onChange={(event) =>
+                          setFormData((prev) => ({ ...prev, fechaAlta: event.target.value }))
+                        }
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="fechaBaja">Fecha de baja</Label>
+                      <Input
+                        id="fechaBaja"
+                        type="date"
+                        value={formData.fechaBaja}
+                        onChange={(event) =>
+                          setFormData((prev) => ({ ...prev, fechaBaja: event.target.value }))
+                        }
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="email">Email</Label>
+                      <Input
+                        id="email"
+                        type="email"
+                        value={formData.email}
+                        onChange={(event) =>
+                          setFormData((prev) => ({ ...prev, email: event.target.value }))
+                        }
+                        data-testid="input-email"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="telefono">Teléfono</Label>
+                      <Input
+                        id="telefono"
+                        value={formData.telefono}
+                        onChange={(event) =>
+                          setFormData((prev) => ({ ...prev, telefono: event.target.value }))
+                        }
+                        data-testid="input-telefono"
+                      />
+                    </div>
+                    <div className="md:col-span-2 space-y-2">
+                      <Label htmlFor="direccion">Dirección</Label>
+                      <Input
+                        id="direccion"
+                        value={formData.direccion}
+                        onChange={(event) =>
+                          setFormData((prev) => ({ ...prev, direccion: event.target.value }))
+                        }
+                      />
+                    </div>
+                    <div className="md:col-span-2 space-y-2">
+                      <Label htmlFor="notes">Notas internas</Label>
+                      <Textarea
+                        id="notes"
+                        value={formData.notes}
+                        onChange={(event) =>
+                          setFormData((prev) => ({ ...prev, notes: event.target.value }))
+                        }
+                        rows={3}
+                      />
+                    </div>
+                    <div className="md:col-span-2">
+                      <div className="flex items-center justify-between rounded-md border p-4">
+                        <div>
+                          <Label className="flex items-center gap-2 text-sm font-semibold">
+                            <Building2 className="h-4 w-4" />
+                            Cliente activo
                           </Label>
+                          <p className="text-xs text-muted-foreground">
+                            Desactiva el cliente cuando ya no se gestione para mantener el histórico.
+                          </p>
                         </div>
-                      );
-                    })}
+                        <Switch
+                          checked={formData.isActive}
+                          onCheckedChange={(value) =>
+                            setFormData((prev) => ({ ...prev, isActive: value }))
+                          }
+                        />
+                      </div>
+                    </div>
+                    <div className="md:col-span-2 space-y-3">
+                      <Label className="flex items-center gap-2">
+                        <UserCircle className="h-4 w-4" />
+                        Empleados asignados
+                      </Label>
+                      <div className="border rounded-md p-4 space-y-3 max-h-48 overflow-y-auto">
+                        {users.map((user) => {
+                          const isSelected = selectedEmployees.includes(user.id);
+                          const isPrimary = primaryEmployeeId === user.id;
+                          return (
+                            <div
+                              key={user.id}
+                              className="flex items-center justify-between gap-3 p-2 rounded-md hover:bg-muted/40"
+                            >
+                              <div className="flex items-center gap-3">
+                                <Checkbox
+                                  id={`employee-${user.id}`}
+                                  checked={isSelected}
+                                  onCheckedChange={(checked) => {
+                                    if (checked) {
+                                      const newEmployees = [...selectedEmployees, user.id];
+                                      setSelectedEmployees(newEmployees);
+                                      if (newEmployees.length === 1) {
+                                        setPrimaryEmployeeId(user.id);
+                                      }
+                                    } else {
+                                      setSelectedEmployees((prev) =>
+                                        prev.filter((id) => id !== user.id)
+                                      );
+                                      if (isPrimary) {
+                                        setPrimaryEmployeeId((prev) => {
+                                          const remaining = selectedEmployees.filter(
+                                            (id) => id !== user.id
+                                          );
+                                          return remaining[0] || "";
+                                        });
+                                      }
+                                    }
+                                  }}
+                                />
+                                <Label
+                                  htmlFor={`employee-${user.id}`}
+                                  className="text-sm font-medium cursor-pointer flex items-center gap-2"
+                                >
+                                  {user.username}
+                                  {isPrimary && (
+                                    <Badge variant="default" className="text-xs">
+                                      Primario
+                                    </Badge>
+                                  )}
+                                </Label>
+                              </div>
+                              {isSelected && !isPrimary && (
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => setPrimaryEmployeeId(user.id)}
+                                >
+                                  Marcar como primario
+                                </Button>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {selectedEmployees.length === 0 && (
+                        <p className="text-xs text-muted-foreground">
+                          Selecciona al menos un empleado para asignar al cliente
+                        </p>
+                      )}
+                    </div>
                   </div>
-                  <p className="text-xs text-muted-foreground">
-                    Los impuestos se generarán automáticamente para todos los períodos de los modelos seleccionados
-                  </p>
-                </div>
-              </div>
-              <DialogFooter>
-                <Button type="button" variant="outline" onClick={() => { setIsDialogOpen(false); resetForm(); }}>
+                </TabsContent>
+                <TabsContent value="fiscal">
+                  {isFetchingDetail && (
+                    <div className="space-y-3">
+                      <Skeleton className="h-8 w-48" />
+                      <Skeleton className="h-64 w-full" />
+                    </div>
+                  )}
+                  {!isFetchingDetail && (
+                    <ClientFiscalForm
+                      clientId={currentClientId ?? undefined}
+                      clientType={formData.tipo}
+                      assignments={assignments}
+                      taxModelsConfig={taxModelsConfig}
+                      disabled={!currentClientId}
+                      onAssignmentsChange={(updater) =>
+                        setAssignments((prev) => updater(prev))
+                      }
+                    />
+                  )}
+                </TabsContent>
+              </Tabs>
+              <DialogFooter className="flex items-center justify-between">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleCloseDialog}
+                  disabled={isSaving}
+                >
                   Cancelar
                 </Button>
-                <Button type="submit" data-testid="button-submit-client">
-                  {editingClient ? "Actualizar" : "Crear"}
+                <Button type="submit" disabled={isSaving}>
+                  {isSaving ? "Guardando..." : "Guardar datos"}
                 </Button>
               </DialogFooter>
             </form>
@@ -467,154 +786,106 @@ export default function Clientes() {
         </Dialog>
       </div>
 
-      <div className="flex flex-wrap gap-4">
-        <div className="relative flex-1 min-w-[300px]">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Buscar por razón social o NIF/CIF..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="pl-10"
-            data-testid="input-search-clients"
-          />
+      <div className="flex flex-col md:flex-row gap-4">
+        <div className="flex flex-1 items-center gap-2">
+          <div className="relative flex-1">
+            <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Buscar por razón social o NIF/CIF"
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.target.value)}
+              className="pl-8"
+            />
+          </div>
+          <Select value={filterTipo} onValueChange={setFilterTipo}>
+            <SelectTrigger className="w-40">
+              <SelectValue placeholder="Filtrar por tipo" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="todos">Todos</SelectItem>
+              {CLIENT_TYPE_OPTIONS.map((option) => (
+                <SelectItem value={option.value} key={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
-        <Select value={filterTipo} onValueChange={setFilterTipo}>
-          <SelectTrigger className="w-[180px]" data-testid="select-filter-tipo">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="todos">Todos los tipos</SelectItem>
-            <SelectItem value="autonomo">Autónomos</SelectItem>
-            <SelectItem value="empresa">Empresas</SelectItem>
-            <SelectItem value="particular">Particulares</SelectItem>
-          </SelectContent>
-        </Select>
-        <Button variant="outline" onClick={exportToCSV} data-testid="button-export-csv">
-          <Download className="h-4 w-4 mr-2" />
+        <Button variant="outline" onClick={exportToCSV}>
+          <Download className="mr-2 h-4 w-4" />
           Exportar CSV
         </Button>
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle>Lista de Clientes ({filteredClients.length})</CardTitle>
+          <CardTitle>Listado de clientes</CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="p-0">
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Razón Social</TableHead>
-                <TableHead>NIF/CIF</TableHead>
+                <TableHead>Cliente</TableHead>
                 <TableHead>Tipo</TableHead>
-                <TableHead>Modelos Fiscales</TableHead>
-                <TableHead>Estado</TableHead>
                 <TableHead>Responsable</TableHead>
-                <TableHead className="text-right">Acciones</TableHead>
+                <TableHead>Teléfono</TableHead>
+                <TableHead>Email</TableHead>
+                <TableHead>Estado</TableHead>
+                <TableHead className="text-right w-[150px]">Acciones</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredClients.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
-                    No hay clientes registrados
+              {filteredClients.map((client) => (
+                <TableRow key={client.id}>
+                  <TableCell>
+                    <div className="flex flex-col">
+                      <span className="font-medium">{client.razonSocial}</span>
+                      <span className="text-xs text-muted-foreground">{client.nifCif}</span>
+                    </div>
+                  </TableCell>
+                  <TableCell>{client.tipo?.toUpperCase()}</TableCell>
+                  <TableCell>{getUserName(client.responsableAsignado)}</TableCell>
+                  <TableCell>{client.telefono || "—"}</TableCell>
+                  <TableCell>{client.email || "—"}</TableCell>
+                  <TableCell>
+                    <Badge variant={client.isActive ? "default" : "outline"}>
+                      {client.isActive ? "Activo" : "Inactivo"}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <div className="flex justify-end gap-2">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => handleEdit(client)}
+                      >
+                        <Edit className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => toggleClientActiveMutation.mutate(client.id)}
+                        title={client.isActive ? "Desactivar" : "Activar"}
+                      >
+                        {client.isActive ? <Building2 className="h-4 w-4" /> : <User className="h-4 w-4" />}
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        size="icon"
+                        onClick={() => handleDeleteClient(client.id)}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
                   </TableCell>
                 </TableRow>
-              ) : (
-                filteredClients.map((client) => (
-                  <TableRow key={client.id} data-testid={`row-client-${client.id}`}>
-                    <TableCell className="font-medium">{client.razonSocial}</TableCell>
-                    <TableCell>{client.nifCif}</TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className="gap-1">
-                        {client.tipo === "autonomo" && <User className="h-3 w-3" />}
-                        {client.tipo === "empresa" && <Building2 className="h-3 w-3" />}
-                        {client.tipo === "particular" && <UserCircle className="h-3 w-3" />}
-                        {client.tipo === "autonomo" && "Autónomo"}
-                        {client.tipo === "empresa" && "Empresa"}
-                        {client.tipo === "particular" && "Particular"}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      {client.taxModels && client.taxModels.length > 0 ? (
-                        <div className="flex flex-wrap gap-1">
-                          {client.taxModels.map((model) => (
-                            <Badge key={model} variant="secondary" className="text-xs">
-                              {model}
-                            </Badge>
-                          ))}
-                        </div>
-                      ) : (
-                        <span className="text-muted-foreground text-sm">Sin modelos</span>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <Badge 
-                          variant={client.isActive !== false ? "default" : "secondary"}
-                          className="gap-1"
-                          data-testid={`badge-status-${client.id}`}
-                        >
-                          {client.isActive !== false ? (
-                            <>
-                              <CheckCircle2 className="h-3 w-3" />
-                              Activo
-                            </>
-                          ) : (
-                            <>
-                              <XCircle className="h-3 w-3" />
-                              Inactivo
-                            </>
-                          )}
-                        </Badge>
-                        <Switch
-                          checked={client.isActive !== false}
-                          onCheckedChange={() => toggleClientActiveMutation.mutate(client.id)}
-                          disabled={toggleClientActiveMutation.isPending}
-                          data-testid={`switch-active-${client.id}`}
-                        />
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      {client.employees && client.employees.length > 0 ? (
-                        <div className="flex flex-wrap gap-1">
-                          {client.employees.map((emp) => (
-                            <Badge 
-                              key={emp.userId} 
-                              variant={emp.isPrimary ? "default" : "secondary"}
-                              className="text-xs"
-                              data-testid={`badge-employee-${emp.userId}`}
-                            >
-                              {emp.user.username}
-                              {emp.isPrimary && " ★"}
-                            </Badge>
-                          ))}
-                        </div>
-                      ) : (
-                        <span className="text-muted-foreground text-sm">Sin asignar</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-2">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => handleEdit(client)}
-                          data-testid={`button-edit-${client.id}`}
-                        >
-                          <Edit className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => deleteMutation.mutate(client.id)}
-                          data-testid={`button-delete-${client.id}`}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))
+              ))}
+              {filteredClients.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={7} className="text-center text-muted-foreground py-6">
+                    No se encontraron clientes con los filtros seleccionados.
+                  </TableCell>
+                </TableRow>
               )}
             </TableBody>
           </Table>
