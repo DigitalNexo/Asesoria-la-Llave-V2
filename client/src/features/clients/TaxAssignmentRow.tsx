@@ -1,6 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { TableCell, TableRow } from "@/components/ui/table";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { PencilIcon, Trash2Icon } from "lucide-react";
 import type { ClientTaxAssignment } from "./types";
@@ -12,6 +13,9 @@ interface TaxAssignmentRowProps {
   onDelete: (assignment: ClientTaxAssignment) => void;
   onToggleActive: (assignment: ClientTaxAssignment, nextActive: boolean) => void;
   disabled?: boolean;
+  selectable?: boolean;
+  selected?: boolean;
+  onSelectChange?: (checked: boolean, assignment: ClientTaxAssignment) => void;
 }
 
 const PERIODICITY_BADGE: Record<string, string> = {
@@ -45,6 +49,9 @@ export function TaxAssignmentRow({
   onDelete,
   onToggleActive,
   disabled,
+  selectable,
+  selected,
+  onSelectChange,
 }: TaxAssignmentRowProps) {
   const effectiveActive = getEffectiveActiveState(assignment);
   const periodicity = assignment.periodicity;
@@ -54,6 +61,11 @@ export function TaxAssignmentRow({
 
   return (
     <TableRow>
+      <TableCell className="w-10">
+        {selectable ? (
+          <Checkbox checked={selected} onCheckedChange={(v) => onSelectChange?.(Boolean(v), assignment)} />
+        ) : null}
+      </TableCell>
       <TableCell className="font-medium">
         <div className="flex flex-col">
           <span>{`${assignment.taxModelCode}`}</span>

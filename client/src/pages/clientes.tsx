@@ -162,12 +162,21 @@ export default function Clientes() {
   const [formData, setFormData] = useState<FormState>(defaultFormState);
 
   const { data: clients = [], isLoading } = useQuery<ClientListItem[]>({
-    queryKey: ["/api/clients"],
+    queryKey: ["/api/clients", { view: 'list' }],
+    queryFn: () => apiRequest('GET', '/api/clients?full=0'),
+    staleTime: 60_000,
   });
 
   const { data: users = [] } = useQuery<UserType[]>({
     queryKey: ["/api/users"],
+    staleTime: 5 * 60_000,
   });
+
+  const userMap = useMemo(() => {
+    const map = new Map<string, string>();
+    (users || []).forEach(u => map.set(u.id, u.username));
+    return map;
+  }, [users]);
 
   const { data: taxModelsConfig = [] } = useQuery<TaxModelsConfig[]>({
     queryKey: ["tax-models-config"],
@@ -449,8 +458,7 @@ export default function Clientes() {
 
   const getUserName = (userId: string | null) => {
     if (!userId) return "Sin asignar";
-    const user = users.find((u) => u.id === userId);
-    return user?.username || "Sin asignar";
+    return userMap.get(userId) || "Sin asignar";
   };
 
   const handleDeleteClient = async (id: string) => {

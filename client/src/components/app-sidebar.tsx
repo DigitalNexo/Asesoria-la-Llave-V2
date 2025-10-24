@@ -39,7 +39,10 @@ const mainMenuItems = [
     roles: ["Administrador", "Gestor", "Solo Lectura"],
   },
   {
-    // Impuestos eliminado
+    title: "Impuestos",
+    url: "/impuestos/control",
+    icon: FileText,
+    roles: ["Administrador", "Gestor", "Solo Lectura"],
   },
   {
     title: "Tareas",

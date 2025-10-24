@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Plus, Search, FileText, Eye, Download, Edit } from "lucide-react";
+import { Plus, Search, FileText, Eye, Download, Edit, Trash2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/contexts/auth-context";
@@ -18,12 +18,16 @@ export default function Manuales() {
   const { user } = useAuth();
   const [, setLocation] = useLocation();
   const [searchTerm, setSearchTerm] = useState("");
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const { data: manuals, isLoading } = useQuery<Manual[]>({
     queryKey: ["/api/manuals"],
   });
 
-  const canEdit = Array.isArray((user as any)?.permissions) && (user as any).permissions.includes("manuals:create");
+  const perms = (user as any)?.permissions || [];
+  const canCreate = Array.isArray(perms) && perms.includes("manuals:create");
+  const canUpdate = Array.isArray(perms) && perms.includes("manuals:update");
+  const canManage = canCreate || canUpdate;
 
   const filteredManuals = manuals?.filter((manual) => {
     const matchesSearch = manual.titulo.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -49,7 +53,7 @@ export default function Manuales() {
           <h1 className="text-3xl font-display font-bold">Manuales</h1>
           <p className="text-muted-foreground mt-1">Base de conocimientos y documentación interna</p>
         </div>
-        {canEdit && (
+        {canManage && (
           <Button onClick={() => setLocation("/manuales/nuevo")} data-testid="button-nuevo-manual">
             <Plus className="h-4 w-4 mr-2" />
             Nuevo Manual
@@ -74,7 +78,7 @@ export default function Manuales() {
             <FileText className="h-16 w-16 text-muted-foreground mb-4" />
             <h3 className="text-lg font-medium mb-2">No hay manuales disponibles</h3>
             <p className="text-muted-foreground text-center mb-4">
-              {canEdit ? "Comienza creando tu primer manual" : "Aún no se han publicado manuales"}
+              {canManage ? "Comienza creando tu primer manual" : "Aún no se han publicado manuales"}
             </p>
           </CardContent>
         </Card>
@@ -122,7 +126,8 @@ export default function Manuales() {
                     >
                       <Eye className="h-4 w-4" />
                     </Button>
-                    {canEdit && (
+                    {canManage && (
+                      <>
                       <Button 
                         variant="ghost" 
                         size="icon"
@@ -134,6 +139,41 @@ export default function Manuales() {
                       >
                         <Edit className="h-4 w-4" />
                       </Button>
+                      {canUpdate && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          const confirm = window.confirm(`¿Eliminar el manual "${manual.titulo}"?`);
+                          if (!confirm) return;
+                          try {
+                            setDeletingId(manual.id);
+                            await apiRequest("DELETE", `/api/manuals/${encodeURIComponent(manual.id)}`);
+                            // Optimistic remove + refetch
+                            queryClient.setQueryData<Manual[] | undefined>(["/api/manuals"], (prev) =>
+                              Array.isArray(prev) ? prev.filter((m) => m.id !== manual.id) : prev
+                            );
+                            await queryClient.invalidateQueries({ queryKey: ["/api/manuals"], exact: true });
+                          } catch (err: any) {
+                            // Revertimos por si la invalidación tarda
+                            queryClient.invalidateQueries({ queryKey: ["/api/manuals"], exact: true });
+                            const msg = err?.message || 'No se pudo eliminar';
+                            // Mostrar feedback de error
+                            // eslint-disable-next-line no-alert
+                            alert(msg);
+                          } finally {
+                            setDeletingId(null);
+                          }
+                        }}
+                        disabled={deletingId === manual.id}
+                        data-testid={`button-delete-${manual.id}`}
+                        title="Eliminar"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                      )}
+                      </>
                     )}
                   </div>
                 </div>

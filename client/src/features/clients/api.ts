@@ -42,9 +42,27 @@ export function updateTaxAssignment(
   ) as Promise<ClientTaxAssignment>;
 }
 
-export function deleteTaxAssignment(assignmentId: string) {
+export function deleteTaxAssignment(assignmentId: string, hard?: boolean) {
+  const query = hard ? '?hard=1' : '';
   return apiRequest(
     "DELETE",
-    `/api/tax-assignments/${assignmentId}`
+    `/api/tax-assignments/${assignmentId}${query}`
   ) as Promise<{ assignment: ClientTaxAssignment; softDeleted: boolean; message: string }>;
+}
+
+export function bulkDeleteTaxAssignments(
+  clientId: string,
+  opts?: { codes?: string[]; assignmentIds?: string[]; hard?: boolean }
+) {
+  // Usamos POST por compatibilidad con proxies/firewalls que bloquean DELETE con body
+  const body: any = {
+    codes: opts?.codes,
+    assignmentIds: opts?.assignmentIds,
+    hard: opts?.hard ?? true, // por defecto, borrado duro
+  };
+  return apiRequest(
+    "POST",
+    `/api/clients/${clientId}/tax-assignments/delete`,
+    body
+  ) as Promise<{ deleted: number; deactivated: number; assignments?: ClientTaxAssignment[] }>;
 }

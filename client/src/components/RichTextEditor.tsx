@@ -150,6 +150,22 @@ export function RichTextEditor({ content, onChange, manualId }: RichTextEditorPr
     return null;
   }
 
+  // Sincroniza el contenido cuando viene de servidor (p.ej. al editar un manual ya publicado)
+  // TipTap no actualiza automáticamente el contenido inicial después de montado.
+  useEffect(() => {
+    try {
+      const html = editor.getHTML();
+      const isEmpty = !html || html === '<p></p>' || html === '<p></p>\n';
+      // Si el editor está vacío y hay contenido de entrada, establecerlo.
+      if (isEmpty && content && typeof content === 'string') {
+        editor.commands.setContent(content);
+      }
+    } catch {
+      // Silenciar errores si el editor aún no está listo
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editor, content, manualId]);
+
   const handleImageDrop = async (file: File) => {
     if (!manualId) {
       toast({ title: "Error", description: "Debes guardar el manual primero", variant: "destructive" });
@@ -179,12 +195,22 @@ export function RichTextEditor({ content, onChange, manualId }: RichTextEditorPr
   };
 
   const handleImageUpload = async () => {
-    if (!imageFile || !manualId) {
+    // Fallback: si por algún motivo el estado no capturó el archivo, léelo del input
+    let file = imageFile;
+    if (!file) {
+      const input = document.getElementById('image-file') as HTMLInputElement | null;
+      if (input?.files && input.files[0]) {
+        file = input.files[0];
+        setImageFile(file);
+      }
+    }
+
+    if (!file) {
       toast({ title: "Error", description: "Selecciona una imagen primero", variant: "destructive" });
       return;
     }
 
-    await handleImageDrop(imageFile);
+    await handleImageDrop(file);
     setIsImageDialogOpen(false);
     setImageFile(null);
   };

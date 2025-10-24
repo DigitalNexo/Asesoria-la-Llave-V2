@@ -18,6 +18,9 @@ import Dashboard from "@/pages/dashboard";
 import Clientes from "@/pages/clientes";
 import Tareas from "@/pages/tareas";
 import Manuales from "@/pages/manuales";
+import ImpuestosControl from "@/pages/impuestos-control";
+import CalendarioAEATPage from "@/pages/calendario-aeat";
+import ReportsPage from "@/features/reports/ReportsPage";
 import ManualView from "@/pages/manual-view";
 import ManualEditor from "@/pages/manual-editor";
 import Admin from "@/pages/admin";
@@ -101,6 +104,12 @@ function Router() {
               <Route path="/manuales/nuevo" component={ManualEditor} />
               <Route path="/manuales/:id/editar" component={ManualEditor} />
               <Route path="/manuales/:id" component={ManualView} />
+              <Route path="/impuestos">
+                <Redirect to="/impuestos/control" />
+              </Route>
+              <Route path="/impuestos/control" component={ImpuestosControl} />
+              <Route path="/impuestos/calendario" component={CalendarioAEATPage} />
+              <Route path="/impuestos/reportes" component={ReportsPage} />
               <Route path="/notificaciones" component={Notificaciones} />
               <Route path="/admin">
                 {(user as any)?.roleName === "Administrador" ? <Admin /> : <Redirect to="/" />}

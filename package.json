@@ -18,7 +18,8 @@
     "seed": "npx tsx prisma/seed.ts",
     "dev:setup": "npm run dev:db:start && npm run prisma:generate && npm run prisma:push && npm run seed",
     "diagnose:data": "tsx server/scripts/data-diagnostics.ts",
-    "repair:declarations": "tsx -e \"import { prismaStorage as s } from './server/prisma-storage.ts'; const y=Number(process.env.YEAR)||new Date().getFullYear(); s.ensureDeclarationsForYear(y).then(r=>{console.log(r);}).catch(e=>{console.error(e)});\""
+    "repair:declarations": "tsx -e \"import { prismaStorage as s } from './server/prisma-storage.ts'; const y=Number(process.env.YEAR)||new Date().getFullYear(); s.ensureDeclarationsForYear(y).then(r=>{console.log(r);}).catch(e=>{console.error(e)});\"",
+    "tax:ensure-year": "tsx server/scripts/ensure-tax-year.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.908.0",

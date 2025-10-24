@@ -2,7 +2,7 @@ import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import { Server as SocketIOServer } from "socket.io";
 import { prismaStorage as storage } from "./prisma-storage";
-import { PrismaClient, Prisma } from "@prisma/client";
+import { PrismaClient, Prisma, FilingStatus } from "@prisma/client";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import {
@@ -318,6 +318,147 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   );
 
+  // ==================== TAX REPORTS ====================
+  app.get(
+    "/api/tax/reports/kpis",
+    authenticateToken,
+    checkPermission("taxes:read"),
+    async (req: AuthRequest, res: Response) => {
+      try {
+        const { getReportsKpis } = await import('./services/reports-service');
+        const r = await getReportsKpis({
+          year: req.query.year ? Number(req.query.year) : undefined,
+          periodId: req.query.periodId as string | undefined,
+          model: (req.query.model as string | undefined)?.toUpperCase(),
+          assigneeId: req.query.assigneeId as string | undefined,
+          clientId: req.query.clientId as string | undefined,
+          status: req.query.status as string | undefined,
+        });
+        res.json(r);
+      } catch (e: any) {
+        res.status(500).json({ error: e.message });
+      }
+    }
+  );
+
+  app.get(
+    "/api/tax/reports/summary/model",
+    authenticateToken,
+    checkPermission("taxes:read"),
+    async (req: AuthRequest, res: Response) => {
+      try {
+        const { getSummaryByModel } = await import('./services/reports-service');
+        const r = await getSummaryByModel({
+          year: req.query.year ? Number(req.query.year) : undefined,
+          periodId: req.query.periodId as string | undefined,
+          model: (req.query.model as string | undefined)?.toUpperCase(),
+          status: req.query.status as string | undefined,
+        });
+        res.json(r);
+      } catch (e: any) {
+        res.status(500).json({ error: e.message });
+      }
+    }
+  );
+
+  app.get(
+    "/api/tax/reports/summary/assignee",
+    authenticateToken,
+    checkPermission("taxes:read"),
+    async (req: AuthRequest, res: Response) => {
+      try {
+        const { getSummaryByAssignee } = await import('./services/reports-service');
+        const r = await getSummaryByAssignee({
+          year: req.query.year ? Number(req.query.year) : undefined,
+          periodId: req.query.periodId as string | undefined,
+          status: req.query.status as string | undefined,
+        });
+        res.json(r);
+      } catch (e: any) {
+        res.status(500).json({ error: e.message });
+      }
+    }
+  );
+
+  app.get(
+    "/api/tax/reports/summary/client",
+    authenticateToken,
+    checkPermission("taxes:read"),
+    async (req: AuthRequest, res: Response) => {
+      try {
+        const { getSummaryByClient } = await import('./services/reports-service');
+        const r = await getSummaryByClient({
+          year: req.query.year ? Number(req.query.year) : undefined,
+          periodId: req.query.periodId as string | undefined,
+          status: req.query.status as string | undefined,
+        });
+        res.json(r);
+      } catch (e: any) {
+        res.status(500).json({ error: e.message });
+      }
+    }
+  );
+
+  app.get(
+    "/api/tax/reports/trends",
+    authenticateToken,
+    checkPermission("taxes:read"),
+    async (req: AuthRequest, res: Response) => {
+      try {
+        const { getTrends } = await import('./services/reports-service');
+        const r = await getTrends({
+          year: req.query.year ? Number(req.query.year) : undefined,
+          model: (req.query.model as string | undefined)?.toUpperCase(),
+          granularity: (req.query.granularity as any) || 'month',
+        });
+        res.json(r);
+      } catch (e: any) {
+        res.status(500).json({ error: e.message });
+      }
+    }
+  );
+
+  app.get(
+    "/api/tax/reports/exceptions",
+    authenticateToken,
+    checkPermission("taxes:read"),
+    async (req: AuthRequest, res: Response) => {
+      try {
+        const { getExceptions } = await import('./services/reports-service');
+        const r = await getExceptions({
+          year: req.query.year ? Number(req.query.year) : undefined,
+          periodId: req.query.periodId as string | undefined,
+        });
+        res.json(r);
+      } catch (e: any) {
+        res.status(500).json({ error: e.message });
+      }
+    }
+  );
+
+  app.get(
+    "/api/tax/reports/filings",
+    authenticateToken,
+    checkPermission("taxes:read"),
+    async (req: AuthRequest, res: Response) => {
+      try {
+        const { getFilings } = await import('./services/reports-service');
+        const r = await getFilings({
+          year: req.query.year ? Number(req.query.year) : undefined,
+          periodId: req.query.periodId as string | undefined,
+          model: (req.query.model as string | undefined)?.toUpperCase(),
+          assigneeId: req.query.assigneeId as string | undefined,
+          clientId: req.query.clientId as string | undefined,
+          status: req.query.status as string | undefined,
+          page: req.query.page ? Number(req.query.page) : 1,
+          size: req.query.size ? Number(req.query.size) : 50,
+        });
+        res.json(r);
+      } catch (e: any) {
+        res.status(500).json({ error: e.message });
+      }
+    }
+  );
   app.post("/api/auth/login", async (req: Request, res: Response) => {
     try {
       const { username, password } = req.body;
@@ -543,8 +684,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ==================== CLIENT ROUTES ====================
   app.get("/api/clients", authenticateToken, async (req: Request, res: Response) => {
     try {
-      const clients = await storage.getAllClients();
-      res.json(clients);
+      const full = req.query.full === '1' || req.query.full === 'true';
+      if (full) {
+        const clients = await storage.getAllClients();
+        return res.json(clients);
+      }
+      const list = await storage.getAllClientsSummary();
+      res.json(list);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -959,8 +1105,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (!existing) {
           return res.status(404).json({ error: "Asignación no encontrada" });
         }
+        const hard = req.query.hard === '1' || req.query.hard === 'true';
 
-        const hasHistory = await storage.hasAssignmentHistoricFilings(
+        const hasHistory = hard ? false : await storage.hasAssignmentHistoricFilings(
           existing.clientId,
           existing.taxModelCode
         );
@@ -974,6 +1121,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           message = "Asignación desactivada. Posee histórico de presentaciones.";
           action = "UPDATE";
         } else {
+          if (hard) {
+            await prisma.clientTaxFiling.deleteMany({ where: { clientId: existing.clientId, taxModelCode: existing.taxModelCode } });
+          }
           result = await storage.deleteClientTaxAssignment(assignmentId);
           message = "Asignación eliminada correctamente.";
         }
@@ -1004,6 +1154,78 @@ export async function registerRoutes(app: Express): Promise<Server> {
           softDeleted: hasHistory,
           message,
         });
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
+  // Bulk remove client tax assignments
+  app.delete(
+    "/api/clients/:id/tax-assignments",
+    authenticateToken,
+    checkPermission("clients:update"),
+    async (req: AuthRequest, res: Response) => {
+      try {
+        const clientId = req.params.id;
+        const client = await storage.getClient(clientId);
+        if (!client) return res.status(404).json({ error: 'Cliente no encontrado' });
+
+        const codes = Array.isArray(req.body?.codes) ? (req.body.codes as string[]).map((c) => String(c).toUpperCase()) : undefined;
+        const assignmentIds = Array.isArray(req.body?.assignmentIds) ? (req.body.assignmentIds as string[]) : undefined;
+        const hard = Boolean(req.body?.hard);
+        let result;
+        if (assignmentIds && assignmentIds.length > 0) {
+          result = await storage.bulkRemoveAssignmentsByIds(clientId, assignmentIds, { hard });
+        } else {
+          result = await storage.bulkRemoveClientTaxAssignments(clientId, { codes, hard });
+        }
+        const assignments = await storage.getClientTaxAssignments(clientId);
+
+        await storage.createActivityLog({
+          usuarioId: req.user!.id,
+          accion: `Limpieza de asignaciones fiscales (${result.deleted} eliminadas, ${result.deactivated} desactivadas)` ,
+          modulo: 'clientes',
+          detalles: `Cliente: ${client.razonSocial}${codes ? `, Modelos: ${codes.join(',')}` : ''}`,
+        });
+
+        res.json({ ...result, assignments });
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
+  // Alias por compatibilidad: algunos entornos filtran DELETE con body
+  app.post(
+    "/api/clients/:id/tax-assignments/delete",
+    authenticateToken,
+    checkPermission("clients:update"),
+    async (req: AuthRequest, res: Response) => {
+      try {
+        const clientId = req.params.id;
+        const client = await storage.getClient(clientId);
+        if (!client) return res.status(404).json({ error: 'Cliente no encontrado' });
+
+        const codes = Array.isArray(req.body?.codes) ? (req.body.codes as string[]).map((c) => String(c).toUpperCase()) : undefined;
+        const assignmentIds = Array.isArray(req.body?.assignmentIds) ? (req.body.assignmentIds as string[]) : undefined;
+        const hard = Boolean(req.body?.hard);
+        let result;
+        if (assignmentIds && assignmentIds.length > 0) {
+          result = await storage.bulkRemoveAssignmentsByIds(clientId, assignmentIds, { hard });
+        } else {
+          result = await storage.bulkRemoveClientTaxAssignments(clientId, { codes, hard });
+        }
+        const assignments = await storage.getClientTaxAssignments(clientId);
+
+        await storage.createActivityLog({
+          usuarioId: req.user!.id,
+          accion: `Limpieza de asignaciones fiscales (vía POST) (${result.deleted} eliminadas, ${result.deactivated} desactivadas)` ,
+          modulo: 'clientes',
+          detalles: `Cliente: ${client.razonSocial}${codes ? `, Modelos: ${codes.join(',')}` : assignmentIds ? `, IDs: ${assignmentIds.length}` : ''}`,
+        });
+
+        res.json({ ...result, assignments });
       } catch (error: any) {
         res.status(500).json({ error: error.message });
       }
@@ -1084,10 +1306,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (primaryEmployeeId) {
             await storage.updateClient(id, { responsableAsignado: primaryEmployeeId });
           }
-        } else {
-          // Si no hay empleados, limpiar responsableAsignado
-          await storage.updateClient(id, { responsableAsignado: null });
-        }
+        } // Si no hay empleados: no modificar responsableAsignado (puede gestionarse desde la ficha general)
 
         await storage.createActivityLog({
           usuarioId: req.user!.id,
@@ -1652,6 +1871,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.json(manual);
       } catch (error: any) {
         res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
+  app.delete(
+    "/api/manuals/:id",
+    authenticateToken,
+    checkPermission("manuals:update"),
+    async (req: AuthRequest, res: Response) => {
+      const { id } = req.params;
+      try {
+        const ok = await storage.deleteManual(id);
+        if (!ok) {
+          return res.status(404).json({ error: "Manual no encontrado" });
+        }
+        await storage.createActivityLog({
+          usuarioId: req.user!.id,
+          accion: `Eliminó un manual`,
+          modulo: "manuales",
+          detalles: `ID: ${id}`,
+        });
+        res.status(204).end();
+      } catch (error: any) {
+        res.status(500).json({ error: error.message || 'No se pudo eliminar' });
       }
     }
   );
@@ -3086,15 +3329,241 @@ export async function registerRoutes(app: Express): Promise<Server> {
     checkPermission("taxes:read"),
     async (req: Request, res: Response) => {
       try {
-        const filings = await storage.getTaxFilings({
+        // Asegurar que existan periodos y tarjetas para el año solicitado
+        const requestedYear = req.query.year ? Number(req.query.year) : undefined;
+        if (requestedYear && Number.isFinite(requestedYear)) {
+          const existingPeriods = await prisma.fiscalPeriod.count({ where: { year: requestedYear } });
+          if (existingPeriods === 0) {
+            await storage.createFiscalYear(requestedYear);
+          }
+          // Solo generar filings a partir de asignaciones existentes (no crear asignaciones aquí)
+          await storage.ensureClientTaxFilingsForYear(requestedYear);
+        }
+
+        let filings = await storage.getTaxFilings({
           periodId: req.query.periodId as string | undefined,
           status: req.query.status as string | undefined,
           model: req.query.model as string | undefined,
           search: req.query.search as string | undefined,
+          clientId: req.query.clientId as string | undefined,
+          gestorId: req.query.gestorId as string | undefined,
+          year: req.query.year as string | undefined,
         });
+        if ((filings?.length ?? 0) === 0 && requestedYear && Number.isFinite(requestedYear)) {
+          // Último intento: regenerar y reconsultar
+          await storage.ensureClientTaxFilingsForYear(requestedYear);
+          filings = await storage.getTaxFilings({
+            periodId: req.query.periodId as string | undefined,
+            status: req.query.status as string | undefined,
+            model: req.query.model as string | undefined,
+            search: req.query.search as string | undefined,
+            clientId: req.query.clientId as string | undefined,
+            gestorId: req.query.gestorId as string | undefined,
+            year: req.query.year as string | undefined,
+          });
+        }
         res.json(filings);
       } catch (error: any) {
         res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
+  // POST /api/tax/filings/ensure-year
+  app.post(
+    "/api/tax/filings/ensure-year",
+    authenticateToken,
+    checkPermission("taxes:create"),
+    async (req: AuthRequest, res: Response) => {
+      try {
+        const y = Number(req.body?.year);
+        if (!Number.isFinite(y)) return res.status(400).json({ error: 'Año inválido' });
+        const result = await storage.ensureClientTaxFilingsForYear(y);
+        res.json(result);
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
+  // ==================== TAX CALENDAR (AEAT) ====================
+  // GET /api/tax/calendar
+  app.get(
+    "/api/tax/calendar",
+    authenticateToken,
+    checkPermission("taxes:read"),
+    async (req: AuthRequest, res: Response) => {
+      try {
+        const y = Number(req.query.year);
+        const model = (req.query.model as string | undefined)?.toUpperCase();
+        const periodicity = (req.query.periodicity as string | undefined)?.toLowerCase();
+        const status = (req.query.status as string | undefined)?.toUpperCase();
+        const where: any = {};
+        if (!Number.isNaN(y)) where.year = y;
+        if (model) where.modelCode = model;
+        if (periodicity === 'monthly') where.period = { startsWith: 'M' } as any;
+        if (periodicity === 'quarterly') where.period = { in: ['1T', '2T', '3T', '4T'] } as any;
+        if (periodicity === 'annual') where.period = 'ANUAL';
+        if (periodicity === 'special') where.period = { in: ['M04', 'M10', 'M12'] } as any;
+        if (status && ['PENDIENTE','ABIERTO','CERRADO'].includes(status)) where.status = status;
+
+        const list = await prisma.taxCalendar.findMany({ where, orderBy: [{ endDate: 'asc' }] });
+        // Mapear a los campos esperados por el front
+        const rows = list.map((r) => ({
+          id: r.id,
+          modelCode: r.modelCode,
+          period: r.period,
+          year: r.year,
+          startDate: r.startDate,
+          endDate: r.endDate,
+          status: r.status,
+          daysToStart: r.daysToStart,
+          daysToEnd: r.daysToEnd,
+        }));
+        res.json(rows);
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
+  // POST /api/tax/calendar (crear periodo)
+  app.post(
+    "/api/tax/calendar",
+    authenticateToken,
+    checkPermission("taxes:create"),
+    async (req: AuthRequest, res: Response) => {
+      try {
+        const { modelCode, period, year, startDate, endDate, active = true } = req.body || {};
+        if (!modelCode || !period || !year || !startDate || !endDate) {
+          return res.status(400).json({ error: "Campos requeridos: modelCode, period, year, startDate, endDate" });
+        }
+        const parsedYear = Number(year);
+        if (!Number.isFinite(parsedYear)) return res.status(400).json({ error: "Año inválido" });
+        const entry = await storage.createTaxCalendar({
+          modelCode: String(modelCode).toUpperCase(),
+          period: String(period).toUpperCase(),
+          year: parsedYear,
+          startDate: new Date(startDate),
+          endDate: new Date(endDate),
+          active: Boolean(active),
+        });
+        res.status(201).json(entry);
+      } catch (error: any) {
+        if (error?.code === 'P2002') {
+          return res.status(409).json({ error: "Ya existe un periodo para ese Modelo/Periodo/Año" });
+        }
+        res.status(500).json({ error: error?.message || 'Error desconocido' });
+      }
+    }
+  );
+
+  // PATCH /api/tax/calendar/:id (editar fechas/activo)
+  app.patch(
+    "/api/tax/calendar/:id",
+    authenticateToken,
+    checkPermission("taxes:update"),
+    async (req: AuthRequest, res: Response) => {
+      try {
+        const data: any = {};
+        if (req.body.startDate) data.startDate = new Date(req.body.startDate);
+        if (req.body.endDate) data.endDate = new Date(req.body.endDate);
+        if (typeof req.body.active !== 'undefined') data.active = Boolean(req.body.active);
+        const updated = await storage.updateTaxCalendar(req.params.id, data);
+        res.json(updated);
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
+  // DELETE /api/tax/calendar/:id (borrar periodo)
+  app.delete(
+    "/api/tax/calendar/:id",
+    authenticateToken,
+    checkPermission("taxes:delete"),
+    async (req: AuthRequest, res: Response) => {
+      try {
+        const ok = await storage.deleteTaxCalendar(req.params.id);
+        if (!ok) return res.status(404).json({ error: "Periodo no encontrado" });
+        res.status(204).end();
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
+  // POST /api/tax/calendar/create-year
+  app.post(
+    "/api/tax/calendar/create-year",
+    authenticateToken,
+    checkPermission("taxes:create"),
+    async (req: AuthRequest, res: Response) => {
+      try {
+        const y = Number(req.body?.year);
+        if (!Number.isFinite(y)) return res.status(400).json({ error: 'Año inválido' });
+        // Duplicar desde año Y a Y+1 si existen periodos, si no, no-op
+        const created = await storage.cloneTaxCalendarYear(y);
+        res.json({ created: created.length });
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
+  // POST /api/tax/calendar/seed-year (crear todos los periodos del año)
+  app.post(
+    "/api/tax/calendar/seed-year",
+    authenticateToken,
+    checkPermission("taxes:create"),
+    async (req: AuthRequest, res: Response) => {
+      try {
+        const y = Number(req.body?.year);
+        if (!Number.isFinite(y)) return res.status(400).json({ error: 'Año inválido' });
+        const model = (req.body?.model as string | undefined)?.toUpperCase();
+        const periodicity = (req.body?.periodicity as string | undefined)?.toLowerCase() as any;
+        const result = await storage.seedTaxCalendarYear(y, {
+          modelCode: model,
+          periodicity: periodicity === 'monthly' || periodicity === 'quarterly' || periodicity === 'annual' || periodicity === 'special' ? periodicity : 'all',
+        });
+        res.json(result);
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
+  // GET /api/tax/calendar/:year.ics
+  app.get(
+    "/api/tax/calendar/:year.ics",
+    authenticateToken,
+    checkPermission("taxes:read"),
+    async (req: Request, res: Response) => {
+      try {
+        const y = Number(req.params.year);
+        if (!Number.isFinite(y)) return res.status(400).send('');
+        const rows = await prisma.taxCalendar.findMany({ where: { year: y }, orderBy: [{ startDate: 'asc' }] });
+        const lines: string[] = [];
+        lines.push('BEGIN:VCALENDAR');
+        lines.push('VERSION:2.0');
+        lines.push('PRODID:-//Asesoria La Llave//Calendario AEAT//ES');
+        for (const r of rows) {
+          const dtStart = toICSDate(r.startDate);
+          const dtEnd = toICSDate(r.endDate);
+          const summary = `${r.modelCode} ${r.period}/${r.year}`;
+          lines.push('BEGIN:VEVENT');
+          lines.push(`UID:${r.id}@asesoria-la-llave`);
+          lines.push(`DTSTAMP:${toICSDate(new Date())}`);
+          lines.push(`DTSTART:${dtStart}`);
+          lines.push(`DTEND:${dtEnd}`);
+          lines.push(`SUMMARY:${summary}`);
+          lines.push('END:VEVENT');
+        }
+        lines.push('END:VCALENDAR');
+        res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
+        res.send(lines.join('\r\n'));
+      } catch (error: any) {
+        res.status(500).send('');
       }
     }
   );
@@ -3106,10 +3575,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
     async (req: AuthRequest, res: Response) => {
       try {
         const isAdmin = (req.user as any)?.roleName === "Administrador";
+        // Mapear status de UI -> enum Prisma si viene en castellano
+        let mappedStatus: FilingStatus | undefined = undefined;
+        if (req.body.status !== undefined) {
+          const raw = String(req.body.status || '').toUpperCase();
+          const map: Record<string, FilingStatus> = {
+            'PENDIENTE': FilingStatus.NOT_STARTED,
+            'NOT_STARTED': FilingStatus.NOT_STARTED,
+            'CALCULADO': FilingStatus.IN_PROGRESS,
+            'IN_PROGRESS': FilingStatus.IN_PROGRESS,
+            'PRESENTADO': FilingStatus.PRESENTED,
+            'PRESENTED': FilingStatus.PRESENTED,
+          };
+          mappedStatus = map[raw] ?? undefined;
+        }
+
         const updated = await storage.updateTaxFiling(
           req.params.id,
           {
-            status: req.body.status ?? undefined,
+            status: mappedStatus ?? req.body.status ?? undefined,
             notes: req.body.notes ?? undefined,
             presentedAt: req.body.presentedAt ? new Date(req.body.presentedAt) : req.body.presentedAt === null ? null : undefined,
             assigneeId: req.body.assigneeId ?? undefined,
@@ -3138,6 +3622,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       credentials: true
     }
   });
+
+  function toICSDate(d: Date) {
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const yyyy = d.getUTCFullYear();
+    const mm = pad(d.getUTCMonth() + 1);
+    const dd = pad(d.getUTCDate());
+    const hh = pad(d.getUTCHours());
+    const mi = pad(d.getUTCMinutes());
+    const ss = pad(d.getUTCSeconds());
+    return `${yyyy}${mm}${dd}T${hh}${mi}${ss}Z`;
+  }
 
   // Middleware de autenticación para Socket.IO
   io.use(async (socket, next) => {

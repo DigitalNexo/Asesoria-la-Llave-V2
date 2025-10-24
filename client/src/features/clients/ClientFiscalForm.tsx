@@ -12,6 +12,8 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
@@ -27,6 +29,7 @@ import {
   createTaxAssignment,
   deleteTaxAssignment,
   updateTaxAssignment,
+  bulkDeleteTaxAssignments,
 } from "./api";
 
 interface ClientFiscalFormProps {
@@ -61,6 +64,8 @@ export function ClientFiscalForm({
   const [dialogMode, setDialogMode] = useState<"create" | "edit">("create");
   const [focusedAssignment, setFocusedAssignment] = useState<ClientTaxAssignment | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ClientTaxAssignment | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [hardDelete, setHardDelete] = useState<boolean>(true);
 
   const assignedCodes = useMemo(
     () => assignments.map((assignment) => assignment.taxModelCode),
@@ -130,7 +135,8 @@ export function ClientFiscalForm({
 
   const deleteMutation = useMutation({
     mutationFn: async (assignmentId: string) => {
-      return await deleteTaxAssignment(assignmentId);
+      // Respeta el switch de "Borrado definitivo"
+      return await deleteTaxAssignment(assignmentId, hardDelete);
     },
     onSuccess: (result) => {
       if (result.softDeleted) {
@@ -192,13 +198,75 @@ export function ClientFiscalForm({
 
   const isProcessing = createMutation.isPending || updateMutation.isPending;
 
+  const toggleSelect = (checked: boolean, assignment: ClientTaxAssignment) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(assignment.id);
+      else next.delete(assignment.id);
+      return next;
+    });
+  };
+
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between">
         <CardTitle>Asignaciones fiscales</CardTitle>
-        <Button onClick={handleOpenCreate} disabled={!clientId || disabled}>
-          Añadir impuesto
-        </Button>
+        <div className="flex items-center gap-3">
+          <Button onClick={handleOpenCreate} disabled={!clientId || disabled}>
+            Añadir impuesto
+          </Button>
+          <div className="flex items-center gap-2 pl-2 border-l">
+            <Switch id="hard-delete" checked={hardDelete} onCheckedChange={setHardDelete} />
+            <Label htmlFor="hard-delete" className="text-xs text-muted-foreground">Borrado definitivo</Label>
+          </div>
+          <Button
+            variant="outline"
+            disabled={!clientId || disabled || assignments.length === 0}
+            onClick={async () => {
+              if (!clientId) return;
+              const ok = window.confirm('¿Eliminar todas las asignaciones fiscales de este cliente? Los modelos con histórico se desactivarán.');
+              if (!ok) return;
+              try {
+                const res = await bulkDeleteTaxAssignments(clientId, { hard: hardDelete });
+                if (Array.isArray(res.assignments)) {
+                  onAssignmentsChange(() => res.assignments!);
+                } else {
+                  onAssignmentsChange(() => []);
+                }
+                queryClient.invalidateQueries({ queryKey: ["client-detail", clientId] });
+                toast({ title: 'Limpieza completada', description: `${res.deleted} eliminadas, ${res.deactivated} desactivadas` });
+              } catch (e: any) {
+                toast({ title: 'Error', description: e?.message ?? 'No se pudo limpiar', variant: 'destructive' });
+              }
+            }}
+          >
+            Borrar modelos
+          </Button>
+          <Button
+            variant="destructive"
+            disabled={!clientId || disabled || selectedIds.size === 0}
+            onClick={async () => {
+              if (!clientId) return;
+              const ids = Array.from(selectedIds);
+              const ok = window.confirm(`¿Eliminar/desactivar modelos seleccionados? (${ids.length} registros)`);
+              if (!ok) return;
+              try {
+                const res = await bulkDeleteTaxAssignments(clientId, { assignmentIds: ids, hard: hardDelete });
+                setSelectedIds(new Set());
+                if (Array.isArray(res.assignments)) {
+                  onAssignmentsChange(() => res.assignments!);
+                } else {
+                  queryClient.invalidateQueries({ queryKey: ["client-detail", clientId] });
+                }
+                toast({ title: 'Selección procesada', description: `${res.deleted} eliminadas, ${res.deactivated} desactivadas` });
+              } catch (e: any) {
+                toast({ title: 'Error', description: e?.message ?? 'No se pudo procesar la selección', variant: 'destructive' });
+              }
+            }}
+          >
+            Borrar seleccionados
+          </Button>
+        </div>
       </CardHeader>
       <CardContent>
         {!clientId ? (
@@ -215,6 +283,7 @@ export function ClientFiscalForm({
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-10"></TableHead>
                   <TableHead>Modelo</TableHead>
                   <TableHead>Periodicidad</TableHead>
                   <TableHead>Alta</TableHead>
@@ -232,6 +301,9 @@ export function ClientFiscalForm({
                     onEdit={handleEdit}
                     onDelete={handleDelete}
                     onToggleActive={handleToggleActive}
+                    selectable
+                    selected={selectedIds.has(assignment.id)}
+                    onSelectChange={toggleSelect}
                     disabled={disabled || updateMutation.isPending || deleteMutation.isPending}
                   />
                 ))}
@@ -269,6 +341,13 @@ export function ClientFiscalForm({
               automáticamente.
             </AlertDialogDescription>
           </AlertDialogHeader>
+          <div className="flex items-center justify-between rounded-md border p-3">
+            <div>
+              <p className="text-sm font-medium">Borrado definitivo</p>
+              <p className="text-xs text-muted-foreground">Si está activado, se eliminará también el histórico asociado a este modelo.</p>
+            </div>
+            <Switch checked={hardDelete} onCheckedChange={setHardDelete} />
+          </div>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={deleteMutation.isPending} onClick={() => setDeleteTarget(null)}>
               Cancelar

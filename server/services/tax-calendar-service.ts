@@ -13,7 +13,7 @@ function normalizeDate(date: Date): Date {
 }
 
 function diffInDays(target: Date, reference: Date): number {
-  const ms = normalizeDate(target).getTime() - normalizeDate(reference).getTime();
+  const ms = target.getTime() - reference.getTime();
   return Math.ceil(ms / DAY_MS);
 }
 

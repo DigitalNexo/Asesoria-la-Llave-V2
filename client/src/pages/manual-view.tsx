@@ -1,12 +1,15 @@
 import { useParams, useLocation } from "wouter";
+import { useState } from "react";
 type ManualParams = { id?: string };
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Edit, Download, Paperclip } from "lucide-react";
+import { ArrowLeft, Edit, Download, Paperclip, Columns, Maximize, Minimize, Trash2 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/contexts/auth-context";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 import { TableOfContents } from "@/components/TableOfContents";
 import type { Manual, ManualAttachment } from "@shared/schema";
 import jsPDF from "jspdf";
@@ -25,7 +28,26 @@ export default function ManualView() {
     enabled: !!params.id,
   });
 
-  const canEdit = user?.role === "ADMIN" || user?.role === "GESTOR";
+  const roleName = (user as any)?.roleName || (user as any)?.role;
+  const canEdit = ["Administrador", "Gestor", "ADMIN", "GESTOR"].includes(String(roleName));
+  const [expanded, setExpanded] = useState(false);
+  const { toast } = useToast();
+
+  const handleDelete = async () => {
+    if (!manual) return;
+    const confirm = window.confirm(`¿Eliminar el manual "${manual.titulo}"? Esta acción no se puede deshacer.`);
+    if (!confirm) return;
+    try {
+      await apiRequest("DELETE", `/api/manuals/${encodeURIComponent(manual.id)}`);
+      // Optimistic remove + invalidation para que no reaparezca tras refetch
+      queryClient.setQueryData<any[]>(["/api/manuals"], (prev) => Array.isArray(prev) ? prev.filter((m) => m.id !== manual.id) : prev);
+      await queryClient.invalidateQueries({ queryKey: ["/api/manuals"], exact: true });
+      toast({ title: "Manual eliminado" });
+      setLocation("/manuales");
+    } catch (e: any) {
+      toast({ title: "No se pudo eliminar", description: e?.message ?? "", variant: "destructive" });
+    }
+  };
 
   const formatFileSize = (bytes: number) => {
     if (bytes < 1024) return bytes + ' B';
@@ -88,17 +110,27 @@ export default function ManualView() {
           Exportar PDF
         </Button>
         {canEdit && (
-          <Button onClick={() => setLocation(`/manuales/${manual.id}/editar`)} data-testid="button-edit">
-            <Edit className="h-4 w-4 mr-2" />
-            Editar
-          </Button>
+          <>
+            <Button variant="outline" onClick={() => setExpanded((v) => !v)} data-testid="button-expand">
+              {expanded ? <Minimize className="h-4 w-4 mr-2" /> : <Maximize className="h-4 w-4 mr-2" />}
+              {expanded ? "Reducir" : "Expandir"}
+            </Button>
+            <Button variant="destructive" onClick={handleDelete} data-testid="button-delete">
+              <Trash2 className="h-4 w-4 mr-2" />
+              Eliminar
+            </Button>
+            <Button onClick={() => setLocation(`/manuales/${manual.id}/editar`)} data-testid="button-edit">
+              <Edit className="h-4 w-4 mr-2" />
+              Editar
+            </Button>
+          </>
         )}
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-[1fr_300px]">
+      <div className={expanded ? "grid gap-6 grid-cols-1" : "grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]"}>
         <div className="space-y-6">
           <Card>
-            <CardHeader>
+            <CardHeader className="px-6 pt-6 pb-0">
               <div className="flex items-center justify-between">
                 <div className="space-y-2">
                   <CardTitle className="text-2xl">{manual.titulo}</CardTitle>
@@ -122,12 +154,12 @@ export default function ManualView() {
                 </div>
               )}
             </CardHeader>
-            <CardContent>
-              <div 
-                className="prose prose-sm max-w-none [&_.editor-table]:border-collapse [&_.editor-table]:w-full [&_.editor-table]:my-4 [&_.editor-table_th]:border-2 [&_.editor-table_th]:border-black [&_.editor-table_th]:p-2 [&_.editor-table_th]:bg-muted [&_.editor-table_th]:font-semibold [&_.editor-table_th]:text-left [&_.editor-table_td]:border-2 [&_.editor-table_td]:border-black [&_.editor-table_td]:p-2"
+            <CardContent className="p-0">
+              <div
+                className="prose lg:prose-base max-w-none px-6 pb-6 md:px-8 md:pb-8 [&_.editor-table]:border-collapse [&_.editor-table]:w-full [&_.editor-table]:my-4 [&_.editor-table_th]:border-2 [&_.editor-table_th]:border-black [&_.editor-table_th]:p-2 [&_.editor-table_th]:bg-muted [&_.editor-table_th]:font-semibold [&_.editor-table_th]:text-left [&_.editor-table_td]:border-2 [&_.editor-table_td]:border-black [&_.editor-table_td]:p-2"
                 dangerouslySetInnerHTML={{ __html: manual.contenidoHtml }}
               />
-              <div className="mt-8 pt-4 border-t text-sm text-muted-foreground">
+              <div className="px-6 md:px-8 mt-4 pt-4 border-t text-sm text-muted-foreground">
                 Creado el {new Date(manual.fechaCreacion).toLocaleDateString()}
                 {manual.fechaActualizacion !== manual.fechaCreacion && (
                   <> · Actualizado el {new Date(manual.fechaActualizacion).toLocaleDateString()}</>

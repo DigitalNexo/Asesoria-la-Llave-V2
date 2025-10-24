@@ -321,8 +321,15 @@ async function createInitialAdmin() {
     );
 
   } catch (error) {
-    logger.fatal({ err: error }, '❌ Error crítico creando usuario administrador inicial');
-    process.exit(1);
+    // No abortar el arranque si la base de datos no está disponible en desarrollo
+    const msg = (error as any)?.message || String(error);
+    logger.error({ err: error }, '⚠️ No se pudo crear usuario administrador inicial');
+    if (msg.includes("Can't reach database server") || msg.includes('PrismaClientInitializationError')) {
+      logger.warn('DB no disponible. Continuando arranque para permitir trabajo de frontend/API stub.');
+      return;
+    }
+    // Para otros errores, no tumbar el proceso
+    return;
   }
 }
 

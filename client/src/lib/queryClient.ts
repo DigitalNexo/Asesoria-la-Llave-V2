@@ -42,6 +42,11 @@ export async function apiRequest(
     });
 
     await throwIfResNotOk(res);
+    // Manejar respuestas sin cuerpo (204 No Content o sin JSON)
+    const contentType = res.headers.get('content-type') || '';
+    if (res.status === 204 || !contentType.includes('application/json')) {
+      return {} as any;
+    }
     return res.json();
   } catch (error: any) {
     if (error.name === 'AbortError') {
