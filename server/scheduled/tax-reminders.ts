@@ -71,7 +71,7 @@ async function runTaxReminders() {
     const nextMonth = addDays(now, 30);
 
     // Obtener clientes activos
-    const clientes = await prisma.client.findMany({
+    const clientes = await prisma.clients.findMany({
       include: {
         clientTaxes: {
           include: {

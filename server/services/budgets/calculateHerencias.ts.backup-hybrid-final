@@ -1,0 +1,302 @@
+/**
+ * Servicio de cálculo para presupuestos de HERENCIAS
+ * AHORA CON PARÁMETROS CONFIGURABLES desde base de datos
+ */
+
+import { PrismaClient } from '@prisma/client';
+import { HerenciasInput, CalculationResult, BudgetItemInput } from './types';
+
+const prisma = new PrismaClient();
+
+// Caché de parámetros para evitar consultas repetidas
+let parametersCache: Map<string, any> | null = null;
+let cacheTimestamp: number = 0;
+const CACHE_DURATION = 5 * 60 * 1000; // 5 minutos
+
+async function getParameters() {
+  const now = Date.now();
+  
+  // Usar caché si existe y no ha expirado
+  if (parametersCache && (now - cacheTimestamp) < CACHE_DURATION) {
+    return parametersCache;
+  }
+
+  // Cargar parámetros de BD
+  const params = await prisma.budgetParameter.findMany({
+    where: {
+      budgetType: 'HERENCIAS',
+      isActive: true,
+    },
+  });
+
+  // Crear mapa por paramKey
+  const paramsMap = new Map<string, any>();
+  
+  params.forEach((param) => {
+    paramsMap.set(param.paramKey, param);
+  });
+
+  parametersCache = paramsMap;
+  cacheTimestamp = now;
+
+  return paramsMap;
+}
+
+// Fallback por si falla BD
+const PRECIOS_UNITARIOS = {
+  HEREDERO: 25,
+  FINCA_COMUNIDAD: 25,
+  FINCA_OTRAS: 40,
+  PRODUCTO_FINANCIERO: 20,
+  VEHICULO: 30,
+  PLUSVALIA_POR_FINCA: 50,
+  REGISTRO_POR_FINCA: 50,
+};
+
+const PORCENTAJE_CAUDAL = 0.001; // 0.1%
+
+const RECARGOS_PCT = {
+  SIN_TESTAMENTO: 0.30, // +30%
+  SIN_ACUERDO: 0.60,     // +60%
+  ESCRITURAR: 0.30,      // +30%
+};
+
+const DESCUENTO_COMERCIAL = 0.15; // 15%
+
+export async function calculateHerencias(input: HerenciasInput): Promise<CalculationResult> {
+  // VALIDACIONES
+  if (input.caudalHereditario < 20000) {
+    throw new Error('El caudal hereditario mínimo es de 20.000€');
+  }
+
+  const tieneActivos = 
+    input.fincasComunidad > 0 || 
+    input.fincasOtras > 0 ||
+    input.productosFinancieros > 0 || 
+    input.vehiculos > 0;
+  
+  if (!tieneActivos) {
+    throw new Error('Debe haber al menos un inmueble, producto financiero o vehículo');
+  }
+
+  const items: BudgetItemInput[] = [];
+  let position = 1;
+
+  // Cargar parámetros de BD
+  const params = await getParameters();
+
+  // 1. HEREDEROS
+  if (input.herederos > 0) {
+    const param = params.get('INMUEBLE_HEREDERO');
+    const precio = param ? Number(param.paramValue) : PRECIOS_UNITARIOS.HEREDERO;
+    const subtotal = input.herederos * precio;
+    items.push({
+      concept: `Herederos (${input.herederos} x ${precio}€)`,
+      category: 'BASE_HEREDEROS',
+      position: position++,
+      quantity: input.herederos,
+      unitPrice: precio,
+      vatPct: 21,
+      subtotal,
+      total: subtotal * 1.21,
+    });
+  }
+
+  // 2. FINCAS COMUNIDAD
+  const fincasComunidad = input.fincasComunidad || 0;
+  if (fincasComunidad > 0) {
+    const param = params.get('INMUEBLE_COMUNIDAD');
+    const precio = param ? Number(param.paramValue) : PRECIOS_UNITARIOS.FINCA_COMUNIDAD;
+    const subtotal = fincasComunidad * precio;
+    items.push({
+      concept: `Fincas Comunidad Autónoma (${fincasComunidad} x ${precio}€)`,
+      category: 'BASE_FINCAS_COMUNIDAD',
+      position: position++,
+      quantity: fincasComunidad,
+      unitPrice: precio,
+      vatPct: 21,
+      subtotal,
+      total: subtotal * 1.21,
+    });
+  }
+
+  // 3. FINCAS OTRAS CCAA
+  const fincasOtras = input.fincasOtras || 0;
+  if (fincasOtras > 0) {
+    const param = params.get('INMUEBLE_OTRAS_CCAA');
+    const precio = param ? Number(param.paramValue) : PRECIOS_UNITARIOS.FINCA_OTRAS;
+    const subtotal = fincasOtras * precio;
+    items.push({
+      concept: `Fincas otras CCAA (${fincasOtras} x ${precio}€)`,
+      category: 'BASE_FINCAS_OTRAS',
+      position: position++,
+      quantity: fincasOtras,
+      unitPrice: precio,
+      vatPct: 21,
+      subtotal,
+      total: subtotal * 1.21,
+    });
+  }
+
+  // 4. PRODUCTOS FINANCIEROS
+  if (input.productosFinancieros > 0) {
+    const param = params.get('PRODUCTO_FINANCIERO');
+    const precio = param ? Number(param.paramValue) : PRECIOS_UNITARIOS.PRODUCTO_FINANCIERO;
+    const subtotal = input.productosFinancieros * precio;
+    items.push({
+      concept: `Productos financieros (${input.productosFinancieros} x ${precio}€)`,
+      category: 'BASE_PRODUCTOS',
+      position: position++,
+      quantity: input.productosFinancieros,
+      unitPrice: precio,
+      vatPct: 21,
+      subtotal,
+      total: subtotal * 1.21,
+    });
+  }
+
+  // 5. VEHÍCULOS
+  if (input.vehiculos > 0) {
+    const param = params.get('VEHICULO');
+    const precio = param ? Number(param.paramValue) : PRECIOS_UNITARIOS.VEHICULO;
+    const subtotal = input.vehiculos * precio;
+    items.push({
+      concept: `Vehículos (${input.vehiculos} x ${precio}€)`,
+      category: 'BASE_VEHICULOS',
+      position: position++,
+      quantity: input.vehiculos,
+      unitPrice: precio,
+      vatPct: 21,
+      subtotal,
+      total: subtotal * 1.21,
+    });
+  }
+
+  // 6. PLUSVALÍAS (fincas * 50€)
+  const totalFincas = fincasComunidad + fincasOtras;
+  if (totalFincas > 0) {
+    const subtotal = totalFincas * PRECIOS_UNITARIOS.PLUSVALIA_POR_FINCA;
+    items.push({
+      concept: `Plusvalías (${totalFincas} fincas x ${PRECIOS_UNITARIOS.PLUSVALIA_POR_FINCA}€)`,
+      category: 'SERVICIO_PLUSVALIAS',
+      position: position++,
+      quantity: totalFincas,
+      unitPrice: PRECIOS_UNITARIOS.PLUSVALIA_POR_FINCA,
+      vatPct: 21,
+      subtotal,
+      total: subtotal * 1.21,
+    });
+  }
+
+  // 7. REGISTROS (fincas * 50€)
+  if (totalFincas > 0) {
+    const subtotal = totalFincas * PRECIOS_UNITARIOS.REGISTRO_POR_FINCA;
+    items.push({
+      concept: `Registros (${totalFincas} fincas x ${PRECIOS_UNITARIOS.REGISTRO_POR_FINCA}€)`,
+      category: 'SERVICIO_REGISTROS',
+      position: position++,
+      quantity: totalFincas,
+      unitPrice: PRECIOS_UNITARIOS.REGISTRO_POR_FINCA,
+      vatPct: 21,
+      subtotal,
+      total: subtotal * 1.21,
+    });
+  }
+
+  // CALCULAR SUBTOTAL ANTES DE RECARGOS
+  let subtotalBase = items.reduce((sum, item) => sum + item.subtotal, 0);
+
+  // 8. RECARGOS
+
+  // 8.1 Recargo por caudal hereditario (0.1%)
+  const recargoCaudal = input.caudalHereditario * PORCENTAJE_CAUDAL;
+  items.push({
+    concept: `Recargo caudal hereditario (${input.caudalHereditario.toLocaleString('es-ES')}€ x 0.1%)`,
+    category: 'RECARGO_CAUDAL',
+    position: position++,
+    quantity: 1,
+    unitPrice: recargoCaudal,
+    vatPct: 21,
+    subtotal: recargoCaudal,
+    total: recargoCaudal * 1.21,
+  });
+
+  // 8.2 Recargo sin testamento (+30% sobre base)
+  if (input.sinTestamento) {
+    const recargo = subtotalBase * RECARGOS_PCT.SIN_TESTAMENTO;
+    items.push({
+      concept: 'Recargo sin testamento (+30%)',
+      category: 'RECARGO_SIN_TESTAMENTO',
+      position: position++,
+      quantity: 1,
+      unitPrice: recargo,
+      vatPct: 21,
+      subtotal: recargo,
+      total: recargo * 1.21,
+    });
+  }
+
+  // 8.3 Recargo sin acuerdo herederos (+60% sobre base)
+  if (input.sinAcuerdo) {
+    const recargo = subtotalBase * RECARGOS_PCT.SIN_ACUERDO;
+    items.push({
+      concept: 'Recargo sin acuerdo entre herederos (+60%)',
+      category: 'RECARGO_SIN_ACUERDO',
+      position: position++,
+      quantity: 1,
+      unitPrice: recargo,
+      vatPct: 21,
+      subtotal: recargo,
+      total: recargo * 1.21,
+    });
+  }
+
+  // 8.4 Recargo por escriturar (+30% sobre base)
+  if (input.escriturar) {
+    const recargo = subtotalBase * RECARGOS_PCT.ESCRITURAR;
+    items.push({
+      concept: 'Recargo por escrituración de herencia (+30%)',
+      category: 'RECARGO_ESCRITURAR',
+      position: position++,
+      quantity: 1,
+      unitPrice: recargo,
+      vatPct: 21,
+      subtotal: recargo,
+      total: recargo * 1.21,
+    });
+  }
+
+  // 9. DESCUENTO COMERCIAL 15% (opcional, decisión comercial)
+  if (input.aplicarDescuento15) {
+    const subtotalConRecargos = items.reduce((sum, item) => sum + item.subtotal, 0);
+    const descuento = subtotalConRecargos * DESCUENTO_COMERCIAL;
+    items.push({
+      concept: 'Descuento comercial (15%)',
+      category: 'DESCUENTO_COMERCIAL',
+      position: position++,
+      quantity: 1,
+      unitPrice: -descuento,
+      vatPct: 21,
+      subtotal: -descuento,
+      total: -descuento * 1.21,
+    });
+  }
+
+  // 10. CALCULAR TOTALES FINALES
+  const subtotal = items.reduce((sum, item) => sum + item.subtotal, 0);
+  const vatTotal = items.reduce((sum, item) => sum + (item.subtotal * (item.vatPct / 100)), 0);
+  const total = subtotal + vatTotal;
+
+  return {
+    items,
+    subtotal: Math.round(subtotal * 100) / 100,
+    vatTotal: Math.round(vatTotal * 100) / 100,
+    total: Math.round(total * 100) / 100,
+  };
+}
+
+// Función para limpiar caché (útil después de editar parámetros)
+export function clearParametersCache() {
+  parametersCache = null;
+  cacheTimestamp = 0;
+}

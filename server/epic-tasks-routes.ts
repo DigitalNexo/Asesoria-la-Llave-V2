@@ -1,0 +1,645 @@
+/**
+ * 🚀 EPIC TASKS API - FIXED VERSION
+ * Endpoints avanzados para el sistema de tareas mejorado
+ * Corregido para usar nombres snake_case de Prisma
+ */
+
+import type { Express, Request, Response } from "express";
+import { PrismaClient } from "@prisma/client";
+import type { AuthRequest } from "./middleware/auth";
+import { authenticateToken } from "./middleware/auth";
+import { checkPermission } from "./routes";
+import multer from "multer";
+import path from "path";
+import fs from "fs";
+import { logger } from "./logger";
+import { randomUUID } from "crypto";
+
+const prisma = new PrismaClient();
+
+// Configuración de Multer para adjuntos de tareas
+const tasksUploadsDir = path.join(process.cwd(), "uploads", "tasks", "attachments");
+if (!fs.existsSync(tasksUploadsDir)) {
+  fs.mkdirSync(tasksUploadsDir, { recursive: true });
+}
+
+const taskAttachmentsStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, tasksUploadsDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1E9)}`;
+    cb(null, `${uniqueSuffix}-${file.originalname}`);
+  },
+});
+
+const uploadTaskAttachment = multer({
+  storage: taskAttachmentsStorage,
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB max
+});
+
+export function registerEpicTasksRoutes(app: Express) {
+  
+  // ==================== COMENTARIOS ====================
+  
+  /**
+   * GET /api/tasks/:taskId/comments
+   * Obtener todos los comentarios de una tarea
+   */
+  app.get("/api/tasks/:taskId/comments", authenticateToken, async (req: Request, res: Response) => {
+    try {
+      const { taskId } = req.params;
+      
+      const comments = await prisma.task_comments.findMany({
+        where: { taskId },
+        include: {
+          users: {
+            select: {
+              id: true,
+              username: true,
+              email: true,
+            },
+          },
+        },
+        orderBy: { createdAt: "asc" },
+      });
+      
+      res.json(comments);
+    } catch (error: any) {
+      logger.error({ err: error }, "Error al obtener comentarios");
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  /**
+   * POST /api/tasks/:taskId/comments
+   * Crear un nuevo comentario en una tarea
+   */
+  app.post("/api/tasks/:taskId/comments", authenticateToken, async (req: AuthRequest, res: Response) => {
+    try {
+      const { taskId } = req.params;
+      const { contenido } = req.body;
+      
+      if (!contenido || contenido.trim() === "") {
+        return res.status(400).json({ error: "El contenido del comentario es requerido" });
+      }
+      
+      // Verificar que la tarea existe
+      const task = await prisma.tasks.findUnique({ where: { id: taskId } });
+      if (!task) {
+        return res.status(404).json({ error: "Tarea no encontrada" });
+      }
+      
+      const comment = await prisma.task_comments.create({
+        data: {
+          id: randomUUID(),
+          tasks: { connect: { id: taskId } },
+          users: { connect: { id: req.user!.id } },
+          contenido,
+          updatedAt: new Date(),
+        },
+        include: {
+          users: {
+            select: {
+              id: true,
+              username: true,
+              email: true,
+            },
+          },
+        },
+      });
+      
+      // Crear actividad
+      await prisma.task_activities.create({
+        data: {
+          id: randomUUID(),
+          taskId,
+          userId: req.user!.id,
+          accion: "commented",
+          descripcion: `${req.user!.username} añadió un comentario`,
+          metadata: JSON.stringify({ commentId: comment.id }),
+        } as any,
+      });
+      
+      res.json(comment);
+    } catch (error: any) {
+      logger.error({ err: error }, "Error al crear comentario");
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  /**
+   * PATCH /api/tasks/:taskId/comments/:commentId
+   * Editar un comentario
+   */
+  app.patch("/api/tasks/:taskId/comments/:commentId", authenticateToken, async (req: AuthRequest, res: Response) => {
+    try {
+      const { taskId, commentId } = req.params;
+      const { contenido } = req.body;
+      
+      const comment = await prisma.task_comments.findUnique({
+        where: { id: commentId },
+      });
+      
+      if (!comment) {
+        return res.status(404).json({ error: "Comentario no encontrado" });
+      }
+      
+      // Solo el autor puede editar
+      if (comment.userId !== req.user!.id) {
+        return res.status(403).json({ error: "No tienes permiso para editar este comentario" });
+      }
+      
+      const updated = await prisma.task_comments.update({
+        where: { id: commentId },
+        data: {
+          contenido,
+          updatedAt: new Date(),
+        },
+        include: {
+          users: {
+            select: {
+              id: true,
+              username: true,
+              email: true,
+            },
+          },
+        },
+      });
+      
+      res.json(updated);
+    } catch (error: any) {
+      logger.error({ err: error }, "Error al editar comentario");
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  /**
+   * DELETE /api/tasks/:taskId/comments/:commentId
+   * Eliminar un comentario
+   */
+  app.delete("/api/tasks/:taskId/comments/:commentId", authenticateToken, async (req: AuthRequest, res: Response) => {
+    try {
+      const { commentId } = req.params;
+      
+      const comment = await prisma.task_comments.findUnique({
+        where: { id: commentId },
+      });
+      
+      if (!comment) {
+        return res.status(404).json({ error: "Comentario no encontrado" });
+      }
+      
+      // Solo el autor o admin puede eliminar
+      if (comment.userId !== req.user!.id && !req.user!.permissions.includes("admin:settings")) {
+        return res.status(403).json({ error: "No tienes permiso para eliminar este comentario" });
+      }
+      
+      await prisma.task_comments.delete({
+        where: { id: commentId },
+      });
+      
+      res.status(204).end();
+    } catch (error: any) {
+      logger.error({ err: error }, "Error al eliminar comentario");
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ==================== ADJUNTOS ====================
+  
+  /**
+   * GET /api/tasks/:taskId/attachments
+   * Obtener todos los adjuntos de una tarea
+   */
+  app.get("/api/tasks/:taskId/attachments", authenticateToken, async (req: Request, res: Response) => {
+    try {
+      const { taskId } = req.params;
+      
+      const attachments = await prisma.task_attachments.findMany({
+        where: { taskId },
+        include: {
+          users: {
+            select: {
+              id: true,
+              username: true,
+            },
+          },
+        },
+        orderBy: { uploaded_at: "desc" },
+      });
+      
+      res.json(attachments);
+    } catch (error: any) {
+      logger.error({ err: error }, "Error al obtener adjuntos");
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  /**
+   * POST /api/tasks/:taskId/attachments
+   * Subir un adjunto a una tarea
+   */
+  app.post("/api/tasks/:taskId/attachments", authenticateToken, uploadTaskAttachment.single("file"), async (req: AuthRequest, res: Response) => {
+    try {
+      const { taskId } = req.params;
+      
+      if (!req.file) {
+        return res.status(400).json({ error: "No se proporcionó ningún archivo" });
+      }
+      
+      // Verificar que la tarea existe
+      const task = await prisma.tasks.findUnique({ where: { id: taskId } });
+      if (!task) {
+        return res.status(404).json({ error: "Tarea no encontrada" });
+      }
+      
+      const attachment = await prisma.task_attachments.create({
+        data: {
+          id: randomUUID(),
+          tasks: { connect: { id: taskId } },
+          users: { connect: { id: req.user!.id } },
+          fileName: req.file.filename,
+          original_name: req.file.originalname,
+          filePath: `/uploads/tasks/attachments/${req.file.filename}`,
+          file_type: req.file.mimetype,
+          fileSize: req.file.size,
+        },
+        include: {
+          users: {
+            select: {
+              id: true,
+              username: true,
+            },
+          },
+        },
+      });
+      
+      // Crear actividad
+      await prisma.task_activities.create({
+        data: {
+          id: randomUUID(),
+          taskId,
+          userId: req.user!.id,
+          accion: "attachment_added",
+          descripcion: `${req.user!.username} añadió un adjunto: ${req.file.originalname}`,
+          metadata: JSON.stringify({ attachmentId: attachment.id, fileName: req.file.originalname }),
+        } as any,
+      });
+      
+      res.json(attachment);
+    } catch (error: any) {
+      logger.error({ err: error }, "Error al subir adjunto");
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  /**
+   * DELETE /api/tasks/:taskId/attachments/:attachmentId
+   * Eliminar un adjunto
+   */
+  app.delete("/api/tasks/:taskId/attachments/:attachmentId", authenticateToken, async (req: AuthRequest, res: Response) => {
+    try {
+      const { attachmentId } = req.params;
+      
+      const attachment = await prisma.task_attachments.findUnique({
+        where: { id: attachmentId },
+      });
+      
+      if (!attachment) {
+        return res.status(404).json({ error: "Adjunto no encontrado" });
+      }
+      
+      // Solo el autor o admin puede eliminar
+      if (attachment.userId !== req.user!.id && !req.user!.permissions.includes("admin:settings")) {
+        return res.status(403).json({ error: "No tienes permiso para eliminar este adjunto" });
+      }
+      
+      // Eliminar archivo físico
+      const filePath = path.join(process.cwd(), "uploads", "tasks", "attachments", attachment.fileName);
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+      
+      await prisma.task_attachments.delete({
+        where: { id: attachmentId },
+      });
+      
+      res.status(204).end();
+    } catch (error: any) {
+      logger.error({ err: error }, "Error al eliminar adjunto");
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ==================== REGISTRO DE TIEMPO ====================
+  
+  /**
+   * GET /api/tasks/:taskId/time-entries
+   * Obtener todos los registros de tiempo de una tarea
+   */
+  app.get("/api/tasks/:taskId/time-entries", authenticateToken, async (req: Request, res: Response) => {
+    try {
+      const { taskId } = req.params;
+      
+      const entries = await prisma.task_time_entries.findMany({
+        where: { taskId },
+        include: {
+          users: {
+            select: {
+              id: true,
+              username: true,
+            },
+          },
+        },
+        orderBy: { fecha: "desc" },
+      });
+      
+      res.json(entries);
+    } catch (error: any) {
+      logger.error({ err: error }, "Error al obtener registros de tiempo");
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  /**
+   * POST /api/tasks/:taskId/time-entries
+   * Registrar tiempo en una tarea
+   */
+  app.post("/api/tasks/:taskId/time-entries", authenticateToken, async (req: AuthRequest, res: Response) => {
+    try {
+      const { taskId } = req.params;
+      const { minutos, descripcion, startedAt, endedAt } = req.body;
+      
+      if (!minutos || minutos <= 0) {
+        return res.status(400).json({ error: "Los minutos deben ser mayores a 0" });
+      }
+      
+      // Verificar que la tarea existe
+      const task = await prisma.tasks.findUnique({ where: { id: taskId } });
+      if (!task) {
+        return res.status(404).json({ error: "Tarea no encontrada" });
+      }
+      
+      const entry = await prisma.task_time_entries.create({
+        data: {
+          id: randomUUID(),
+          tasks: { connect: { id: taskId } },
+          users: { connect: { id: req.user!.id } },
+          minutos,
+          descripcion: descripcion || null,
+          started_at: startedAt ? new Date(startedAt) : null,
+          ended_at: endedAt ? new Date(endedAt) : null,
+        },
+        include: {
+          users: {
+            select: {
+              id: true,
+              username: true,
+            },
+          },
+        },
+      });
+      
+      // Actualizar tiempo total invertido en la tarea
+      await prisma.tasks.update({
+        where: { id: taskId },
+        data: {
+          tiempo_invertido: task.tiempo_invertido + minutos,
+        },
+      });
+      
+      // Crear actividad
+      await prisma.task_activities.create({
+        data: {
+          id: randomUUID(),
+          taskId,
+          userId: req.user!.id,
+          accion: "time_logged",
+          descripcion: `${req.user!.username} registró ${minutos} minutos`,
+          metadata: JSON.stringify({ entryId: entry.id, minutos }),
+        } as any,
+      });
+      
+      res.json(entry);
+    } catch (error: any) {
+      logger.error({ err: error }, "Error al registrar tiempo");
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  /**
+   * DELETE /api/tasks/:taskId/time-entries/:entryId
+   * Eliminar un registro de tiempo
+   */
+  app.delete("/api/tasks/:taskId/time-entries/:entryId", authenticateToken, async (req: AuthRequest, res: Response) => {
+    try {
+      const { taskId, entryId } = req.params;
+      
+      const entry = await prisma.task_time_entries.findUnique({
+        where: { id: entryId },
+      });
+      
+      if (!entry) {
+        return res.status(404).json({ error: "Registro no encontrado" });
+      }
+      
+      // Solo el autor puede eliminar
+      if (entry.userId !== req.user!.id) {
+        return res.status(403).json({ error: "No tienes permiso para eliminar este registro" });
+      }
+      
+      // Restar del tiempo total de la tarea
+      const task = await prisma.tasks.findUnique({ where: { id: taskId } });
+      if (task) {
+        await prisma.tasks.update({
+          where: { id: taskId },
+          data: {
+            tiempo_invertido: Math.max(0, task.tiempo_invertido - entry.minutos),
+          },
+        });
+      }
+      
+      await prisma.task_time_entries.delete({
+        where: { id: entryId },
+      });
+      
+      res.status(204).end();
+    } catch (error: any) {
+      logger.error({ err: error }, "Error al eliminar registro de tiempo");
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ==================== ACTIVIDADES / HISTORIAL ====================
+  
+  /**
+   * GET /api/tasks/:taskId/activities
+   * Obtener el historial de actividades de una tarea
+   */
+  app.get("/api/tasks/:taskId/activities", authenticateToken, async (req: Request, res: Response) => {
+    try {
+      const { taskId } = req.params;
+      
+      const activities = await prisma.task_activities.findMany({
+        where: { taskId },
+        include: {
+          users: {
+            select: {
+              id: true,
+              username: true,
+            },
+          },
+        },
+        orderBy: { createdAt: "desc" },
+        take: 100, // Últimas 100 actividades
+      });
+      
+      res.json(activities);
+    } catch (error: any) {
+      logger.error({ err: error }, "Error al obtener actividades");
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ==================== SUBTAREAS ====================
+  
+  /**
+   * GET /api/tasks/:taskId/subtasks
+   * Obtener subtareas de una tarea
+   */
+  app.get("/api/tasks/:taskId/subtasks", authenticateToken, async (req: Request, res: Response) => {
+    try {
+      const { taskId } = req.params;
+      
+      const subtasks = await prisma.tasks.findMany({
+        where: { parent_task_id: taskId },
+        include: {
+          users: {
+            select: {
+              id: true,
+              username: true,
+            },
+          },
+        },
+        orderBy: { orden: "asc" },
+      });
+      
+      res.json(subtasks);
+    } catch (error: any) {
+      logger.error({ err: error }, "Error al obtener subtareas");
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ==================== KANBAN / DRAG & DROP ====================
+  
+  /**
+   * PATCH /api/tasks/:taskId/move
+   * Mover tarea (cambiar estado y/o orden para Kanban)
+   */
+  app.patch("/api/tasks/:taskId/move", authenticateToken, async (req: AuthRequest, res: Response) => {
+    try {
+      const { taskId } = req.params;
+      const { estado, orden } = req.body;
+      
+      const task = await prisma.tasks.findUnique({ where: { id: taskId } });
+      if (!task) {
+        return res.status(404).json({ error: "Tarea no encontrada" });
+      }
+      
+      const updatedTask = await prisma.tasks.update({
+        where: { id: taskId },
+        data: {
+          ...(estado !== undefined && { estado }),
+          ...(orden !== undefined && { orden }),
+          fecha_actualizacion: new Date(),
+        },
+      });
+      
+      // Crear actividad si cambió el estado
+      if (estado && estado !== task.estado) {
+        await prisma.task_activities.create({
+          data: {
+            id: randomUUID(),
+            taskId,
+            userId: req.user!.id,
+            accion: "status_changed",
+            descripcion: `${req.user!.username} cambió el estado de ${task.estado} a ${estado}`,
+            metadata: JSON.stringify({ oldStatus: task.estado, newStatus: estado }),
+          } as any,
+        });
+      }
+      
+      res.json(updatedTask);
+    } catch (error: any) {
+      logger.error({ err: error }, "Error al mover tarea");
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ==================== ANALYTICS ====================
+  
+  /**
+   * GET /api/tasks/analytics/overview
+   * Obtener estadísticas generales de tareas
+   */
+  app.get("/api/tasks/analytics/overview", authenticateToken, async (req: Request, res: Response) => {
+    try {
+      const [
+        total,
+        pendientes,
+        enProgreso,
+        completadas,
+        vencidas,
+        porPrioridad,
+        porUsuario,
+      ] = await Promise.all([
+        prisma.tasks.count({ where: { is_archived: false } }),
+        prisma.tasks.count({ where: { estado: "PENDIENTE", is_archived: false } }),
+        prisma.tasks.count({ where: { estado: "EN_PROGRESO", is_archived: false } }),
+        prisma.tasks.count({ where: { estado: "COMPLETADA", is_archived: false } }),
+        prisma.tasks.count({
+          where: {
+            fecha_vencimiento: { lt: new Date() },
+            estado: { not: "COMPLETADA" },
+            is_archived: false,
+          },
+        }),
+        prisma.tasks.groupBy({
+          by: ["prioridad"],
+          where: { is_archived: false },
+          _count: true,
+        }),
+        prisma.tasks.groupBy({
+          by: ["asignado_a"],
+          where: { is_archived: false, asignado_a: { not: null } },
+          _count: true,
+        }),
+      ]);
+      
+      res.json({
+        total,
+        porEstado: {
+          pendientes,
+          enProgreso,
+          completadas,
+          vencidas,
+        },
+        porPrioridad: porPrioridad.map(p => ({
+          prioridad: p.prioridad,
+          count: p._count,
+        })),
+        porUsuario: porUsuario.map(u => ({
+          userId: u.asignado_a,
+          count: u._count,
+        })),
+      });
+    } catch (error: any) {
+      logger.error({ err: error }, "Error al obtener analytics");
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  logger.info("🚀 Epic Tasks routes registered successfully");
+}

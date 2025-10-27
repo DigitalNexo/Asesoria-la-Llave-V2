@@ -1,0 +1,518 @@
+// PDF generator helper for budgets using Puppeteer.
+import path from 'path';
+import fs from 'fs';
+import puppeteer from 'puppeteer';
+import { PrismaClient } from '@prisma/client';
+import { prepareBudgetData, replaceTemplateVariables } from './template-variables';
+
+const prisma = new PrismaClient();
+
+export async function createBudgetPdf(budget: any): Promise<{ filename: string; url: string }> {
+  const uploadsDir = path.join(process.cwd(), 'uploads', 'budgets');
+  if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+
+  const filename = `${(budget.code || 'budget').replace(/[^a-zA-Z0-9-_\.]/g, '_')}-${Date.now()}.pdf`;
+  const filepath = path.join(uploadsDir, filename);
+
+  const html = await renderBudgetHtml(budget);
+
+  let browser: any = null;
+  try {
+    browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+    const page = await browser.newPage();
+    await page.setContent(html, { waitUntil: 'networkidle0' });
+    await page.pdf({ path: filepath, format: 'A4', printBackground: true, margin: { top: '20mm', bottom: '20mm', left: '12mm', right: '12mm' } });
+    const url = `/uploads/budgets/${filename}`;
+    return { filename, url };
+  } catch (err) {
+    console.warn('createBudgetPdf failed, falling back to placeholder', err);
+    // fallback: create a tiny placeholder PDF so caller can continue
+    try {
+      fs.writeFileSync(filepath, Buffer.from('%PDF-1.4\n%placeholder PDF'), { encoding: 'utf-8' });
+      return { filename, url: `/uploads/budgets/${filename}` };
+    } catch (err2) {
+      throw err;
+    }
+  } finally {
+    if (browser) await browser.close();
+  }
+}
+
+async function renderBudgetHtml(budget: any) {
+  // Intentar cargar plantilla de la BD
+  const template = await prisma.budgetTemplate.findFirst({
+    where: {
+      type: budget.type,
+      companyBrand: budget.companyBrand || 'LA_LLAVE',
+      isDefault: true,
+      isActive: true
+    }
+  });
+
+  // Si existe plantilla personalizada, usarla
+  if (template) {
+    const budgetData = prepareBudgetData(budget);
+    let html = replaceTemplateVariables(template.htmlContent, budgetData);
+    
+    // Agregar CSS personalizado si existe
+    if (template.customCss) {
+      html = `<style>${template.customCss}</style>${html}`;
+    }
+    
+    // Envolver en estructura HTML básica si no tiene
+    if (!html.toLowerCase().includes('<!doctype') && !html.toLowerCase().includes('<html')) {
+      html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; padding: 20px; }
+  </style>
+</head>
+<body>
+  ${html}
+</body>
+</html>`;
+    }
+    
+    return html;
+  }
+  
+  // Fallback: usar plantilla hardcodeada antigua
+  return renderLegacyBudgetHtml(budget);
+}
+
+function renderLegacyBudgetHtml(budget: any) {
+  // Determinar qué empresa usar (PRIMERO - antes de usar companyColor)
+  const isGestoriaOnline = budget.companyBrand === 'GESTORIA_ONLINE';
+  const companyName = isGestoriaOnline ? 'GESTORÍA ONLINE' : 'ASESORÍA LA LLAVE';
+  const companyAddress = isGestoriaOnline 
+    ? 'C/ Ejemplo, 123 - 28000 Madrid' 
+    : 'C/ Leganés, 17 - 28901 Getafe (Madrid)';
+  const companyPhone = isGestoriaOnline ? '91 XXX XX XX' : '91 238 99 60';
+  const companyEmail = isGestoriaOnline ? 'info@gestoriaonline.com' : 'info@asesorialallave.com';
+  const companyWeb = isGestoriaOnline ? 'www.gestoriaonline.com' : 'www.asesorialallave.com';
+  const companyColor = isGestoriaOnline ? '#1a7f64' : '#2E5C8A'; // Verde para Gestoría, Azul para Asesoría
+
+  const items = Array.isArray(budget.items) ? budget.items : [];
+  
+  // Agrupar items por categoría
+  const categories = new Map<string, any[]>();
+  items.forEach((item: any) => {
+    const cat = item.category || 'OTROS';
+    if (!categories.has(cat)) {
+      categories.set(cat, []);
+    }
+    categories.get(cat)!.push(item);
+  });
+
+  // Nombres legibles para categorías
+  const categoryNames: Record<string, string> = {
+    BASE_CONTABILIDAD: 'Contabilidad Base',
+    BASE_HEREDEROS: 'Herederos',
+    BASE_FINCAS_COMUNIDAD: 'Fincas Comunidad Autónoma',
+    BASE_FINCAS_OTRAS: 'Fincas Otras CCAA',
+    BASE_PRODUCTOS: 'Productos Financieros',
+    BASE_VEHICULOS: 'Vehículos',
+    BASE_RENTA: 'Declaración de Renta',
+    SERVICIO_PLUSVALIAS: 'Plusvalías',
+    SERVICIO_REGISTROS: 'Registros',
+    EXTRA_AUTONOMO: 'Actividad Económica',
+    EXTRA_INMUEBLES_ALQ: 'Inmuebles Alquilados',
+    EXTRA_VENTA_INMUEBLES: 'Venta de Inmuebles',
+    EXTRA_VENTA_FINANCIEROS: 'Venta de Productos Financieros',
+    EXTRA_OTRAS_GANANCIAS: 'Otras Ganancias',
+    EXTRA_IRPF: 'IRPF Alquileres',
+    EXTRA_IVA_INTRA: 'IVA Intracomunitario',
+    EXTRA_NOTIFICACIONES: 'Notificaciones',
+    EXTRA_INE: 'Estadísticas INE',
+    NOMINAS: 'Nóminas',
+    RECARGO_FACTURACION: 'Recargo por Facturación',
+    RECARGO_MENSUALIDAD: 'Liquidaciones Mensuales',
+    RECARGO_ESN: 'Estimación Simplificada Neta',
+    RECARGO_CAUDAL: 'Recargo Caudal Hereditario',
+    RECARGO_SIN_TESTAMENTO: 'Sin Testamento',
+    RECARGO_SIN_ACUERDO: 'Sin Acuerdo Herederos',
+    RECARGO_ESCRITURAR: 'Escrituración',
+    DESCUENTO_MODULOS: 'Descuento Módulos',
+    DESCUENTO_EMPRENDEDOR: 'Descuento Emprendedor',
+    DESCUENTO_COMERCIAL: 'Descuento Comercial',
+    OTROS: 'Otros Conceptos'
+  };
+
+  // Generar filas agrupadas por categoría
+  let tableRows = '';
+  categories.forEach((categoryItems, categoryKey) => {
+    const categoryName = categoryNames[categoryKey] || categoryKey;
+    
+    // Fila de encabezado de categoría
+    tableRows += `
+      <tr style="background-color:#E8F4FD">
+        <td colspan="4" style="padding:8px 12px;border:1px solid ${companyColor};font-weight:700;color:#1a365d;font-size:11px">
+          ${escapeHtml(categoryName)}
+        </td>
+      </tr>
+    `;
+    
+    // Filas de items de esta categoría
+    categoryItems.forEach((it: any) => {
+      tableRows += `
+        <tr>
+          <td style="padding:6px 12px 6px 24px;border:1px solid ${companyColor};font-size:10px">${escapeHtml(it.concept || '')}</td>
+          <td style="padding:6px 8px;border:1px solid ${companyColor};text-align:right;font-size:10px">${Number(it.quantity || 1).toFixed(0)}</td>
+          <td style="padding:6px 8px;border:1px solid ${companyColor};text-align:right;font-size:10px">${Number(it.unitPrice || 0).toFixed(2)} €</td>
+          <td style="padding:6px 8px;border:1px solid ${companyColor};text-align:right;font-weight:600;font-size:10px">${Number(it.total || 0).toFixed(2)} €</td>
+        </tr>
+      `;
+    });
+  });
+
+  // Obtener el nombre del tipo de presupuesto
+  const typeNames: Record<string, string> = {
+    PYME: 'PYMES / EMPRESAS',
+    AUTONOMO: 'AUTÓNOMOS',
+    RENTA: 'DECLARACIÓN DE RENTA',
+    HERENCIAS: 'HERENCIAS Y DONACIONES',
+    GENERAL: 'GENERAL'
+  };
+  const typeName = typeNames[budget.type] || budget.type || 'GENERAL';
+
+  const formatDate = (date: any) => {
+    const d = new Date(date || Date.now());
+    const day = String(d.getDate()).padStart(2, '0');
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const year = d.getFullYear();
+    return `${day}/${month}/${year}`;
+  };
+
+  return `
+  <!doctype html>
+  <html>
+    <head>
+      <meta charset="utf-8" />
+      <meta name="viewport" content="width=device-width,initial-scale=1" />
+      <style>
+        @page { 
+          margin: 0; 
+          size: A4;
+        }
+        body { 
+          font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+          color: #000000; 
+          line-height: 1.3;
+          margin: 0;
+          padding: 0;
+          font-size: 10px;
+        }
+        .page {
+          padding: 15mm 12mm 15mm 12mm;
+          background: white;
+        }
+        .header-blue { 
+          background: linear-gradient(135deg, ${companyColor} 0%, ${companyColor}dd 100%);
+          color: white;
+          padding: 20px 25px;
+          margin: -15mm -12mm 15px -12mm;
+          box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .header-content {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+        }
+        .company-name { 
+          font-weight: 700; 
+          font-size: 24px;
+          letter-spacing: 0.5px;
+          margin-bottom: 3px;
+        }
+        .company-info {
+          font-size: 9px;
+          opacity: 0.95;
+          line-height: 1.4;
+        }
+        .budget-type {
+          text-align: right;
+          font-size: 16px;
+          font-weight: 700;
+          letter-spacing: 1px;
+        }
+        .budget-number {
+          font-size: 11px;
+          opacity: 0.9;
+          margin-top: 4px;
+        }
+        .section-title {
+          background: ${companyColor};
+          color: white;
+          padding: 8px 12px;
+          font-weight: 700;
+          font-size: 11px;
+          margin: 15px 0 8px 0;
+          letter-spacing: 0.3px;
+        }
+        .info-box {
+          border: 1px solid ${companyColor};
+          padding: 10px 12px;
+          margin-bottom: 12px;
+          background: #F8FBFE;
+        }
+        .info-row {
+          display: flex;
+          margin-bottom: 4px;
+          font-size: 10px;
+        }
+        .info-label {
+          font-weight: 600;
+          width: 120px;
+          color: ${companyColor};
+        }
+        .info-value {
+          flex: 1;
+          color: #000;
+        }
+        table { 
+          border-collapse: collapse; 
+          width: 100%;
+          margin-bottom: 15px;
+          font-size: 10px;
+        }
+        th {
+          background: ${companyColor};
+          color: white;
+          padding: 8px 12px;
+          text-align: left;
+          font-weight: 700;
+          font-size: 10px;
+          border: 1px solid #1a4d7a;
+        }
+        td {
+          border: 1px solid ${companyColor};
+          padding: 6px 12px;
+        }
+        .totals-table {
+          width: 300px;
+          margin-left: auto;
+          margin-top: 15px;
+          border: 2px solid ${companyColor};
+        }
+        .totals-table td {
+          padding: 8px 12px;
+          font-size: 11px;
+        }
+        .totals-table .label {
+          background: #E8F4FD;
+          font-weight: 600;
+          color: ${companyColor};
+          width: 150px;
+        }
+        .totals-table .amount {
+          text-align: right;
+          font-weight: 700;
+          background: white;
+        }
+        .total-final {
+          background: ${companyColor} !important;
+          color: white !important;
+          font-size: 13px !important;
+          font-weight: 700 !important;
+        }
+        .terms {
+          margin-top: 20px;
+          padding: 12px;
+          border: 1px solid #CBD5E0;
+          background: #F7FAFC;
+          font-size: 8px;
+          line-height: 1.5;
+        }
+        .terms-title {
+          font-weight: 700;
+          font-size: 9px;
+          margin-bottom: 6px;
+          color: ${companyColor};
+          text-transform: uppercase;
+        }
+        .terms ul {
+          margin: 6px 0;
+          padding-left: 18px;
+        }
+        .terms li {
+          margin-bottom: 3px;
+        }
+        .footer {
+          margin-top: 20px;
+          padding-top: 12px;
+          border-top: 2px solid ${companyColor};
+          text-align: center;
+          font-size: 9px;
+          color: #4A5568;
+        }
+        .acceptance-box {
+          margin-top: 15px;
+          padding: 12px;
+          border: 2px solid ${companyColor};
+          background: #F0F7FF;
+        }
+        .acceptance-title {
+          font-weight: 700;
+          color: ${companyColor};
+          margin-bottom: 8px;
+          font-size: 10px;
+        }
+        .signature-line {
+          margin-top: 30px;
+          padding-top: 8px;
+          border-top: 1px solid #000;
+          width: 250px;
+          text-align: center;
+          font-size: 9px;
+        }
+      </style>
+    </head>
+    <body>
+      <div class="page">
+        <!-- CABECERA AZUL -->
+        <div class="header-blue">
+          <div class="header-content">
+            <div>
+              <div class="company-name">${escapeHtml(companyName)}</div>
+              <div class="company-info">
+                ${escapeHtml(companyAddress)}<br>
+                Tel: ${escapeHtml(companyPhone)} | Email: ${escapeHtml(companyEmail)}<br>
+                ${escapeHtml(companyWeb)}
+              </div>
+            </div>
+            <div class="budget-type">
+              PRESUPUESTO<br>${typeName}
+              <div class="budget-number">Nº ${escapeHtml(budget.code || '')}</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- INFORMACIÓN DEL PRESUPUESTO -->
+        <div class="info-box">
+          <div class="info-row">
+            <div class="info-label">Fecha Emisión:</div>
+            <div class="info-value">${formatDate(budget.date)}</div>
+          </div>
+          ${budget.expiresAt ? `
+          <div class="info-row">
+            <div class="info-label">Válido Hasta:</div>
+            <div class="info-value">${formatDate(budget.expiresAt)}</div>
+          </div>
+          ` : ''}
+        </div>
+
+        <!-- DATOS DEL CLIENTE -->
+        <div class="section-title">DATOS DEL CLIENTE</div>
+        <div class="info-box">
+          <div class="info-row">
+            <div class="info-label">Cliente:</div>
+            <div class="info-value"><strong>${escapeHtml(budget.clientName || '')}</strong></div>
+          </div>
+          ${budget.clientEmail ? `
+          <div class="info-row">
+            <div class="info-label">Email:</div>
+            <div class="info-value">${escapeHtml(budget.clientEmail)}</div>
+          </div>
+          ` : ''}
+          ${budget.clientPhone ? `
+          <div class="info-row">
+            <div class="info-label">Teléfono:</div>
+            <div class="info-value">${escapeHtml(budget.clientPhone)}</div>
+          </div>
+          ` : ''}
+          ${budget.clientAddress ? `
+          <div class="info-row">
+            <div class="info-label">Dirección:</div>
+            <div class="info-value">${escapeHtml(budget.clientAddress)}</div>
+          </div>
+          ` : ''}
+        </div>
+
+        <!-- DETALLE DE SERVICIOS -->
+        <div class="section-title">DETALLE DE SERVICIOS</div>
+        <table>
+          <thead>
+            <tr>
+              <th style="width:auto">CONCEPTO</th>
+              <th style="width:70px;text-align:right">CANT.</th>
+              <th style="width:90px;text-align:right">PRECIO UNIT.</th>
+              <th style="width:90px;text-align:right">TOTAL</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${tableRows || '<tr><td colspan="4" style="text-align:center;padding:20px;color:#718096">No hay items en este presupuesto</td></tr>'}
+          </tbody>
+        </table>
+
+        <!-- TOTALES -->
+        <table class="totals-table">
+          <tr>
+            <td class="label">SUBTOTAL (Base Imponible):</td>
+            <td class="amount">${Number(budget.subtotal || 0).toFixed(2)} €</td>
+          </tr>
+          <tr>
+            <td class="label">I.V.A. (21%):</td>
+            <td class="amount">${Number(budget.vatTotal || 0).toFixed(2)} €</td>
+          </tr>
+          <tr>
+            <td class="label total-final">TOTAL PRESUPUESTO:</td>
+            <td class="amount total-final">${Number(budget.total || 0).toFixed(2)} €</td>
+          </tr>
+        </table>
+
+        ${budget.notes ? `
+        <div class="info-box" style="background:#FFFBEB;border-color:#F59E0B">
+          <div style="font-weight:600;color:#92400E;margin-bottom:6px;font-size:10px">OBSERVACIONES:</div>
+          <div style="color:#78350F;font-size:9px;line-height:1.5">${escapeHtml(budget.notes)}</div>
+        </div>
+        ` : ''}
+
+        <!-- TÉRMINOS Y CONDICIONES -->
+        <div class="terms">
+          <div class="terms-title">Condiciones del Presupuesto</div>
+          <ul>
+            <li><strong>Validez:</strong> Este presupuesto tiene una validez de ${budget.expiresAt ? '30 días desde su emisión' : 'un mes desde la fecha de emisión'}.</li>
+            <li><strong>Forma de Pago:</strong> Domiciliación bancaria mensual. Los servicios se facturarán mensualmente por anticipado.</li>
+            <li><strong>Servicios Incluidos:</strong> Los servicios detallados en este presupuesto incluyen la gestión, tramitación y asesoramiento necesarios.</li>
+            <li><strong>Precios:</strong> Todos los precios incluyen IVA. Los precios podrán ser revisados anualmente según IPC.</li>
+            <li><strong>Documentación:</strong> El cliente se compromete a facilitar toda la documentación necesaria en tiempo y forma.</li>
+            <li><strong>Inicio de Servicios:</strong> Los servicios comenzarán una vez firmado el presente presupuesto y recibida la documentación inicial.</li>
+          </ul>
+        </div>
+
+        <!-- ACEPTACIÓN -->
+        <div class="acceptance-box">
+          <div class="acceptance-title">ACEPTACIÓN DEL PRESUPUESTO</div>
+          <p style="margin:0 0 8px 0;font-size:9px">
+            Para aceptar este presupuesto, por favor firme y devuelva este documento, o bien confirme su aceptación 
+            mediante correo electrónico a info@asesorialallave.com
+          </p>
+          <div style="margin-top:15px;display:flex;justify-content:space-between">
+            <div style="width:45%">
+              <div class="signature-line">Firma del Cliente</div>
+            </div>
+            <div style="width:45%">
+              <div class="signature-line">Fecha de Aceptación</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- PIE DE PÁGINA -->
+        <div class="footer">
+          <strong>${escapeHtml(companyName)}</strong> | ${escapeHtml(companyAddress)} | Tel: ${escapeHtml(companyPhone)}<br>
+          Email: ${escapeHtml(companyEmail)} | ${escapeHtml(companyWeb)}<br>
+          <span style="font-size:8px">Documento generado electrónicamente - ${formatDate(new Date())}</span>
+        </div>
+      </div>
+    </body>
+  </html>
+  `;
+}
+
+function escapeHtml(input: string) {
+  return String(input || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;');
+}
+

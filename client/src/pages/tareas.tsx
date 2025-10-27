@@ -16,12 +16,16 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/contexts/auth-context";
 import type { Task, Client, User } from "@shared/schema";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { TaskDetailModal } from "@/components/tasks/TaskDetailModal";
+import { KanbanBoard } from "@/components/tasks/KanbanBoard";
 
 export default function Tareas() {
   const { toast } = useToast();
   const { user } = useAuth();
   const [view, setView] = useState<"table" | "kanban">("table");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [formData, setFormData] = useState({
     titulo: "",
     descripcion: "",
@@ -90,6 +94,11 @@ export default function Tareas() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     createMutation.mutate(formData);
+  };
+
+  const handleTaskClick = (task: Task) => {
+    setSelectedTask(task);
+    setIsDetailModalOpen(true);
   };
 
   const getPrioridadBadge = (prioridad: string) => {
@@ -298,7 +307,12 @@ export default function Tareas() {
                   </TableRow>
                 ) : (
                   visibleTasks.map((task) => (
-                    <TableRow key={task.id} data-testid={`row-task-${task.id}`}>
+                    <TableRow 
+                      key={task.id} 
+                      data-testid={`row-task-${task.id}`}
+                      className="cursor-pointer hover:bg-muted/50"
+                      onClick={() => handleTaskClick(task)}
+                    >
                       <TableCell className="font-medium">
                         <div className="flex items-center gap-2">
                           {task.visibilidad === "PERSONAL" && <Lock className="h-3 w-3 text-muted-foreground" />}
@@ -312,7 +326,7 @@ export default function Tareas() {
                       <TableCell>
                         {task.fechaVencimiento ? new Date(task.fechaVencimiento).toLocaleDateString() : "-"}
                       </TableCell>
-                      <TableCell className="text-right">
+                      <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
                         <Select value={task.estado} onValueChange={(value) => updateEstadoMutation.mutate({ id: task.id, estado: value })}>
                           <SelectTrigger className="w-[140px]" data-testid={`select-estado-${task.id}`}>
                             <SelectValue />
@@ -332,57 +346,24 @@ export default function Tareas() {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-6 md:grid-cols-3">
-          {kanbanColumns.map((column) => {
-            const columnTasks = visibleTasks.filter((task) => task.estado === column.id);
-            return (
-              <Card key={column.id}>
-                <CardHeader>
-                  <CardTitle className="text-lg flex items-center justify-between">
-                    {column.title}
-                    <Badge variant="secondary">{columnTasks.length}</Badge>
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  {columnTasks.length === 0 ? (
-                    <p className="text-sm text-muted-foreground text-center py-8">
-                      No hay tareas
-                    </p>
-                  ) : (
-                    columnTasks.map((task) => (
-                      <Card key={task.id} className="hover-elevate cursor-pointer" data-testid={`card-task-${task.id}`}>
-                        <CardContent className="p-4 space-y-2">
-                          <div className="flex items-start justify-between gap-2">
-                            <h4 className="font-medium flex items-center gap-2">
-                              {task.visibilidad === "PERSONAL" && <Lock className="h-3 w-3" />}
-                              {task.titulo}
-                            </h4>
-                            {getPrioridadBadge(task.prioridad)}
-                          </div>
-                          {task.descripcion && (
-                            <p className="text-sm text-muted-foreground line-clamp-2">{task.descripcion}</p>
-                          )}
-                          {task.client && (
-                            <p className="text-xs text-muted-foreground">Cliente: {task.client.razonSocial}</p>
-                          )}
-                          {task.assignedUser && (
-                            <p className="text-xs text-muted-foreground">Asignado: {task.assignedUser.username}</p>
-                          )}
-                          {task.fechaVencimiento && (
-                            <p className="text-xs text-muted-foreground">
-                              Vence: {new Date(task.fechaVencimiento).toLocaleDateString()}
-                            </p>
-                          )}
-                        </CardContent>
-                      </Card>
-                    ))
-                  )}
-                </CardContent>
-              </Card>
-            );
-          })}
-        </div>
+        <KanbanBoard
+          onTaskClick={handleTaskClick}
+          clients={clients}
+          users={users}
+        />
       )}
+
+      {/* Task Detail Modal */}
+      <TaskDetailModal
+        task={selectedTask}
+        isOpen={isDetailModalOpen}
+        onClose={() => {
+          setIsDetailModalOpen(false);
+          setSelectedTask(null);
+        }}
+        clients={clients}
+        users={users}
+      />
     </div>
   );
 }

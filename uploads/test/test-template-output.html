@@ -1,0 +1,180 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    body {
+      font-family: 'Arial', sans-serif;
+      color: #333;
+      line-height: 1.6;
+      margin: 0;
+      padding: 0;
+    }
+    .header {
+      background-color: #2E5C8A;
+      color: white;
+      padding: 30px;
+      text-align: center;
+    }
+    .header h1 {
+      margin: 0;
+      font-size: 28px;
+    }
+    .content {
+      padding: 40px;
+    }
+    .info-section {
+      margin-bottom: 30px;
+    }
+    .info-section h2 {
+      color: #2E5C8A;
+      border-bottom: 2px solid #2E5C8A;
+      padding-bottom: 10px;
+      font-size: 20px;
+    }
+    .info-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 15px;
+      margin-top: 15px;
+    }
+    .info-item {
+      padding: 10px;
+      background-color: #f8f9fa;
+      border-radius: 5px;
+    }
+    .info-item label {
+      font-weight: bold;
+      color: #2E5C8A;
+      display: block;
+      margin-bottom: 5px;
+    }
+    .total-section {
+      background-color: #2E5C8A;
+      color: white;
+      padding: 20px;
+      margin-top: 30px;
+      border-radius: 5px;
+    }
+    .total-section h3 {
+      margin: 0 0 15px 0;
+      font-size: 22px;
+    }
+    .total-item {
+      display: flex;
+      justify-content: space-between;
+      padding: 8px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.3);
+    }
+    .total-item:last-child {
+      border-bottom: none;
+      font-size: 20px;
+      font-weight: bold;
+      padding-top: 15px;
+    }
+    .footer {
+      text-align: center;
+      padding: 20px;
+      background-color: #f8f9fa;
+      color: #666;
+      font-size: 12px;
+      margin-top: 40px;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>Asesoría La Llave</h1>
+    <p style="margin: 10px 0 0 0; font-size: 16px;">PRESUPUESTO PYME</p>
+  </div>
+
+  <div class="content">
+    <div class="info-section">
+      <h2>Datos del Presupuesto</h2>
+      <div class="info-grid">
+        <div class="info-item">
+          <label>Código:</label>
+          <span>PYME-2025-001</span>
+        </div>
+        <div class="info-item">
+          <label>Fecha:</label>
+          <span>25/10/2025</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="info-section">
+      <h2>Datos del Cliente</h2>
+      <div class="info-grid">
+        <div class="info-item">
+          <label>Nombre de Contacto:</label>
+          <span>Juan Pérez García</span>
+        </div>
+        <div class="info-item">
+          <label>Email:</label>
+          <span>juan.perez@empresa.com</span>
+        </div>
+        <div class="info-item">
+          <label>Teléfono:</label>
+          <span>666 777 888</span>
+        </div>
+        <div class="info-item">
+          <label>Nombre de la Sociedad:</label>
+          <span>Tecnologías Avanzadas SL</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="info-section">
+      <h2>Datos Fiscales y Contables</h2>
+      <div class="info-grid">
+        <div class="info-item">
+          <label>Actividad:</label>
+          <span>Desarrollo de software</span>
+        </div>
+        <div class="info-item">
+          <label>Periodo de Declaraciones:</label>
+          <span>Trimestral</span>
+        </div>
+        <div class="info-item">
+          <label>Número de Asientos:</label>
+          <span>50</span>
+        </div>
+        <div class="info-item">
+          <label>Nóminas al Mes:</label>
+          <span>5</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="info-section">
+      <h2>Descripción</h2>
+      <p style="padding: 15px; background-color: #f8f9fa; border-radius: 5px;">
+        Contabilidad mensual y declaraciones trimestrales para PYME del sector servicios
+      </p>
+    </div>
+
+    <div class="total-section">
+      <h3>Resumen Económico</h3>
+      <div class="total-item">
+        <span>Subtotal:</span>
+        <span>150,00 €</span>
+      </div>
+      <div class="total-item">
+        <span>IVA (21%):</span>
+        <span>31,50 €</span>
+      </div>
+      <div class="total-item">
+        <span>TOTAL:</span>
+        <span>181,50 €</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <p>Asesoría La Llave - Presupuesto generado automáticamente</p>
+    <p>Para más información, contacte con nosotros</p>
+  </div>
+</body>
+</html>

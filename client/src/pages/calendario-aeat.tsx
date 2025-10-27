@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { TAX_MODEL_METADATA } from "@shared/tax-rules";
-import { CalendarDays, Filter, Plus, RotateCcw, Search, Trash2, KanbanSquare, FileText, AlertTriangle, AlarmClock, Clock3, Timer, CheckCircle2, XCircle } from "lucide-react";
+import { CalendarDays, Filter, Plus, RotateCcw, Search, Trash2, KanbanSquare, FileText, AlertTriangle, AlarmClock, Clock3, Timer, CheckCircle2, XCircle, Calendar, List, TrendingUp, Download, Sparkles } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
@@ -29,6 +29,7 @@ type Periodicity = "TODAS" | "MENSUAL" | "TRIMESTRAL" | "ANUAL" | "ESPECIAL";
 
 export default function CalendarioAEATPage() {
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const currentYear = new Date().getFullYear();
   const [year, setYear] = useState<number>(currentYear);
   const [periodicity, setPeriodicity] = useState<Periodicity>("TODAS");
@@ -40,6 +41,7 @@ export default function CalendarioAEATPage() {
   const [draft, setDraft] = useState<Record<string, { startDate?: string; endDate?: string }>>({});
   const [sortKey, setSortKey] = useState<"model"|"period"|"start"|"end">("end");
   const [sortDir, setSortDir] = useState<"asc"|"desc">("asc");
+  const [viewMode, setViewMode] = useState<"list" | "calendar">("calendar");
 
   const { data: rows = [], refetch } = useQuery<Row[]>({
     queryKey: ["/api/tax/calendar", year, periodicity, model, statusFilter],
@@ -266,15 +268,39 @@ export default function CalendarioAEATPage() {
         try { const j = await res.json(); detail = j?.error || ""; } catch {}
         throw new Error(detail || (res.status === 409 ? "Periodo duplicado (Modelo/Periodo/Año)" : "No se pudo crear el periodo"));
       }
+      
+      // Limpiar formulario y cerrar dialog
       setIsDialogOpen(false);
       setForm({ modelCode: "", period: "", startDate: "", endDate: "" });
-      toast({ title: "Periodo creado" });
-      // Ajustar filtro para asegurar que el nuevo periodo se vea
+      
+      // Ajustar filtros para mostrar el nuevo periodo
       const p = payload.period;
-      if (p === 'ANUAL') setPeriodicity('ANUAL');
-      else if (/^[1234]T$/.test(p)) setPeriodicity('TRIMESTRAL');
-      else if (/^M\d{2}$/.test(p)) setPeriodicity('MENSUAL');
-      refetch();
+      const m = payload.modelCode;
+      
+      // Ajustar periodicidad para que sea visible
+      if (p === 'ANUAL') {
+        setPeriodicity('ANUAL');
+      } else if (/^[1234]T$/.test(p)) {
+        setPeriodicity('TRIMESTRAL');
+      } else if (/^M(04|10|12)$/.test(p)) {
+        setPeriodicity('ESPECIAL');
+      } else if (/^M\d{2}$/.test(p)) {
+        setPeriodicity('MENSUAL');
+      } else {
+        setPeriodicity('TODAS'); // Mostrar todas si no encaja en ninguna categoría
+      }
+      
+      // Ajustar modelo para que sea visible
+      setModel(m);
+      
+      // Resetear filtro de estado a TODOS para ver el nuevo periodo
+      setStatusFilter('TODOS');
+      
+      toast({ title: "Periodo creado", description: `${m} ${humanPeriod(p)}/${year}` });
+      
+      // Invalidar cache y refrescar
+      await queryClient.invalidateQueries({ queryKey: ["/api/tax/calendar"] });
+      await refetch();
     } catch (e: any) {
       toast({ title: "Error", description: e?.message ?? "", variant: "destructive" });
     }

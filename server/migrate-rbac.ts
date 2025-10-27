@@ -91,7 +91,7 @@ async function migrateRBAC() {
     const createdPermissions: Record<string, any> = {};
     
     for (const perm of PERMISSIONS) {
-      const permission = await prisma.permission.upsert({
+      const permission = await prisma.permissions.upsert({
         where: {
           resource_action: {
             resource: perm.resource,
@@ -110,7 +110,7 @@ async function migrateRBAC() {
     const createdRoles: Record<string, any> = {};
 
     for (const roleData of SYSTEM_ROLES) {
-      const role = await prisma.role.upsert({
+      const role = await prisma.roles.upsert({
         where: { name: roleData.name },
         update: {
           description: roleData.description,
@@ -127,7 +127,7 @@ async function migrateRBAC() {
       console.log(`  ✓ ${roleData.name}`);
 
       // 3. Eliminar permisos antiguos y crear nuevos
-      await prisma.rolePermission.deleteMany({
+      await prisma.role_permissions.deleteMany({
         where: { roleId: role.id },
       });
 
@@ -142,7 +142,7 @@ async function migrateRBAC() {
         .filter(Boolean);
 
       if (rolePermissions.length > 0) {
-        await prisma.rolePermission.createMany({
+        await prisma.role_permissions.createMany({
           data: rolePermissions as any[],
           skipDuplicates: true,
         });

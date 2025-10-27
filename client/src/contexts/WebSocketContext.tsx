@@ -59,6 +59,7 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
         socket.close();
         setSocket(null);
         setConnected(false);
+        setOnlineUsers(0); // Resetear contador
       }
       return;
     }
@@ -73,11 +74,36 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
     newSocket.on("connect", () => {
       console.log("WebSocket conectado");
       setConnected(true);
+      
+      // Solicitar el número actual de usuarios conectados
+      newSocket.emit("get:online-count");
     });
 
-    newSocket.on("disconnect", () => {
-      console.log("WebSocket desconectado");
+    newSocket.on("disconnect", (reason) => {
+      console.log(`WebSocket desconectado - Razón: ${reason}`);
       setConnected(false);
+      
+      // Solo resetear contador si es una desconexión real
+      const isTemporaryDisconnect = reason === 'io client disconnect' || 
+                                   reason === 'io server disconnect' ||
+                                   reason === 'ping timeout';
+      
+      if (!isTemporaryDisconnect) {
+        setOnlineUsers(0);
+      }
+    });
+
+    // Manejar heartbeat del servidor
+    newSocket.on("heartbeat", (data) => {
+      console.log("💓 Heartbeat recibido:", data);
+      // Responder al heartbeat para mantener la sesión activa
+      newSocket.emit("heartbeat-response", { timestamp: Date.now() });
+    });
+
+    // Escuchar respuesta del servidor con el conteo actual
+    newSocket.on("online-count", (count: number) => {
+      console.log(`Usuarios conectados: ${count}`);
+      setOnlineUsers(count);
     });
 
     // Escuchar notificaciones
@@ -92,19 +118,59 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
       });
     });
 
-    // Escuchar usuarios conectados/desconectados
+    // Escuchar usuarios conectados/desconectados (mantener para compatibilidad)
     newSocket.on("user:connected", () => {
-      setOnlineUsers(prev => prev + 1);
+      console.log("Usuario conectado");
+      // El conteo se actualizará automáticamente con el evento online-count
     });
 
     newSocket.on("user:disconnected", () => {
-      setOnlineUsers(prev => Math.max(0, prev - 1));
+      console.log("Usuario desconectado");
+      // El conteo se actualizará automáticamente con el evento online-count
+    });
+
+    // Escuchar notificaciones de sesiones (solo para administradores)
+    newSocket.on("session:new", (data) => {
+      console.log("Nueva sesión detectada:", data);
+      toast({
+        title: "Nueva Sesión",
+        description: `Usuario ${data.username} se conectó desde ${data.ip}`,
+        variant: "default",
+      });
+    });
+
+    newSocket.on("session:update", (data) => {
+      console.log("Sesión actualizada:", data);
+    });
+
+    newSocket.on("sessions:terminated", (data) => {
+      console.log("Sesiones terminadas:", data);
+      toast({
+        title: "Sesiones Terminadas",
+        description: `Se terminaron ${data.count} sesiones del usuario`,
+        variant: "default",
+      });
+    });
+
+    // Manejar terminación de sesión por administrador
+    newSocket.on("session:terminated", (data) => {
+      console.log("Sesión terminada por administrador:", data);
+      toast({
+        title: "Sesión Terminada",
+        description: data.message || "Tu sesión ha sido terminada por un administrador",
+        variant: "destructive",
+      });
+      
+      // Limpiar token y redirigir al login
+      localStorage.removeItem("token");
+      window.location.href = "/";
     });
 
     // Manejar errores
     newSocket.on("connect_error", (error) => {
       console.error("Error de conexión WebSocket:", error);
       setConnected(false);
+      setOnlineUsers(0);
     });
 
     setSocket(newSocket);

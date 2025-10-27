@@ -71,7 +71,7 @@ async function runTaskReminders() {
     const nextWeek = addDays(new Date(), 7);
 
     // Obtener tareas que vencen en las próximas 24-48 horas
-    const upcomingTasks = await prisma.task.findMany({
+    const upcomingTasks = await prisma.tasks.findMany({
       where: {
         estado: { notIn: ["COMPLETADA"] },
         fechaVencimiento: {

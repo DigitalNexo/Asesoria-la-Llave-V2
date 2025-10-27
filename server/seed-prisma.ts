@@ -20,11 +20,11 @@ async function main() {
   console.log('ℹ️  Usuarios: Se crean automáticamente desde .env al iniciar servidor');
   
   // Obtener usuario administrador existente para asignar datos de ejemplo
-  const adminRole = await prisma.role.findFirst({
+  const adminRole = await prisma.roles.findFirst({
     where: { name: 'Administrador' }
   });
   
-  const existingAdmin = await prisma.user.findFirst({
+  const existingAdmin = await prisma.users.findFirst({
     where: { roleId: adminRole?.id }
   });
   
@@ -42,17 +42,17 @@ async function main() {
   await prisma.activityLog.deleteMany();
   await prisma.taxFile.deleteMany();
   await prisma.clientTax.deleteMany();
-  await prisma.taxPeriod.deleteMany();
+  await prisma.tax_periods.deleteMany();
   await prisma.taxModel.deleteMany();
-  await prisma.manual.deleteMany();
-  await prisma.task.deleteMany();
-  await prisma.client.deleteMany();
+  await prisma.manuals.deleteMany();
+  await prisma.tasks.deleteMany();
+  await prisma.clients.deleteMany();
   await prisma.smtpConfig.deleteMany();
   await prisma.jobRun.deleteMany();
 
   // ==================== CLIENTES ====================
   console.log('\n📋 Creando clientes...');
-  const client1 = await prisma.client.create({
+  const client1 = await prisma.clients.create({
     data: {
       razonSocial: 'Construcciones Pérez S.A.',
       nifCif: 'A98765432',
@@ -64,7 +64,7 @@ async function main() {
     },
   });
 
-  const client2 = await prisma.client.create({
+  const client2 = await prisma.clients.create({
     data: {
       razonSocial: 'Textiles Martínez',
       nifCif: 'B12345678',
@@ -76,7 +76,7 @@ async function main() {
     },
   });
 
-  const client3 = await prisma.client.create({
+  const client3 = await prisma.clients.create({
     data: {
       razonSocial: 'García López, Juan',
       nifCif: '12345678A',
@@ -88,7 +88,7 @@ async function main() {
     },
   });
 
-  const client4 = await prisma.client.create({
+  const client4 = await prisma.clients.create({
     data: {
       razonSocial: 'Servicios Informáticos SL',
       nifCif: 'B87654321',
@@ -100,7 +100,7 @@ async function main() {
     },
   });
 
-  const client5 = await prisma.client.create({
+  const client5 = await prisma.clients.create({
     data: {
       razonSocial: 'Rodríguez Sánchez, María',
       nifCif: '87654321B',
@@ -157,7 +157,7 @@ async function main() {
   console.log('\n📅 Creando periodos tributarios 2024 y 2025...');
   
   // 2024 - Trimestre 1
-  const period2024Q1 = await prisma.taxPeriod.create({
+  const period2024Q1 = await prisma.tax_periods.create({
     data: {
       modeloId: model303.id,
       anio: 2024,
@@ -168,7 +168,7 @@ async function main() {
   });
 
   // 2024 - Trimestre 2
-  const period2024Q2 = await prisma.taxPeriod.create({
+  const period2024Q2 = await prisma.tax_periods.create({
     data: {
       modeloId: model303.id,
       anio: 2024,
@@ -179,7 +179,7 @@ async function main() {
   });
 
   // 2024 - Trimestre 3
-  await prisma.taxPeriod.create({
+  await prisma.tax_periods.create({
     data: {
       modeloId: model303.id,
       anio: 2024,
@@ -190,7 +190,7 @@ async function main() {
   });
 
   // 2024 - Trimestre 4
-  await prisma.taxPeriod.create({
+  await prisma.tax_periods.create({
     data: {
       modeloId: model303.id,
       anio: 2024,
@@ -201,7 +201,7 @@ async function main() {
   });
 
   // 2025 - Trimestre 1
-  await prisma.taxPeriod.create({
+  await prisma.tax_periods.create({
     data: {
       modeloId: model303.id,
       anio: 2025,
@@ -236,7 +236,7 @@ async function main() {
 
   // ==================== TAREAS ====================
   console.log('\n✅ Creando tareas...');
-  await prisma.task.create({
+  await prisma.tasks.create({
     data: {
       titulo: 'Revisar declaración trimestral',
       descripcion: 'Revisar modelo 303 del primer trimestre para Construcciones Pérez',
@@ -249,7 +249,7 @@ async function main() {
     },
   });
 
-  await prisma.task.create({
+  await prisma.tasks.create({
     data: {
       titulo: 'Actualizar datos fiscales',
       descripcion: 'Actualizar información fiscal de Textiles Martínez',
@@ -262,7 +262,7 @@ async function main() {
     },
   });
 
-  await prisma.task.create({
+  await prisma.tasks.create({
     data: {
       titulo: 'Contactar cliente para documentación',
       descripcion: 'Solicitar facturas del trimestre a Juan García',
@@ -275,7 +275,7 @@ async function main() {
     },
   });
 
-  await prisma.task.create({
+  await prisma.tasks.create({
     data: {
       titulo: 'Preparar informe anual',
       descripcion: 'Elaborar informe anual de actividades para reunión de equipo',
@@ -287,7 +287,7 @@ async function main() {
     },
   });
 
-  await prisma.task.create({
+  await prisma.tasks.create({
     data: {
       titulo: 'Revisar procedimientos internos',
       descripcion: 'Actualizar manual de procedimientos de gestión documental',
@@ -303,7 +303,7 @@ async function main() {
 
   // ==================== MANUALES ====================
   console.log('\n📚 Creando manuales internos...');
-  await prisma.manual.create({
+  await prisma.manuals.create({
     data: {
       titulo: 'Procedimiento de Presentación de Modelos Fiscales',
       contenidoHtml: '<h2>Procedimiento Modelo 303</h2><p>Este manual describe el proceso completo para la presentación del modelo 303...</p>',
@@ -313,7 +313,7 @@ async function main() {
     },
   });
 
-  await prisma.manual.create({
+  await prisma.manuals.create({
     data: {
       titulo: 'Guía de Gestión Documental',
       contenidoHtml: '<h2>Sistema de Archivos</h2><p>Organización y gestión de documentación de clientes...</p>',

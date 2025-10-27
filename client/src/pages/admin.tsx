@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { useLocation } from 'wouter';
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Plus, Shield, Activity, Settings as SettingsIcon, Users as UsersIcon, Edit, Trash2, Lock, Mail, RefreshCw, RotateCcw, Download, HardDrive, FileArchive, Database, CheckCircle2, XCircle, Loader2, Save, Upload } from "lucide-react";
 import { SystemLogs } from "@/components/system-logs";
+import { Link } from 'wouter';
 import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
@@ -43,6 +45,7 @@ interface Permission {
 
 export default function Admin() {
   const { toast } = useToast();
+  const [location] = useLocation();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [formData, setFormData] = useState({
@@ -98,6 +101,8 @@ export default function Admin() {
   const { data: smtpAccounts, isLoading: smtpAccountsLoading } = useQuery<any[]>({
     queryKey: ["/api/admin/smtp-accounts"],
   });
+
+  
 
   interface SystemConfig {
     id: string;
@@ -652,6 +657,39 @@ export default function Admin() {
     );
   };
 
+  // Tabs state that syncs with URL (e.g. /admin/sessions)
+  const determineTabFromLocation = (loc: string) => {
+    if (!loc) return 'users';
+    if (loc.startsWith('/admin/sessions')) return 'sessions';
+    if (loc.startsWith('/admin/smtp-accounts')) return 'smtp-accounts';
+    if (loc.startsWith('/admin/storage-config')) return 'storage';
+    return 'users';
+  };
+
+  const [tab, setTab] = useState<string>(() => determineTabFromLocation(location));
+
+  useEffect(() => {
+    setTab(determineTabFromLocation(location));
+  }, [location]);
+
+  // Sessions (Usuarios conectados) - fetch only when sessions tab is active
+  const [showAllSessions, setShowAllSessions] = useState(false);
+  const { data: sessionsData, isLoading: sessionsLoading } = useQuery<any>({
+    queryKey: ["/api/admin/sessions", showAllSessions ? "all" : "active"],
+    queryFn: async () => {
+      const endpoint = showAllSessions ? "/api/admin/sessions/all" : "/api/admin/sessions";
+      const response = await fetch(endpoint, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        }
+      });
+      if (!response.ok) throw new Error('Error al cargar sesiones');
+      return response.json();
+    },
+    enabled: tab === 'sessions',
+    refetchInterval: 5000, // Refrescar cada 5 segundos
+  });
+
   if (usersLoading || logsLoading) {
     return (
       <div className="p-8 space-y-6">
@@ -670,7 +708,7 @@ export default function Admin() {
         <p className="text-muted-foreground mt-1">Gestión de usuarios y configuración del sistema</p>
       </div>
 
-      <Tabs defaultValue="users" className="space-y-6">
+  <Tabs value={tab} onValueChange={(v) => setTab(v)} className="space-y-6">
         <TabsList className="h-auto grid grid-cols-2 md:grid-cols-4 gap-1 p-1">
           <TabsTrigger value="users" data-testid="tab-users">
             <UsersIcon className="h-4 w-4 mr-2" />
@@ -691,6 +729,12 @@ export default function Admin() {
           <TabsTrigger value="smtp-accounts" data-testid="tab-smtp-accounts">
             <Mail className="h-4 w-4 mr-2" />
             Cuentas SMTP
+          </TabsTrigger>
+          <TabsTrigger value="sessions" data-testid="tab-sessions">
+            <Link href="/admin/sessions" className="flex items-center">
+              <UsersIcon className="h-4 w-4 mr-2" />
+              Usuarios conectados
+            </Link>
           </TabsTrigger>
           <TabsTrigger value="system-updates" data-testid="tab-system-updates">
             <RefreshCw className="h-4 w-4 mr-2" />
@@ -1374,6 +1418,237 @@ export default function Admin() {
                 <div className="text-center py-8 text-muted-foreground">
                   No hay cuentas SMTP configuradas. Crea una para empezar.
                 </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="sessions" className="space-y-4">
+          <div className="flex justify-between items-center">
+            <div>
+              <h2 className="text-xl font-display font-semibold">Gestión de Sesiones</h2>
+              <p className="text-muted-foreground mt-1">Monitoreo avanzado de sesiones de usuario</p>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                variant={showAllSessions ? "default" : "outline"}
+                size="sm"
+                onClick={() => setShowAllSessions(!showAllSessions)}
+              >
+                {showAllSessions ? "Solo Activas" : "Ver Todas"}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={async () => {
+                  try {
+                    const result = await apiRequest('POST', '/api/admin/sessions/cleanup');
+                    queryClient.invalidateQueries({ queryKey: ['/api/admin/sessions'] });
+                    toast({ 
+                      title: 'Limpieza completada', 
+                      description: `${result.totalCleaned} sesiones procesadas (${result.deletedCount} eliminadas, ${result.markedInactiveCount} marcadas como inactivas)`
+                    });
+                  } catch (err: any) {
+                    toast({ title: 'Error', description: err.message || String(err), variant: 'destructive' });
+                  }
+                }}
+              >
+                <RotateCcw className="h-4 w-4 mr-2" />
+                Limpiar Sesiones
+              </Button>
+            </div>
+          </div>
+
+          {/* Estadísticas de sesiones */}
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <Card>
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-muted-foreground">Sesiones Activas</p>
+                    <p className="text-2xl font-bold text-green-600">
+                      {sessionsData?.items?.filter((s: any) => s.status === 'active').length || 0}
+                    </p>
+                  </div>
+                  <Activity className="h-8 w-8 text-green-600" />
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-muted-foreground">Sesiones Inactivas</p>
+                    <p className="text-2xl font-bold text-yellow-600">
+                      {sessionsData?.items?.filter((s: any) => s.status === 'idle').length || 0}
+                    </p>
+                  </div>
+                  <Activity className="h-8 w-8 text-yellow-600" />
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-muted-foreground">Sospechosas</p>
+                    <p className="text-2xl font-bold text-red-600">
+                      {sessionsData?.items?.filter((s: any) => s.suspicious).length || 0}
+                    </p>
+                  </div>
+                  <Shield className="h-8 w-8 text-red-600" />
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-muted-foreground">Total Sesiones</p>
+                    <p className="text-2xl font-bold text-blue-600">
+                      {sessionsData?.total || 0}
+                    </p>
+                  </div>
+                  <UsersIcon className="h-8 w-8 text-blue-600" />
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>
+                {showAllSessions ? 'Todas las Sesiones' : 'Sesiones Activas'} ({sessionsData?.total ?? 0})
+                {showAllSessions && (
+                  <span className="text-sm font-normal text-muted-foreground ml-2">
+                    (Incluye sesiones cerradas)
+                  </span>
+                )}
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {sessionsLoading ? (
+                <div className="space-y-2">
+                  <Skeleton className="h-12 w-full" />
+                  <Skeleton className="h-12 w-full" />
+                </div>
+              ) : !sessionsData || !sessionsData.items || sessionsData.items.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">No hay sesiones</div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Usuario</TableHead>
+                      <TableHead>Estado</TableHead>
+                      <TableHead>IP / Ubicación</TableHead>
+                      <TableHead>Dispositivo</TableHead>
+                      <TableHead>Última Actividad</TableHead>
+                      <TableHead>Duración</TableHead>
+                      <TableHead className="text-right">Acciones</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {sessionsData.items.map((s: any) => (
+                      <TableRow key={s.id} className={s.suspicious ? 'bg-red-50 dark:bg-red-950/20' : ''}>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <div>
+                              <p className="font-medium">{s.user?.username || '—'}</p>
+                              <p className="text-sm text-muted-foreground">{s.user?.role?.name || '—'}</p>
+                            </div>
+                            {s.suspicious && <Shield className="h-4 w-4 text-red-500" />}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <Badge 
+                            variant={s.status === 'active' ? 'default' : s.status === 'idle' ? 'secondary' : 'outline'}
+                            className={
+                              s.status === 'active' ? 'bg-green-100 text-green-800' :
+                              s.status === 'idle' ? 'bg-yellow-100 text-yellow-800' :
+                              'bg-gray-100 text-gray-800'
+                            }
+                          >
+                            {s.status === 'active' ? 'Activo' : s.status === 'idle' ? 'Inactivo' : 'Cerrado'}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <div>
+                            <p className="font-mono text-sm">{s.ip}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {s.location?.city}, {s.location?.country}
+                              {s.location?.isVpn && <span className="text-red-500 ml-1">(VPN)</span>}
+                            </p>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div>
+                            <p className="text-sm">{s.deviceInfo?.type || 'Unknown'}</p>
+                            <p className="text-xs text-muted-foreground">{s.deviceInfo?.platform || 'Unknown'}</p>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div>
+                            <p className="text-sm">{s.lastSeenAt ? new Date(s.lastSeenAt).toLocaleString() : '-'}</p>
+                            {s.minutesSinceLastSeen !== undefined && (
+                              <p className="text-xs text-muted-foreground">
+                                {s.minutesSinceLastSeen < 60 
+                                  ? `Hace ${s.minutesSinceLastSeen} min`
+                                  : `Hace ${Math.floor(s.minutesSinceLastSeen / 60)}h ${s.minutesSinceLastSeen % 60}min`
+                                }
+                              </p>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <p className="text-sm">
+                            {s.createdAt ? Math.floor((Date.now() - new Date(s.createdAt).getTime()) / (1000 * 60 * 60)) : 0}h
+                          </p>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-1">
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              onClick={async () => {
+                                try {
+                                  await apiRequest('POST', `/api/admin/sessions/${s.id}/terminate`);
+                                  queryClient.invalidateQueries({ queryKey: ['/api/admin/sessions'] });
+                                  toast({ 
+                                    title: 'Sesión terminada', 
+                                    description: `La sesión de ${s.user?.username} ha sido terminada y el usuario será redirigido al login`
+                                  });
+                                } catch (err: any) {
+                                  toast({ title: 'Error', description: err.message || String(err), variant: 'destructive' });
+                                }
+                              }}
+                            >
+                              <XCircle className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant={s.suspicious ? "destructive" : "outline"}
+                              size="sm"
+                              onClick={async () => {
+                                try {
+                                  const endpoint = s.suspicious ? 'unflag' : 'flag';
+                                  await apiRequest('POST', `/api/admin/sessions/${s.id}/${endpoint}`);
+                                  queryClient.invalidateQueries({ queryKey: ['/api/admin/sessions'] });
+                                  toast({ 
+                                    title: s.suspicious ? 'Marcado como seguro' : 'Marcado como sospechoso',
+                                    description: s.suspicious ? 'La sesión ya no está marcada como sospechosa' : 'La sesión ha sido marcada como sospechosa'
+                                  });
+                                } catch (err: any) {
+                                  toast({ title: 'Error', description: err.message || String(err), variant: 'destructive' });
+                                }
+                              }}
+                            >
+                              <Shield className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
               )}
             </CardContent>
           </Card>

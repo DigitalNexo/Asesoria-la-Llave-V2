@@ -9,7 +9,6 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { useVirtualizer } from "@tanstack/react-virtual";
 import { Link, useLocation } from "wouter";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { KanbanSquare, FileText } from "lucide-react";
@@ -33,6 +32,7 @@ export default function ImpuestosControl() {
   const [year, setYear] = useState<number>(new Date().getFullYear());
   const [clientId, setClientId] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<"all" | BoardStatus>("all");
+  const [searchTerm, setSearchTerm] = useState<string>("");
   const [modelCode, setModelCode] = useState<string>("");
   const [gestorId, setGestorId] = useState<string>("");
   const [periodId, setPeriodId] = useState<string>("");
@@ -49,7 +49,7 @@ export default function ImpuestosControl() {
   });
 
   const filingsQuery = useQuery<FilingCard[]>({
-    queryKey: ["/api/tax/filings", year, clientId, statusFilter, modelCode, gestorId, periodId],
+    queryKey: ["/api/tax/filings", year, clientId, statusFilter, modelCode, gestorId, periodId, searchTerm],
     queryFn: async () => {
       const params = new URLSearchParams();
       params.set("year", String(year));
@@ -58,7 +58,7 @@ export default function ImpuestosControl() {
       if (modelCode && modelCode !== 'ALL') params.set("model", modelCode);
       if (gestorId) params.set("gestorId", gestorId);
       if (periodId) params.set("periodId", periodId);
-      // Nota: si más adelante añadimos periodId, aquí se incluye
+      if (searchTerm) params.set("q", searchTerm.trim());
       const url = `/api/tax/filings${params.toString() ? `?${params.toString()}` : ""}`;
       const res = await fetch(url, {
         headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
@@ -149,6 +149,17 @@ export default function ImpuestosControl() {
     }
   };
 
+  // Helper to change status from UI buttons
+  const changeStatus = async (id: string, status: BoardStatus, presentedAt?: string | null) => {
+    try {
+      await apiRequest('PATCH', `/api/tax/filings/${id}`, { status, presentedAt: presentedAt ?? null });
+      queryClient.invalidateQueries({ queryKey: ["/api/tax/filings"], exact: false });
+      toast({ title: 'Actualizado', description: `Estado actualizado a ${status}` });
+    } catch (err: any) {
+      toast({ title: 'Error', description: err?.message || 'No se pudo actualizar', variant: 'destructive' });
+    }
+  };
+
   return (
     <div className="p-8 space-y-6">
       <div className="space-y-3">
@@ -183,6 +194,8 @@ export default function ImpuestosControl() {
           <p className="text-sm text-muted-foreground">Tablero de presentaciones fiscales</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <Input placeholder="Buscar cliente, NIF o modelo..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-64" />
+          <Button variant="ghost" onClick={() => setSearchTerm("")}>Limpiar</Button>
           <Input type="number" value={year} onChange={(e) => setYear(Number(e.target.value))} className="w-24" />
           <Select value={periodicity} onValueChange={(v) => setPeriodicity(v as any)}>
             <SelectTrigger className="w-40">
@@ -321,42 +334,209 @@ function Column({ title, accent, badge, items }: { title: string; accent: string
 function CardItem({ item, badgeClass }: { item: FilingCard; badgeClass: string }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: item.id });
   const style = transform ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)` } : undefined;
+  
+  const [isExpanded, setIsExpanded] = useState(false);
+  const { toast } = useToast();
+
+  const handleChangeStatus = async (newStatus: BoardStatus) => {
+    try {
+      if (newStatus === 'PRESENTADO') {
+        const date = window.prompt('Fecha de presentación (YYYY-MM-DD)', new Date().toISOString().slice(0, 10));
+        if (!date) return;
+        await apiRequest('PATCH', `/api/tax/filings/${item.id}`, { status: newStatus, presentedAt: date });
+        toast({ title: 'Actualizado', description: `Marcado como PRESENTADO (${date})` });
+      } else {
+        await apiRequest('PATCH', `/api/tax/filings/${item.id}`, { status: newStatus, presentedAt: null });
+        toast({ title: 'Actualizado', description: `Estado cambiado a ${newStatus}` });
+      }
+      queryClient.invalidateQueries({ queryKey: ["/api/tax/filings"], exact: false });
+    } catch (err: any) {
+      toast({ title: 'Error', description: err?.message || 'No se pudo actualizar', variant: 'destructive' });
+    }
+  };
+
+  const modelMeta = TAX_MODEL_METADATA[item.taxModelCode as keyof typeof TAX_MODEL_METADATA];
+
   return (
-    <div ref={setNodeRef} id={item.id} {...listeners} {...attributes} style={style} className={`rounded-lg border bg-white p-3 shadow-sm ${isDragging ? 'opacity-80 ring-1 ring-primary/50' : ''}`}>
-      <div className="flex items-center justify-between gap-2">
-        <p className="truncate text-sm font-semibold">{item.clientName}</p>
-        <Badge className={`text-xs ${badgeClass}`}>{item.taxModelCode}</Badge>
+    <div
+      ref={setNodeRef}
+      id={item.id}
+      {...listeners}
+      {...attributes}
+      style={style}
+      className={`rounded-lg border bg-white transition-all duration-200 ${
+        isDragging ? 'opacity-80 ring-2 ring-primary/50 shadow-lg' : 'shadow-sm hover:shadow-md'
+      } ${isExpanded ? 'p-4 shadow-xl' : 'p-3'}`}
+    >
+      {/* Vista Compacta - Siempre visible */}
+      <div 
+        className="cursor-pointer select-none"
+        onClick={(e) => {
+          // Solo expandir si no se está arrastrando
+          if (!isDragging) {
+            e.stopPropagation();
+            setIsExpanded(!isExpanded);
+          }
+        }}
+      >
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex-1 min-w-0">
+            <p className="truncate text-sm font-semibold text-foreground">
+              {item.clientName}
+            </p>
+            <div className="flex items-center gap-2 mt-1">
+              <Badge variant="outline" className={`text-xs font-mono ${badgeClass}`}>
+                {item.taxModelCode}
+              </Badge>
+              <span className="text-xs text-muted-foreground">
+                {item.periodLabel || 'Sin periodo'}
+              </span>
+            </div>
+          </div>
+          
+          <div className="flex flex-col items-end gap-1">
+            <Badge 
+              variant={item.status === 'PRESENTADO' ? 'default' : 'secondary'}
+              className="text-xs whitespace-nowrap"
+            >
+              {item.status}
+            </Badge>
+            {isExpanded && (
+              <span className="text-xs text-muted-foreground">Click para cerrar</span>
+            )}
+          </div>
+        </div>
       </div>
-      <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
-        <span>{item.periodLabel ?? "Periodo"}</span>
-        <span>{item.nifCif}</span>
-      </div>
+
+      {/* Detalles Expandidos */}
+      {isExpanded && (
+        <div className="mt-4 space-y-3 border-t pt-3 animate-in fade-in slide-in-from-top-2 duration-200">
+          {/* Información del Modelo */}
+          <div className="space-y-1">
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+              Información del Modelo
+            </p>
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div>
+                <span className="text-muted-foreground">Modelo:</span>
+                <span className="ml-1 font-medium">{item.taxModelCode}</span>
+              </div>
+              <div>
+                <span className="text-muted-foreground">Nombre:</span>
+                <span className="ml-1 font-medium">{modelMeta?.name || 'N/A'}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Información del Cliente */}
+          <div className="space-y-1">
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+              Datos del Cliente
+            </p>
+            <div className="space-y-1 text-xs">
+              <div>
+                <span className="text-muted-foreground">Razón Social:</span>
+                <span className="ml-1 font-medium">{item.clientName}</span>
+              </div>
+              <div>
+                <span className="text-muted-foreground">NIF/CIF:</span>
+                <span className="ml-1 font-mono font-medium">{item.nifCif}</span>
+              </div>
+              <div>
+                <span className="text-muted-foreground">ID Cliente:</span>
+                <span className="ml-1 font-mono text-muted-foreground">{item.clientId}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Periodo */}
+          <div className="space-y-1">
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+              Periodo Fiscal
+            </p>
+            <div className="text-xs">
+              <span className="text-muted-foreground">Periodo:</span>
+              <span className="ml-1 font-medium">{item.periodLabel || 'Sin asignar'}</span>
+            </div>
+            <div className="text-xs">
+              <span className="text-muted-foreground">ID Periodo:</span>
+              <span className="ml-1 font-mono text-muted-foreground">{item.periodId}</span>
+            </div>
+          </div>
+
+          {/* Acciones - Botones para cambiar estado */}
+          <div className="space-y-2 border-t pt-3">
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+              Cambiar Estado
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {item.status !== 'PENDIENTE' && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleChangeStatus('PENDIENTE');
+                  }}
+                  className="flex-1 text-xs"
+                >
+                  → Pendiente
+                </Button>
+              )}
+              {item.status !== 'CALCULADO' && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleChangeStatus('CALCULADO');
+                  }}
+                  className="flex-1 text-xs"
+                >
+                  → Calculado
+                </Button>
+              )}
+              {item.status !== 'PRESENTADO' && (
+                <Button
+                  size="sm"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleChangeStatus('PRESENTADO');
+                  }}
+                  className="flex-1 text-xs"
+                >
+                  → Presentado
+                </Button>
+              )}
+            </div>
+          </div>
+
+          {/* ID de tarjeta (para debug/soporte) */}
+          <div className="text-xs text-muted-foreground border-t pt-2">
+            <span className="font-mono">ID: {item.id}</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function VirtualColumn<T>({ items, renderItem }: { items: T[]; renderItem: (it: T) => JSX.Element }) {
+function VirtualColumn<T extends { id: string }>({ items, renderItem }: { items: T[]; renderItem: (it: T) => JSX.Element }) {
   const parentRef = useRef<HTMLDivElement | null>(null);
-  const rowVirtualizer = useVirtualizer({
-    count: items.length,
-    getScrollElement: () => parentRef.current,
-    estimateSize: () => 84,
-    overscan: 8,
-  });
-
+  
+  // Desactivar virtualización para evitar problemas de z-index con tarjetas expandidas
+  // Con virtualización, las tarjetas tienen position: absolute y se superponen
   if (items.length === 0) {
     return <div className="flex-1"><p className="mt-6 text-center text-xs text-muted-foreground">Sin asignaciones.</p></div>;
   }
 
   return (
-    <div ref={parentRef} className="flex-1 overflow-auto">
-      <div style={{ height: rowVirtualizer.getTotalSize(), position: 'relative' }}>
-        {rowVirtualizer.getVirtualItems().map((row) => (
-          <div key={row.key} data-index={row.index} style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${row.start}px)` }}>
-            {renderItem(items[row.index])}
-          </div>
-        ))}
-      </div>
+    <div ref={parentRef} className="flex-1 overflow-auto space-y-3">
+      {items.map((item) => (
+        <div key={item.id}>
+          {renderItem(item)}
+        </div>
+      ))}
     </div>
   );
 }

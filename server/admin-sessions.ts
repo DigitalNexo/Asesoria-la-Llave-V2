@@ -1,0 +1,416 @@
+import express, { Request } from 'express';
+import { PrismaClient } from '@prisma/client';
+import { authenticateToken, checkIsAdmin, AuthRequest } from './middleware/auth.ts';
+import { getSocketServer } from './websocket';
+import ipLookup from './ip-lookup.ts';
+
+const prisma = new PrismaClient();
+const router = express.Router();
+
+// GET /api/admin/sessions
+router.get('/', authenticateToken, checkIsAdmin, async (req, res) => {
+  try {
+    const { page = 1, size = 50, activeOnly, query, country, device, vpnOnly, suspicious } = req.query as any;
+    const where: any = {};
+    
+    // Por defecto, mostrar solo sesiones activas si no se especifica lo contrario
+    if (activeOnly === 'true' || activeOnly === undefined) {
+      where.ended_at = null;
+    }
+    
+    if (query) {
+      where.OR = [
+        { ip: { contains: query } },
+        { users: { username: { contains: query } } },
+        { users: { email: { contains: query } } },
+        { user_agent: { contains: query } },
+      ];
+    }
+    if (country) where.country = country;
+    if (device) where.device_type = device;
+    if (vpnOnly === 'true') where.isVpn = true;
+    if (suspicious === 'true') where.suspicious = true;
+
+    const take = Number(size) || 50;
+    const skip = (Number(page) - 1) * take;
+
+    console.log('🔍 Buscando sesiones con filtros:', { where, activeOnly, page, size });
+
+    const p: any = prisma;
+    const [items, total] = await Promise.all([
+      p.sessions.findMany({ 
+        where, 
+        include: { 
+          users: { 
+            select: { 
+              id: true, 
+              username: true, 
+              email: true,
+              roles: {
+                select: {
+                  name: true
+                }
+              }
+            } 
+          } 
+        }, 
+        orderBy: { last_seen_at: 'desc' }, 
+        take, 
+        skip 
+      }),
+      p.sessions.count({ where }),
+    ]);
+
+    console.log(`📊 Encontradas ${items.length} sesiones de ${total} total`);
+
+    // Agregar información adicional a cada sesión
+    const enrichedItems = items.map((session: any) => {
+      const now = new Date();
+      const lastSeen = new Date(session.last_seen_at);
+      const minutesSinceLastSeen = Math.floor((now.getTime() - lastSeen.getTime()) / (1000 * 60));
+      
+      return {
+        ...session,
+        isActive: !session.ended_at && minutesSinceLastSeen < 5, // Activo si se vio en los últimos 5 minutos
+        minutesSinceLastSeen,
+        status: session.ended_at ? 'closed' : (minutesSinceLastSeen < 5 ? 'active' : 'idle'),
+        deviceInfo: {
+          type: session.device_type || 'Unknown',
+          platform: session.platform || 'Unknown',
+          userAgent: session.user_agent?.substring(0, 100) + (session.user_agent?.length > 100 ? '...' : '')
+        },
+        location: {
+          country: session.country || 'Unknown',
+          region: session.region || 'Unknown',
+          city: session.city || 'Unknown',
+          isVpn: session.isVpn || false
+        }
+      };
+    });
+
+    res.json({ items: enrichedItems, total, page: Number(page), size: take });
+  } catch (err) {
+    console.error('GET /api/admin/sessions error', err);
+    res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+// GET /api/admin/sessions/:id
+router.get('/:id', authenticateToken, checkIsAdmin, async (req, res) => {
+  try {
+  const p: any = prisma;
+  const session = await p.sessions.findUnique({ where: { id: req.params.id }, include: { users: true } });
+    if (!session) return res.status(404).json({ error: 'Not found' });
+    res.json(session);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+// POST /api/admin/sessions/:id/terminate
+router.post('/:id/terminate', authenticateToken, checkIsAdmin, async (req: AuthRequest, res) => {
+  try {
+    console.log(`🔌 Intentando terminar sesión ${req.params.id} por administrador ${req.user?.username}`);
+    
+    const p: any = prisma;
+    const session = await p.sessions.findUnique({ 
+      where: { id: req.params.id },
+      include: { users: { select: { username: true } } }
+    });
+    
+    if (!session) {
+      console.log(`❌ Sesión ${req.params.id} no encontrada`);
+      return res.status(404).json({ error: 'Sesión no encontrada' });
+    }
+
+    console.log(`📋 Sesión encontrada: ${session.users?.username} (${session.socketId})`);
+
+    // Marcar sesión como terminada
+    await p.sessions.update({ where: { id: req.params.id }, data: { ended_at: new Date() } });
+    console.log(`✅ Sesión ${req.params.id} marcada como terminada en BD`);
+
+    // Desconectar socket si está disponible
+    const io = getSocketServer();
+    if (io && session.socketId) {
+      const sock = io.sockets.sockets.get(session.socketId as any);
+      if (sock) {
+        console.log(`🔌 Socket encontrado, enviando notificación y desconectando...`);
+        
+        // Enviar evento de sesión terminada antes de desconectar
+        sock.emit('session:terminated', { 
+          reason: 'admin_terminated',
+          message: 'Tu sesión ha sido terminada por un administrador'
+        });
+        
+        // Desconectar el socket
+        sock.disconnect(true);
+        console.log(`✅ Socket ${session.socketId} desconectado exitosamente`);
+      } else {
+        console.log(`⚠️ Socket ${session.socketId} no encontrado en servidor`);
+      }
+    } else {
+      console.log(`⚠️ No hay socket ID o servidor IO no disponible`);
+    }
+
+    // Notificar a administradores
+    if (io) {
+      io.to('role:Administrador').emit('session:disconnected', { 
+        id: req.params.id,
+        userId: session.userId,
+        terminatedBy: req.user?.username
+      });
+      console.log(`📢 Notificación enviada a administradores`);
+    }
+
+    console.log(`✅ Sesión ${req.params.id} terminada completamente por administrador ${req.user?.username}`);
+    res.json({ ok: true, message: 'Sesión terminada exitosamente' });
+  } catch (err) {
+    console.error('❌ Error terminando sesión:', err);
+    res.status(500).json({ error: 'Error interno del servidor' });
+  }
+});
+
+// POST /api/admin/sessions/:id/flag
+router.post('/:id/flag', authenticateToken, checkIsAdmin, async (req, res) => {
+  try {
+  const p: any = prisma;
+  const session = await p.sessions.update({ where: { id: req.params.id }, data: { suspicious: true } });
+    const io = getSocketServer();
+    if (io) io.to('admins').emit('session:update', session);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+// POST /api/admin/sessions/:id/unflag
+router.post('/:id/unflag', authenticateToken, checkIsAdmin, async (req, res) => {
+  try {
+    const p: any = prisma;
+    const session = await p.sessions.update({ where: { id: req.params.id }, data: { suspicious: false } });
+    const io = getSocketServer();
+    if (io) io.to('admins').emit('session:update', session);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+// POST /api/admin/sessions/terminate-all-for-user/:userId
+router.post('/terminate-all-for-user/:userId', authenticateToken, checkIsAdmin, async (req, res) => {
+  try {
+    const p: any = prisma;
+    const userId = req.params.userId;
+    
+    // Obtener todas las sesiones activas del usuario
+    const activeSessions = await p.sessions.findMany({
+      where: { userId, ended_at: null }
+    });
+    
+    // Terminar todas las sesiones
+    await p.sessions.updateMany({
+      where: { userId, ended_at: null },
+      data: { ended_at: new Date() }
+    });
+    
+    // Desconectar todos los sockets del usuario
+    const io = getSocketServer();
+    if (io) {
+      activeSessions.forEach((session: any) => {
+        if (session.socketId) {
+          const sock = io.sockets.sockets.get(session.socketId);
+          if (sock) {
+            sock.disconnect(true);
+          }
+        }
+      });
+      
+      io.to('admins').emit('sessions:terminated', { 
+        userId, 
+        count: activeSessions.length 
+      });
+    }
+    
+    res.json({ ok: true, terminatedCount: activeSessions.length });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+// GET /api/admin/sessions/stats
+router.get('/stats', authenticateToken, checkIsAdmin, async (req, res) => {
+  try {
+    const p: any = prisma;
+    
+    const [
+      totalSessions,
+      activeSessions,
+      suspiciousSessions,
+      vpnSessions,
+      sessionsByCountry,
+      sessionsByDevice
+    ] = await Promise.all([
+      p.sessions.count(),
+      p.sessions.count({ where: { ended_at: null } }),
+      p.sessions.count({ where: { suspicious: true } }),
+      p.sessions.count({ where: { isVpn: true } }),
+      p.sessions.groupBy({
+        by: ['country'],
+        _count: { country: true },
+        where: { ended_at: null },
+        orderBy: { _count: { country: 'desc' } },
+        take: 10
+      }),
+      p.sessions.groupBy({
+        by: ['device_type'],
+        _count: { device_type: true },
+        where: { ended_at: null },
+        orderBy: { _count: { device_type: 'desc' } },
+        take: 10
+      })
+    ]);
+    
+    res.json({
+      totalSessions,
+      activeSessions,
+      suspiciousSessions,
+      vpnSessions,
+      sessionsByCountry,
+      sessionsByDevice
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+// POST /api/admin/sessions/cleanup
+router.post('/cleanup', authenticateToken, checkIsAdmin, async (req, res) => {
+  try {
+    const p: any = prisma;
+    
+    // Eliminar TODAS las sesiones cerradas (no solo las de 7 días)
+    const closedSessionsResult = await p.sessions.deleteMany({
+      where: {
+        ended_at: { not: null }
+      }
+    });
+    
+    // Marcar como cerradas las sesiones inactivas por más de 30 minutos
+    const thirtyMinutesAgo = new Date();
+    thirtyMinutesAgo.setMinutes(thirtyMinutesAgo.getMinutes() - 30);
+    
+    const inactiveSessionsResult = await p.sessions.updateMany({
+      where: {
+        ended_at: null,
+        last_seen_at: { lt: thirtyMinutesAgo }
+      },
+      data: {
+        ended_at: new Date()
+      }
+    });
+    
+    console.log(`🧹 Limpieza manual: ${closedSessionsResult.count} sesiones cerradas eliminadas, ${inactiveSessionsResult.count} sesiones inactivas marcadas como cerradas`);
+    
+    res.json({ 
+      ok: true, 
+      deletedCount: closedSessionsResult.count,
+      markedInactiveCount: inactiveSessionsResult.count,
+      totalCleaned: closedSessionsResult.count + inactiveSessionsResult.count
+    });
+  } catch (err) {
+    console.error('Error en limpieza de sesiones:', err);
+    res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+// GET /api/admin/sessions/all - Mostrar todas las sesiones (activas y cerradas)
+router.get('/all', authenticateToken, checkIsAdmin, async (req, res) => {
+  try {
+    const { page = 1, size = 50, query, country, device, vpnOnly, suspicious } = req.query as any;
+    const where: any = {};
+    
+    // No filtrar por ended_at para mostrar todas
+    
+    if (query) {
+      where.OR = [
+        { ip: { contains: query } },
+        { users: { username: { contains: query } } },
+        { users: { email: { contains: query } } },
+        { user_agent: { contains: query } },
+      ];
+    }
+    if (country) where.country = country;
+    if (device) where.device_type = device;
+    if (vpnOnly === 'true') where.isVpn = true;
+    if (suspicious === 'true') where.suspicious = true;
+
+    const take = Number(size) || 50;
+    const skip = (Number(page) - 1) * take;
+
+    console.log('🔍 Buscando TODAS las sesiones con filtros:', { where, page, size });
+
+    const p: any = prisma;
+    const [items, total] = await Promise.all([
+      p.sessions.findMany({ 
+        where, 
+        include: { 
+          users: { 
+            select: { 
+              id: true, 
+              username: true, 
+              email: true,
+              role: {
+                select: {
+                  name: true
+                }
+              }
+            } 
+          } 
+        }, 
+        orderBy: { last_seen_at: 'desc' }, 
+        take, 
+        skip 
+      }),
+      p.sessions.count({ where }),
+    ]);
+
+    console.log(`📊 Encontradas ${items.length} sesiones de ${total} total (todas)`);
+
+    // Agregar información adicional a cada sesión
+    const enrichedItems = items.map((session: any) => {
+      const now = new Date();
+      const lastSeen = new Date(session.last_seen_at);
+      const minutesSinceLastSeen = Math.floor((now.getTime() - lastSeen.getTime()) / (1000 * 60));
+      
+      return {
+        ...session,
+        isActive: !session.ended_at && minutesSinceLastSeen < 5,
+        minutesSinceLastSeen,
+        status: session.ended_at ? 'closed' : (minutesSinceLastSeen < 5 ? 'active' : 'idle'),
+        deviceInfo: {
+          type: session.device_type || 'Unknown',
+          platform: session.platform || 'Unknown',
+          userAgent: session.user_agent?.substring(0, 100) + (session.user_agent?.length > 100 ? '...' : '')
+        },
+        location: {
+          country: session.country || 'Unknown',
+          region: session.region || 'Unknown',
+          city: session.city || 'Unknown',
+          isVpn: session.isVpn || false
+        }
+      };
+    });
+
+    res.json({ items: enrichedItems, total, page: Number(page), size: take });
+  } catch (err) {
+    console.error('GET /api/admin/sessions/all error', err);
+    res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+export default router;

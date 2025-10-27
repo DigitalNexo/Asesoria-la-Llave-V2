@@ -38,13 +38,13 @@ async function seedTaxData() {
     console.log('✅ Modelos fiscales verificados');
 
     // Crear períodos para modelo 303
-    const existing303 = await prisma.taxPeriod.count({ where: { modeloId: model303.id } });
+    const existing303 = await prisma.tax_periods.count({ where: { modeloId: model303.id } });
     if (existing303 === 0) {
       console.log('\n📅 Creando períodos para modelo 303...');
       for (const year of [2024, 2025]) {
         for (const q of [1, 2, 3, 4]) {
           const startMonth = q * 3 + 1;
-          await prisma.taxPeriod.create({
+          await prisma.tax_periods.create({
             data: {
               modeloId: model303.id,
               anio: year,
@@ -61,10 +61,10 @@ async function seedTaxData() {
     }
 
     // Crear períodos para modelo 390
-    const existing390 = await prisma.taxPeriod.count({ where: { modeloId: model390.id } });
+    const existing390 = await prisma.tax_periods.count({ where: { modeloId: model390.id } });
     if (existing390 === 0) {
       console.log('\n📅 Creando períodos para modelo 390...');
-      await prisma.taxPeriod.create({
+      await prisma.tax_periods.create({
         data: {
           modeloId: model390.id,
           anio: 2024,
@@ -73,7 +73,7 @@ async function seedTaxData() {
           finPresentacion: new Date('2025-01-30'),
         },
       });
-      await prisma.taxPeriod.create({
+      await prisma.tax_periods.create({
         data: {
           modeloId: model390.id,
           anio: 2025,
@@ -88,13 +88,13 @@ async function seedTaxData() {
     }
 
     // Crear períodos para modelo 130
-    const existing130 = await prisma.taxPeriod.count({ where: { modeloId: model130.id } });
+    const existing130 = await prisma.tax_periods.count({ where: { modeloId: model130.id } });
     if (existing130 === 0) {
       console.log('\n📅 Creando períodos para modelo 130...');
       for (const year of [2024, 2025]) {
         for (const q of [1, 2, 3, 4]) {
           const startMonth = q * 3 + 1;
-          await prisma.taxPeriod.create({
+          await prisma.tax_periods.create({
             data: {
               modeloId: model130.id,
               anio: year,
@@ -111,13 +111,13 @@ async function seedTaxData() {
     }
 
     // Crear períodos para modelo 131
-    const existing131 = await prisma.taxPeriod.count({ where: { modeloId: model131.id } });
+    const existing131 = await prisma.tax_periods.count({ where: { modeloId: model131.id } });
     if (existing131 === 0) {
       console.log('\n📅 Creando períodos para modelo 131...');
       for (const year of [2024, 2025]) {
         for (const q of [1, 2, 3, 4]) {
           const startMonth = q * 3 + 1;
-          await prisma.taxPeriod.create({
+          await prisma.tax_periods.create({
             data: {
               modeloId: model131.id,
               anio: year,

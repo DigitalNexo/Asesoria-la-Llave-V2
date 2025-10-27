@@ -49,7 +49,7 @@ async function seedVisualTaxData() {
         if (!modelId) continue;
 
         // Verificar si ya existe
-        const existing = await prisma.taxPeriod.findFirst({
+        const existing = await prisma.tax_periods.findFirst({
           where: {
             modeloId: modelId,
             anio: year,
@@ -58,7 +58,7 @@ async function seedVisualTaxData() {
         });
 
         if (!existing) {
-          await prisma.taxPeriod.create({
+          await prisma.tax_periods.create({
             data: {
               modeloId: modelId,
               anio: year,
@@ -74,11 +74,11 @@ async function seedVisualTaxData() {
     }
 
     // Obtener todos los clientes
-    const clients = await prisma.client.findMany();
+    const clients = await prisma.clients.findMany();
     console.log(`👥 Clientes encontrados: ${clients.length}`);
 
     // Obtener todos los periodos del Q1 2024
-    const q1Periods = await prisma.taxPeriod.findMany({
+    const q1Periods = await prisma.tax_periods.findMany({
       where: {
         anio: 2024,
         trimestre: 1,

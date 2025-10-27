@@ -1,4 +1,4 @@
-import { Switch, Route, Redirect } from "wouter";
+import { Switch, Route, Redirect, useRoute } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -12,6 +12,7 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { GlobalSearch } from "@/components/global-search";
 import { DatabaseStatus } from "@/components/database-status";
 import { WifiIcon, WifiOffIcon } from "lucide-react";
+import { useEffect } from "react";
 import NotFound from "@/pages/not-found";
 import AuthPage from "@/pages/auth-page";
 import Dashboard from "@/pages/dashboard";
@@ -26,6 +27,16 @@ import ManualEditor from "@/pages/manual-editor";
 import Admin from "@/pages/admin";
 import Auditoria from "@/pages/auditoria";
 import Notificaciones from "@/pages/notificaciones";
+import Presupuestos from "@/pages/documentacion/presupuestos";
+import PresupuestoFormNew from "@/pages/documentacion/presupuestos/PresupuestoFormNew";
+import PresupuestoView from "@/pages/documentacion/presupuestos/PresupuestoView";
+import PresupuestoEdit from "@/pages/documentacion/presupuestos/PresupuestoEdit";
+import PublicBudgetAccept from "@/pages/documentacion/presupuestos/PublicBudgetAccept";
+import ParametrosPresupuestos from "@/pages/documentacion/presupuestos/ParametrosPresupuestos";
+import BudgetTemplatesManager from "@/pages/documentacion/presupuestos/BudgetTemplatesManager";
+import DocumentacionMenu from "@/pages/documentacion-menu";
+import DocumentacionPage from "@/pages/documentacion-page";
+import Documentos from "@/pages/documentos";
 
 function ConnectionIndicator() {
   const { connected, onlineUsers } = useWebSocket();
@@ -60,6 +71,13 @@ function Router() {
 
   if (isLoading) {
     return <LoadingScreen />;
+  }
+
+  // Public route - accessible without authentication
+  // Must be checked first before auth check
+  const [isPublicRoute] = useRoute('/public/budgets/:code/accept');
+  if (isPublicRoute) {
+    return <PublicBudgetAccept />;
   }
 
   if (!user) {
@@ -111,7 +129,23 @@ function Router() {
               <Route path="/impuestos/calendario" component={CalendarioAEATPage} />
               <Route path="/impuestos/reportes" component={ReportsPage} />
               <Route path="/notificaciones" component={Notificaciones} />
-              <Route path="/admin">
+              {/* Documentación - Main menu para elegir entre Presupuestos y Documentos */}
+              <Route path="/documentacion" component={DocumentacionMenu} />
+              <Route path="/documentacion/presupuestos" component={DocumentacionPage} />
+              {/* Subrutas de presupuestos */}
+              <Route path="/documentacion/presupuestos/:rest*" component={DocumentacionPage} />
+              {/* Documentos - Main page with tabs (todos, recibos, protección, bancaria, subir) */}
+              <Route path="/documentacion/documentos" component={Documentos} />
+              {/* Subrutas de documentos */}
+              <Route path="/documentacion/documentos/:rest*" component={Documentos} />
+              {/* Rutas específicas de presupuestos (sin tabs) */}
+              <Route path="/documentacion/presupuestos/nuevo" component={PresupuestoFormNew} />
+              <Route path="/documentacion/presupuestos/:id/editar" component={PresupuestoEdit} />
+              <Route path="/documentacion/presupuestos/:id/ver" component={PresupuestoView} />
+              <Route path="/documentacion/presupuestos/:id" component={PresupuestoView} />
+              {/* Admin main path plus wildcard to support nested admin routes and direct /admin navigation */}
+              <Route path="/admin" component={() => ((user as any)?.roleName === "Administrador" ? <Admin /> : <Redirect to="/" />)} />
+              <Route path="/admin/:rest*">
                 {(user as any)?.roleName === "Administrador" ? <Admin /> : <Redirect to="/" />}
               </Route>
               <Route path="/auditoria" component={Auditoria} />
@@ -125,6 +159,19 @@ function Router() {
 }
 
 export default function App() {
+  // Ensure sidebar is visible on app load
+  useEffect(() => {
+    // Check if sidebar cookie exists and is set to true
+    const sidebarCookie = document.cookie
+      .split('; ')
+      .find(row => row.startsWith('sidebar_state='));
+    
+    if (!sidebarCookie) {
+      // If no cookie, set it to expanded state
+      document.cookie = "sidebar_state=true; path=/; max-age=604800";
+    }
+  }, []);
+
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>

@@ -156,34 +156,34 @@ async function createDatabaseBackupFallback(filePath: string): Promise<void> {
   try {
     // Obtener todas las tablas y sus datos usando los nombres reales de tabla (@@map)
     const tables = [
-      { tableName: 'users', model: prisma.user },
-      { tableName: 'roles', model: prisma.role },
-      { tableName: 'permissions', model: prisma.permission },
-      { tableName: 'role_permissions', model: prisma.rolePermission },
-      { tableName: 'clients', model: prisma.client },
+      { tableName: 'users', model: prisma.users },
+      { tableName: 'roles', model: prisma.roles },
+      { tableName: 'permissions', model: prisma.permissions },
+      { tableName: 'role_permissions', model: prisma.role_permissions },
+      { tableName: 'clients', model: prisma.clients },
       { tableName: 'client_employees', model: prisma.clientEmployee },
       { tableName: 'tax_models', model: prisma.taxModel },
-      { tableName: 'tax_periods', model: prisma.taxPeriod },
+      { tableName: 'tax_periods', model: prisma.tax_periods },
       { tableName: 'client_tax', model: prisma.clientTax },
       { tableName: 'tax_files', model: prisma.taxFile },
-      { tableName: 'tasks', model: prisma.task },
-      { tableName: 'manuals', model: prisma.manual },
+      { tableName: 'tasks', model: prisma.tasks },
+      { tableName: 'manuals', model: prisma.manuals },
       { tableName: 'manual_attachments', model: prisma.manualAttachment },
       { tableName: 'manual_versions', model: prisma.manualVersion },
       { tableName: 'activity_logs', model: prisma.activityLog },
       { tableName: 'audit_trail', model: prisma.auditTrail },
       { tableName: 'smtp_config', model: prisma.smtpConfig },
       { tableName: 'client_tax_requirements', model: prisma.clientTaxRequirement },
-      { tableName: 'fiscal_periods', model: prisma.fiscalPeriod },
-      { tableName: 'client_tax_filings', model: prisma.clientTaxFiling },
+      { tableName: 'fiscal_periods', model: prisma.fiscal_periods },
+      { tableName: 'client_tax_filings', model: prisma.client_tax_filings },
       { tableName: 'job_runs', model: prisma.jobRun },
       { tableName: 'system_settings', model: prisma.systemSettings },
       { tableName: 'smtp_accounts', model: prisma.sMTPAccount },
       { tableName: 'notification_templates', model: prisma.notificationTemplate },
       { tableName: 'notification_logs', model: prisma.notificationLog },
       { tableName: 'scheduled_notifications', model: prisma.scheduledNotification },
-      { tableName: 'system_config', model: prisma.systemConfig },
-      { tableName: 'system_backups', model: prisma.systemBackup },
+      { tableName: 'system_config', model: prisma.system_config },
+      { tableName: 'system_backups', model: prisma.system_backups },
       { tableName: 'storage_configs', model: prisma.storageConfig },
     ];
 
@@ -296,10 +296,10 @@ export async function createSystemBackup(userId?: string): Promise<BackupResult>
     const version = pkg.version || '1.0.0';
 
     // Obtener patrones de configuración
-    const dbPatternConfig = await prisma.systemConfig.findUnique({
+    const dbPatternConfig = await prisma.system_config.findUnique({
       where: { key: 'backup_db_pattern' }
     });
-    const filesPatternConfig = await prisma.systemConfig.findUnique({
+    const filesPatternConfig = await prisma.system_config.findUnique({
       where: { key: 'backup_files_pattern' }
     });
 
@@ -310,7 +310,7 @@ export async function createSystemBackup(userId?: string): Promise<BackupResult>
     const filesFileName = replacePatternVariables(filesPattern, version);
 
     // Crear registro de backup en BD
-    const backup = await prisma.systemBackup.create({
+    const backup = await prisma.system_backups.create({
       data: {
         version,
         dbFile: dbFileName,
@@ -339,7 +339,7 @@ export async function createSystemBackup(userId?: string): Promise<BackupResult>
     emitSystemLog({ type: 'backup', level: 'success', message: 'Backup de archivos completado' });
 
     // Actualizar registro con éxito
-    await prisma.systemBackup.update({
+    await prisma.system_backups.update({
       where: { id: backup.id },
       data: {
         status: 'COMPLETED',
@@ -365,7 +365,7 @@ export async function createSystemBackup(userId?: string): Promise<BackupResult>
 
     // Actualizar registro con error
     if (backupId) {
-      await prisma.systemBackup.update({
+      await prisma.system_backups.update({
         where: { id: backupId },
         data: {
           status: 'FAILED',
@@ -383,7 +383,7 @@ export async function createSystemBackup(userId?: string): Promise<BackupResult>
  * Lista todos los backups disponibles
  */
 export async function listBackups() {
-  return await prisma.systemBackup.findMany({
+  return await prisma.system_backups.findMany({
     orderBy: { createdAt: 'desc' },
     include: {
       creator: {
@@ -401,7 +401,7 @@ export async function listBackups() {
  * Elimina backups antiguos según la configuración de retención
  */
 export async function cleanOldBackups(): Promise<number> {
-  const retentionConfig = await prisma.systemConfig.findUnique({
+  const retentionConfig = await prisma.system_config.findUnique({
     where: { key: 'backup_retention_days' }
   });
 
@@ -414,7 +414,7 @@ export async function cleanOldBackups(): Promise<number> {
   const cutoffDate = new Date();
   cutoffDate.setDate(cutoffDate.getDate() - retentionDays);
 
-  const oldBackups = await prisma.systemBackup.findMany({
+  const oldBackups = await prisma.system_backups.findMany({
     where: {
       createdAt: {
         lt: cutoffDate
@@ -437,7 +437,7 @@ export async function cleanOldBackups(): Promise<number> {
   }
 
   // Eliminar registros de BD
-  const result = await prisma.systemBackup.deleteMany({
+  const result = await prisma.system_backups.deleteMany({
     where: {
       createdAt: {
         lt: cutoffDate
@@ -461,7 +461,7 @@ export async function restoreFromBackup(backupId: string, userId?: string): Prom
     emitSystemLog({ type: 'restore', level: 'info', message: 'Iniciando restauración desde backup...' });
     
     // Obtener información del backup
-    backup = await prisma.systemBackup.findUnique({
+    backup = await prisma.system_backups.findUnique({
       where: { id: backupId }
     });
 
@@ -481,7 +481,7 @@ export async function restoreFromBackup(backupId: string, userId?: string): Prom
     });
 
     // Actualizar estado a RESTORING
-    await prisma.systemBackup.update({
+    await prisma.system_backups.update({
       where: { id: backupId },
       data: { status: 'RESTORING' }
     });
@@ -502,7 +502,7 @@ export async function restoreFromBackup(backupId: string, userId?: string): Prom
     emitSystemLog({ type: 'restore', level: 'success', message: 'Base de datos restaurada correctamente' });
 
     // Actualizar estado a RESTORED
-    await prisma.systemBackup.update({
+    await prisma.system_backups.update({
       where: { id: backupId },
       data: {
         status: 'RESTORED',
@@ -519,7 +519,7 @@ export async function restoreFromBackup(backupId: string, userId?: string): Prom
 
     // Actualizar estado a error si el backup existe
     if (backup) {
-      await prisma.systemBackup.update({
+      await prisma.system_backups.update({
         where: { id: backupId },
         data: {
           status: 'FAILED',

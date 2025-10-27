@@ -17,7 +17,7 @@ async function seedPermissions() {
   for (const perm of permissions) {
     try {
       // Verificar si ya existe
-      const existing = await prisma.permission.findFirst({
+      const existing = await prisma.permissions.findFirst({
         where: {
           resource: perm.resource,
           action: perm.action,
@@ -27,7 +27,7 @@ async function seedPermissions() {
       if (existing) {
         console.log(`✓ Permiso ${perm.resource}:${perm.action} ya existe`);
       } else {
-        await prisma.permission.create({
+        await prisma.permissions.create({
           data: perm,
         });
         console.log(`✓ Creado permiso ${perm.resource}:${perm.action}`);
@@ -38,7 +38,7 @@ async function seedPermissions() {
   }
 
   // Asignar todos los permisos al rol Administrador
-  const adminRole = await prisma.role.findFirst({
+  const adminRole = await prisma.roles.findFirst({
     where: { name: 'Administrador' },
   });
 
@@ -46,7 +46,7 @@ async function seedPermissions() {
     console.log('\n🔑 Asignando permisos al rol Administrador...\n');
     
     for (const perm of permissions) {
-      const permission = await prisma.permission.findFirst({
+      const permission = await prisma.permissions.findFirst({
         where: {
           resource: perm.resource,
           action: perm.action,
@@ -54,7 +54,7 @@ async function seedPermissions() {
       });
 
       if (permission) {
-        const existing = await prisma.rolePermission.findFirst({
+        const existing = await prisma.role_permissions.findFirst({
           where: {
             roleId: adminRole.id,
             permissionId: permission.id,
@@ -62,7 +62,7 @@ async function seedPermissions() {
         });
 
         if (!existing) {
-          await prisma.rolePermission.create({
+          await prisma.role_permissions.create({
             data: {
               roleId: adminRole.id,
               permissionId: permission.id,

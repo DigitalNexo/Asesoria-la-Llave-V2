@@ -1,0 +1,259 @@
+/**
+ * Servicio de cálculo para presupuestos de PYME/EMPRESA
+ * AHORA CON PARÁMETROS CONFIGURABLES desde base de datos
+ */
+
+import { PrismaClient } from '@prisma/client';
+import { PymeInput, CalculationResult, BudgetItemInput } from './types';
+
+const prisma = new PrismaClient();
+
+// Caché de parámetros para evitar consultas repetidas
+let parametersCache: Map<string, any> | null = null;
+let cacheTimestamp: number = 0;
+const CACHE_DURATION = 5 * 60 * 1000; // 5 minutos
+
+async function getParameters() {
+  const now = Date.now();
+  
+  // Usar caché si existe y no ha expirado
+  if (parametersCache && (now - cacheTimestamp) < CACHE_DURATION) {
+    return parametersCache;
+  }
+
+  // Cargar parámetros de BD
+  const params = await prisma.budget_parameters.findMany({
+    where: {
+      budgetType: 'PYME',
+      isActive: true,
+    },
+  });
+
+  // Crear mapa por paramKey
+  const paramsMap = new Map<string, any[]>();
+  
+  params.forEach((param) => {
+    const key = param.paramKey;
+    if (!paramsMap.has(key)) {
+      paramsMap.set(key, []);
+    }
+    paramsMap.get(key)!.push(param);
+  });
+
+  parametersCache = paramsMap;
+  cacheTimestamp = now;
+
+  return paramsMap;
+}
+
+function getPrecioBaseContabilidad(nivel: number): number {
+  // Por ahora mantener el sistema anterior
+  // TODO: Mapear niveles a parámetros de BD
+  const PRECIOS_BASE: Record<number, number> = {
+    0: 120, 1: 150, 2: 175, 3: 215, 4: 250,
+    5: 280, 6: 325, 7: 425, 8: 525,
+  };
+  return PRECIOS_BASE[nivel] || 250; // Default: 250 (valor de BD)
+}
+
+function getPrecioNomina(cantidad: number, params: Map<string, any[]>): number {
+  const tramos = params.get('TRAMO_NOMINAS') || [];
+  
+  // Buscar el tramo que aplica
+  for (const tramo of tramos) {
+    if (tramo.minRange !== null && tramo.maxRange !== null) {
+      if (cantidad >= tramo.minRange && cantidad <= tramo.maxRange) {
+        return Number(tramo.paramValue);
+      }
+    }
+  }
+  
+  // Default: Más de 60 nóminas = 10€
+  const defaultTramo = tramos.find((t: any) => t.minRange === 61);
+  return defaultTramo ? Number(defaultTramo.paramValue) : 10;
+}
+
+function getMultiplicadorFacturacion(facturacion: number): number {
+  // Multiplicadores fijos (estos no están en parámetros porque son reglas de negocio)
+  const MULTIPLICADORES = [
+    { max: 100000, multiplicador: 1.05 },
+    { max: 200000, multiplicador: 1.08 },
+    { max: 300000, multiplicador: 1.10 },
+    { max: 400000, multiplicador: 1.13 },
+    { max: 500000, multiplicador: 1.16 },
+    { max: 600000, multiplicador: 1.20 },
+    { max: Infinity, multiplicador: 1.25 },
+  ];
+  
+  const tramo = MULTIPLICADORES.find(t => facturacion <= t.max);
+  return tramo ? tramo.multiplicador : 1.25;
+}
+
+export async function calculatePyme(input: PymeInput): Promise<CalculationResult> {
+  const items: BudgetItemInput[] = [];
+  let position = 1;
+
+  // Cargar parámetros de BD
+  const params = await getParameters();
+
+  // 1. BASE CONTABILIDAD
+  const baseContaParam = params.get('BASE_CONTABILIDAD')?.[0];
+  const precioBase = baseContaParam ? Number(baseContaParam.paramValue) : getPrecioBaseContabilidad(input.asientosMes);
+  
+  items.push({
+    concept: `Contabilidad base mensual`,
+    category: 'BASE_CONTABILIDAD',
+    position: position++,
+    quantity: 1,
+    unitPrice: precioBase,
+    vatPct: 21,
+    subtotal: precioBase,
+    total: precioBase * 1.21,
+  });
+
+  let totalContabilidad = precioBase;
+
+  // 2. EXTRAS CON PARÁMETROS DE BD
+  const extras = [
+    { key: 'IMPUESTO_111', label: 'Modelo 111 (Retenciones IRPF)', enabled: input.irpfAlquileres },
+    { key: 'IMPUESTO_115', label: 'Modelo 115 (Retenciones alquileres)', enabled: input.irpfAlquileres },
+    { key: 'IMPUESTO_303', label: 'Modelo 303 (IVA Trimestral)', enabled: input.ivaIntracomunitario },
+  ];
+
+  extras.forEach((extra) => {
+    if (extra.enabled) {
+      const extraParam = params.get(extra.key)?.[0];
+      const precio = extraParam ? Number(extraParam.paramValue) : 25;
+      
+      items.push({
+        concept: extra.label,
+        category: extra.key,
+        position: position++,
+        quantity: 1,
+        unitPrice: precio,
+        vatPct: 21,
+        subtotal: precio,
+        total: precio * 1.21,
+      });
+      totalContabilidad += precio;
+    }
+  });
+
+  // Notificaciones e INE (no están en parámetros PYME, usar valores fijos)
+  if (input.notificaciones) {
+    items.push({
+      concept: 'Notificaciones',
+      category: 'EXTRA_NOTIFICACIONES',
+      position: position++,
+      quantity: 1,
+      unitPrice: 5,
+      vatPct: 21,
+      subtotal: 5,
+      total: 5 * 1.21,
+    });
+    totalContabilidad += 5;
+  }
+
+  if (input.estadisticasINE) {
+    items.push({
+      concept: 'Estadísticas INE',
+      category: 'EXTRA_INE',
+      position: position++,
+      quantity: 1,
+      unitPrice: 5,
+      vatPct: 21,
+      subtotal: 5,
+      total: 5 * 1.21,
+    });
+    totalContabilidad += 5;
+  }
+
+  // 3. MULTIPLICADOR POR FACTURACIÓN
+  const multiplicador = getMultiplicadorFacturacion(input.facturacion);
+  if (multiplicador > 1) {
+    const incremento = totalContabilidad * (multiplicador - 1);
+    items.push({
+      concept: `Recargo por facturación (${input.facturacion.toLocaleString()}€) - ${((multiplicador - 1) * 100).toFixed(0)}%`,
+      category: 'RECARGO_FACTURACION',
+      position: position++,
+      quantity: 1,
+      unitPrice: incremento,
+      vatPct: 21,
+      subtotal: incremento,
+      total: incremento * 1.21,
+    });
+    totalContabilidad += incremento;
+  }
+
+  // 4. NÓMINAS CON PARÁMETROS DE BD
+  let totalLaboral = 0;
+  if (input.nominasMes > 0) {
+    const precioNomina = getPrecioNomina(input.nominasMes, params);
+    const totalNominas = input.nominasMes * precioNomina;
+    items.push({
+      concept: `Nóminas (${input.nominasMes} x ${precioNomina}€)`,
+      category: 'NOMINAS',
+      position: position++,
+      quantity: input.nominasMes,
+      unitPrice: precioNomina,
+      vatPct: 21,
+      subtotal: totalNominas,
+      total: totalNominas * 1.21,
+    });
+    totalLaboral = totalNominas;
+  }
+
+  // 5. TOTAL ANTES DE MENSUALIDAD Y DESCUENTO
+  let totalBase = totalContabilidad + totalLaboral;
+
+  // 6. MENSUALIDAD (si periodo = MENSUAL)
+  if (input.periodo === 'MENSUAL') {
+    const mensualidad = Math.max(totalBase * 0.20, 10);
+    items.push({
+      concept: 'Recargo por liquidaciones mensuales',
+      category: 'RECARGO_MENSUALIDAD',
+      position: position++,
+      quantity: 1,
+      unitPrice: mensualidad,
+      vatPct: 21,
+      subtotal: mensualidad,
+      total: mensualidad * 1.21,
+    });
+    totalBase += mensualidad;
+    totalContabilidad += mensualidad;
+  }
+
+  // 7. DESCUENTO EMPRENDEDOR (-20%)
+  if (input.emprendedor) {
+    const descuento = totalBase * 0.20;
+    items.push({
+      concept: 'Descuento Emprendedor (-20%)',
+      category: 'DESCUENTO_EMPRENDEDOR',
+      position: position++,
+      quantity: 1,
+      unitPrice: -descuento,
+      vatPct: 21,
+      subtotal: -descuento,
+      total: -descuento * 1.21,
+    });
+    totalBase -= descuento;
+  }
+
+  // 8. CALCULAR TOTALES
+  const subtotal = items.reduce((sum, item) => sum + item.subtotal, 0);
+  const vatTotal = items.reduce((sum, item) => sum + (item.subtotal * (item.vatPct / 100)), 0);
+  const total = subtotal + vatTotal;
+
+  return {
+    items,
+    subtotal: Math.round(subtotal * 100) / 100,
+    vatTotal: Math.round(vatTotal * 100) / 100,
+    total: Math.round(total * 100) / 100,
+  };
+}
+
+// Función para limpiar caché (útil después de editar parámetros)
+export function clearParametersCache() {
+  parametersCache = null;
+  cacheTimestamp = 0;
+}

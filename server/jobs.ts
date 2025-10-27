@@ -1,5 +1,5 @@
 import cron from "node-cron";
-import type { PrismaClient } from "@prisma/client";
+import { PrismaClient } from "@prisma/client";
 import nodemailer from "nodemailer";
 import { addDays, format, isBefore, parseISO } from "date-fns";
 import { es } from "date-fns/locale";
@@ -72,27 +72,27 @@ export const taskRemindersJob = cron.createTask("0 9 * * *", async () => {
     const nextWeek = addDays(new Date(), 7);
 
     // Obtener tareas que vencen en las próximas 24-48 horas
-    const upcomingTasks = await prisma.task.findMany({
+    const upcomingTasks = await prisma.tasks.findMany({
       where: {
         estado: { notIn: ["COMPLETADA"] },
-        fechaVencimiento: {
+        fecha_vencimiento: {
           gte: new Date(),
           lte: nextWeek,
         },
       },
       include: {
-        cliente: true,
-        asignado: true,
+        clients: true,
+        users: true, // asignado → users
       },
     });
 
     console.log(`📋 Tareas próximas a vencer: ${upcomingTasks.length}`);
 
     for (const task of upcomingTasks) {
-      if (!task.fechaVencimiento) continue;
+      if (!task.fecha_vencimiento) continue;
       
       const diasRestantes = Math.ceil(
-        (new Date(task.fechaVencimiento).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24)
+        (new Date(task.fecha_vencimiento).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24)
       );
 
       if (diasRestantes <= 0) continue; // Ya vencida
@@ -107,9 +107,9 @@ export const taskRemindersJob = cron.createTask("0 9 * * *", async () => {
           </div>
           <div style="padding: 20px; background: #f9fafb;">
             <h3>${task.titulo}</h3>
-            <p><strong>Cliente:</strong> ${task.cliente?.razonSocial || "Sin cliente"}</p>
+            <p><strong>Cliente:</strong> ${task.clients?.razonSocial || "Sin cliente"}</p>
             <p><strong>Descripción:</strong> ${task.descripcion || "Sin descripción"}</p>
-            <p><strong>Vence:</strong> ${format(new Date(task.fechaVencimiento), "dd 'de' MMMM, yyyy", { locale: es })}</p>
+            <p><strong>Vence:</strong> ${format(new Date(task.fecha_vencimiento), "dd 'de' MMMM, yyyy", { locale: es })}</p>
             <p><strong>Días restantes:</strong> ${diasRestantes}</p>
             <p><strong>Prioridad:</strong> ${task.prioridad}</p>
             <hr style="margin: 20px 0; border: none; border-top: 1px solid #e5e7eb;">
@@ -120,9 +120,9 @@ export const taskRemindersJob = cron.createTask("0 9 * * *", async () => {
         </div>
       `;
 
-      if (task.asignado?.email) {
+      if (task.users?.email) {
         await sendEmail(
-          task.asignado.email,
+          task.users.email,
           `${urgencia}: ${task.titulo} - Vence en ${diasRestantes} día(s)`,
           html
         );
@@ -144,7 +144,7 @@ export const taxRemindersJob = cron.createTask("0 8 * * *", async () => {
     const nextMonth = addDays(now, 30);
 
     // Obtener clientes activos - Note: Currently no status field in Client model
-      const clientes = await prisma.client.findMany({
+      const clientes = await prisma.clients.findMany({
         include: ({
           clientTaxes: {
             include: {
@@ -225,22 +225,22 @@ export const taxCalendarRefreshJob = cron.createTask("0 0 * * *", async () => {
   console.log("🗓️  Ejecutando job: refresco calendario fiscal");
 
   try {
-    const entries = await prisma.taxCalendar.findMany();
+    const entries = await prisma.tax_calendar.findMany();
     let updated = 0;
 
     for (const entry of entries) {
       const derived = calculateDerivedFields(entry.startDate, entry.endDate);
       if (
         entry.status !== derived.status ||
-        entry.daysToStart !== derived.daysToStart ||
-        entry.daysToEnd !== derived.daysToEnd
+        entry.days_to_start !== derived.daysToStart ||
+        entry.days_to_end !== derived.daysToEnd
       ) {
-        await prisma.taxCalendar.update({
+        await prisma.tax_calendar.update({
           where: { id: entry.id },
           data: {
             status: derived.status,
-            daysToStart: derived.daysToStart,
-            daysToEnd: derived.daysToEnd,
+            days_to_start: derived.daysToStart,
+            days_to_end: derived.daysToEnd,
           },
         });
         updated++;
@@ -273,11 +273,38 @@ export const cleanupSessionsJob = cron.createTask("0 * * * *", async () => {
   console.log("🧹 Ejecutando job: limpieza de sesiones");
 
   try {
-    // Eliminar sesiones de Express más antiguas de 7 días
-    // Esto depende de cómo estés almacenando las sesiones
-    // Si usas connect-pg-simple o similar, aquí irían las queries
+    const prisma = new PrismaClient();
     
-    console.log("✅ Sesiones limpias");
+    // Limpiar sesiones cerradas más antiguas de 7 días
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    
+    const closedSessionsResult = await prisma.sessions.deleteMany({
+      where: {
+        ended_at: { 
+          not: null,
+          lt: sevenDaysAgo 
+        }
+      }
+    });
+    
+    // Marcar como cerradas las sesiones inactivas por más de 2 horas
+    const twoHoursAgo = new Date();
+    twoHoursAgo.setHours(twoHoursAgo.getHours() - 2);
+    
+    const inactiveSessionsResult = await prisma.sessions.updateMany({
+      where: {
+        ended_at: null,
+        last_seen_at: { lt: twoHoursAgo }
+      },
+      data: {
+        ended_at: new Date()
+      }
+    });
+    
+    console.log(`✅ Sesiones limpias: ${closedSessionsResult.count} eliminadas, ${inactiveSessionsResult.count} marcadas como inactivas`);
+    
+    await prisma.$disconnect();
   } catch (error) {
     console.error("❌ Error en job de limpieza:", error);
   }

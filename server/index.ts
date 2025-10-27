@@ -7,10 +7,15 @@ import { PrismaClient } from "@prisma/client";
 import { httpLogger, logger, dbLogger, logError } from "./logger";
 import { initializeJobs, startAllJobs, stopAllJobs } from "./jobs";
 import bcrypt from "bcrypt";
+import { validateSecurityConfig } from "./middleware/security-validation";
+import { randomUUID } from "crypto";
 
 const SALT_ROUNDS = 10;
 
 const app = express();
+
+// SEGURIDAD: Validar configuración crítica ANTES de iniciar el servidor
+validateSecurityConfig();
 
 // Trust proxy para logging
 app.set("trust proxy", 1);
@@ -151,9 +156,17 @@ app.get("/ready", async (_req: Request, res: Response) => {
  */
 async function createInitialAdmin() {
   try {
-    // Get admin role
-    const adminRole = await prisma.role.findFirst({
-      where: { name: 'Administrador' }
+    // Get admin role (select solo campos que existen)
+    const adminRole = await prisma.roles.findFirst({
+      where: { name: 'Administrador' },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        is_system: true,
+        createdAt: true,
+        updatedAt: true
+      }
     });
 
     if (!adminRole) {
@@ -162,7 +175,7 @@ async function createInitialAdmin() {
     }
 
     // Check if any admin user exists
-    const existingAdmin = await prisma.user.findFirst({
+    const existingAdmin = await prisma.users.findFirst({
       where: { roleId: adminRole.id }
     });
 
@@ -276,7 +289,7 @@ async function createInitialAdmin() {
     }
 
     // Check if user with same email or username exists
-    const existingUser = await prisma.user.findFirst({
+    const existingUser = await prisma.users.findFirst({
       where: {
         OR: [
           { email: adminEmail },
@@ -296,13 +309,15 @@ async function createInitialAdmin() {
     // Hash password
     const hashedPassword = await bcrypt.hash(adminPassword, SALT_ROUNDS);
 
-    // Create admin user
-    const adminUser = await prisma.user.create({
+    // Create admin user as OWNER
+    const adminUser = await prisma.users.create({
       data: {
+        id: randomUUID(),
         username: adminUsername,
         email: adminEmail,
         password: hashedPassword,
         roleId: adminRole.id,
+        is_owner: true  // Mark as owner
       }
     });
 
@@ -337,6 +352,35 @@ async function createInitialAdmin() {
   // Create initial admin user if needed
   await createInitialAdmin();
 
+  // Wait for DB with retries before initializing routes that depend on DB schema
+  async function waitForDatabase(retries = 5, delayMs = 2000) {
+    for (let i = 0; i < retries; i++) {
+      try {
+        await prisma.$queryRaw`SELECT 1`;
+        return true;
+      } catch (err) {
+        logger.warn({ attempt: i + 1, err }, `DB not available yet (attempt ${i + 1}/${retries})`);
+        // last attempt - break
+        if (i < retries - 1) {
+          await new Promise((r) => setTimeout(r, delayMs));
+        }
+      }
+    }
+    return false;
+  }
+
+  const dbRetries = Number(process.env.DB_CONNECT_RETRIES || '5');
+  const dbDelay = Number(process.env.DB_CONNECT_DELAY_MS || '2000');
+  const dbAvailable = await waitForDatabase(dbRetries, dbDelay);
+  if (!dbAvailable) {
+    const force = process.env.FORCE_START_WITHOUT_DB === 'true';
+    if (!force) {
+      logger.fatal({ retries: dbRetries }, 'No se pudo conectar a la base de datos. Aborting startup. Set FORCE_START_WITHOUT_DB=true to bypass.');
+      process.exit(1);
+    }
+    logger.warn('FORCE_START_WITHOUT_DB=true — arrancando en modo degradado sin inicializar ciertas dependencias de DB');
+  }
+
   // Inicializar sistema de jobs con PrismaClient compartido
   initializeJobs(prisma);
 
@@ -361,7 +405,8 @@ async function createInitialAdmin() {
     );
   }
 
-  const server = await registerRoutes(app);
+  // If DB is unavailable and forced, skip DB init step inside registerRoutes
+  const server = await registerRoutes(app, { skipDbInit: !dbAvailable });
 
   // Error handler global
   app.use((err: any, req: Request, res: Response, _next: NextFunction) => {

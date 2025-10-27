@@ -2,9 +2,10 @@ import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import { Server as SocketIOServer } from "socket.io";
 import { prismaStorage as storage } from "./prisma-storage";
-import { PrismaClient, Prisma, FilingStatus } from "@prisma/client";
+import { PrismaClient, Prisma } from "@prisma/client";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
+import { randomUUID } from "crypto";
 import {
   registerSchema,
   validateZod,
@@ -24,6 +25,13 @@ import path from "path";
 import fs from "fs";
 import { configureSMTP, getSMTPConfig, checkAndSendReminders } from "./email";
 import { setSocketIO, notifyTaskChange, notifyClientChange, notifyTaxChange, notifyManualChange } from "./websocket";
+import adminSessionsRouter from './admin-sessions';
+import priceCatalogRouter from './price-catalog';
+import budgetsRouter from './budgets';
+import publicBudgetsRouter from './public-budgets';
+import budgetParametersRouter from './budget-parameters';
+import budgetTemplatesRouter from './budget-templates';
+import { documentsRouter } from './documents';
 import { checkForUpdates, getCurrentVersion } from "./services/version-service.js";
 import { createSystemBackup, listBackups, restoreFromBackup } from "./services/backup-service.js";
 import { performSystemUpdate, verifyGitSetup, getUpdateHistory } from "./services/update-service.js";
@@ -32,10 +40,18 @@ import { uploadToStorage } from "./middleware/storage-upload";
 import { TAX_RULES, type ClientType, type TaxPeriodicity } from "@shared/tax-rules";
 import { logger } from "./logger";
 import { buildTaxControlCsv, buildTaxControlXlsx } from "./services/tax-control-utils";
+import { loginLimiter, registerLimiter, apiLimiter, strictLimiter } from "./middleware/rate-limit";
+import { validateSecurityConfig } from "./middleware/security-validation";
+import { registerEpicTasksRoutes } from "./epic-tasks-routes";
 
 const prisma = new PrismaClient();
 
-const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key-change-this-in-production";
+// SEGURIDAD: JWT_SECRET sin fallback inseguro
+// La validación se hace en server/index.ts con validateSecurityConfig()
+if (!process.env.JWT_SECRET) {
+  throw new Error('FATAL: JWT_SECRET no está configurado. Este valor es OBLIGATORIO para la seguridad del sistema.');
+}
+const JWT_SECRET = process.env.JWT_SECRET;
 const SALT_ROUNDS = 10;
 
 // Configuración de Multer para subida de archivos
@@ -126,6 +142,7 @@ interface AuthRequest extends Request {
     id: string;
     username: string;
     roleId: string;
+    roleName?: string | null;
     permissions: string[];
   };
 }
@@ -147,14 +164,15 @@ const authenticateToken = async (req: AuthRequest, res: Response, next: NextFunc
     }
 
     // Extraer permisos en formato "resource:action"
-    const permissions = user.role?.permissions?.map((rp: any) => 
-      `${rp.permission.resource}:${rp.permission.action}`
+    const permissions = user.roles?.role_permissions?.map((rp: any) => 
+      `${rp.permissions.resource}:${rp.permissions.action}`
     ) || [];
 
     req.user = { 
       id: user.id, 
       username: user.username, 
       roleId: user.roleId,
+      roleName: user.roles?.name || null,
       permissions 
     };
     next();
@@ -174,13 +192,18 @@ const authorizeRoles = (...roles: string[]) => {
 };
 
 // Middleware de autorización por permiso (RBAC)
-const checkPermission = (requiredPermission: string) => {
+export const checkPermission = (requiredPermission: string) => {
   return (req: AuthRequest, res: Response, next: NextFunction) => {
     if (!req.user) {
       return res.status(401).json({ error: "Usuario no autenticado" });
     }
 
-    // Verificar si el usuario tiene el permiso específico
+    // Si el usuario es administrador, tiene acceso a todo
+    if (req.user.roleName === 'Administrador') {
+      return next();
+    }
+
+    // Para otros usuarios, verificar si tienen el permiso específico
     if (!req.user.permissions.includes(requiredPermission)) {
       return res.status(403).json({ 
         error: "No tienes permisos para esta acción",
@@ -232,21 +255,34 @@ async function createAudit(
   }
 }
 
-export async function registerRoutes(app: Express): Promise<Server> {
-  try {
-    await storage.ensureTaxModelsConfigSeeded();
-  } catch (error: any) {
-    const message =
-      error instanceof Error ? error.message : "No se pudo inicializar tax_models_config";
-    logger.fatal(
-      {
-        err: error,
-        remediation: "Ejecuta `npx prisma db push` y reinicia el servidor",
-      },
-      message
-    );
-    throw error;
+export async function registerRoutes(app: Express, options?: { skipDbInit?: boolean }): Promise<Server> {
+  if (!options?.skipDbInit) {
+    try {
+      await storage.ensureTaxModelsConfigSeeded();
+    } catch (error: any) {
+      const message =
+        error instanceof Error ? error.message : "No se pudo inicializar tax_models_config";
+      logger.fatal(
+        {
+          err: error,
+          remediation: "Ejecuta `npx prisma db push` y reinicia el servidor",
+        },
+        message
+      );
+      throw error;
+    }
+  } else {
+    logger.warn('Se ha saltado la inicialización de tax_models_config por configuración (skipDbInit=true)');
   }
+
+  // SEGURIDAD: Rate limiting general para todos los endpoints /api/*
+  // Excluye /api/health para permitir health checks ilimitados
+  app.use('/api', (req, res, next) => {
+    if (req.path === '/health' || req.path === '/api/health') {
+      return next();
+    }
+    return apiLimiter(req, res, next);
+  });
 
   // ==================== HEALTH CHECK ====================
   app.get("/api/health", async (req: Request, res: Response) => {
@@ -268,8 +304,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // ==================== AUTH ROUTES ====================
+  // SEGURIDAD: Rate limiting aplicado - máximo 3 registros por hora por IP
   app.post(
     "/api/auth/register",
+    registerLimiter,
     validateZod(registerSchema),
     async (req: Request, res: Response) => {
 
@@ -290,7 +328,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // (permite crear/editar/eliminar clientes, tareas, impuestos, etc.)
         let defaultRoleId = roleId;
         if (!defaultRoleId) {
-          const defaultRole = await prisma.role.findUnique({
+          const defaultRole = await prisma.roles.findUnique({
             where: { name: "Gestor" }
           });
           if (defaultRole) {
@@ -318,148 +356,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   );
 
-  // ==================== TAX REPORTS ====================
-  app.get(
-    "/api/tax/reports/kpis",
-    authenticateToken,
-    checkPermission("taxes:read"),
-    async (req: AuthRequest, res: Response) => {
-      try {
-        const { getReportsKpis } = await import('./services/reports-service');
-        const r = await getReportsKpis({
-          year: req.query.year ? Number(req.query.year) : undefined,
-          periodId: req.query.periodId as string | undefined,
-          model: (req.query.model as string | undefined)?.toUpperCase(),
-          assigneeId: req.query.assigneeId as string | undefined,
-          clientId: req.query.clientId as string | undefined,
-          status: req.query.status as string | undefined,
-        });
-        res.json(r);
-      } catch (e: any) {
-        res.status(500).json({ error: e.message });
-      }
-    }
-  );
-
-  app.get(
-    "/api/tax/reports/summary/model",
-    authenticateToken,
-    checkPermission("taxes:read"),
-    async (req: AuthRequest, res: Response) => {
-      try {
-        const { getSummaryByModel } = await import('./services/reports-service');
-        const r = await getSummaryByModel({
-          year: req.query.year ? Number(req.query.year) : undefined,
-          periodId: req.query.periodId as string | undefined,
-          model: (req.query.model as string | undefined)?.toUpperCase(),
-          status: req.query.status as string | undefined,
-        });
-        res.json(r);
-      } catch (e: any) {
-        res.status(500).json({ error: e.message });
-      }
-    }
-  );
-
-  app.get(
-    "/api/tax/reports/summary/assignee",
-    authenticateToken,
-    checkPermission("taxes:read"),
-    async (req: AuthRequest, res: Response) => {
-      try {
-        const { getSummaryByAssignee } = await import('./services/reports-service');
-        const r = await getSummaryByAssignee({
-          year: req.query.year ? Number(req.query.year) : undefined,
-          periodId: req.query.periodId as string | undefined,
-          status: req.query.status as string | undefined,
-        });
-        res.json(r);
-      } catch (e: any) {
-        res.status(500).json({ error: e.message });
-      }
-    }
-  );
-
-  app.get(
-    "/api/tax/reports/summary/client",
-    authenticateToken,
-    checkPermission("taxes:read"),
-    async (req: AuthRequest, res: Response) => {
-      try {
-        const { getSummaryByClient } = await import('./services/reports-service');
-        const r = await getSummaryByClient({
-          year: req.query.year ? Number(req.query.year) : undefined,
-          periodId: req.query.periodId as string | undefined,
-          status: req.query.status as string | undefined,
-        });
-        res.json(r);
-      } catch (e: any) {
-        res.status(500).json({ error: e.message });
-      }
-    }
-  );
-
-  app.get(
-    "/api/tax/reports/trends",
-    authenticateToken,
-    checkPermission("taxes:read"),
-    async (req: AuthRequest, res: Response) => {
-      try {
-        const { getTrends } = await import('./services/reports-service');
-        const r = await getTrends({
-          year: req.query.year ? Number(req.query.year) : undefined,
-          model: (req.query.model as string | undefined)?.toUpperCase(),
-          granularity: (req.query.granularity as any) || 'month',
-        });
-        res.json(r);
-      } catch (e: any) {
-        res.status(500).json({ error: e.message });
-      }
-    }
-  );
-
-  app.get(
-    "/api/tax/reports/exceptions",
-    authenticateToken,
-    checkPermission("taxes:read"),
-    async (req: AuthRequest, res: Response) => {
-      try {
-        const { getExceptions } = await import('./services/reports-service');
-        const r = await getExceptions({
-          year: req.query.year ? Number(req.query.year) : undefined,
-          periodId: req.query.periodId as string | undefined,
-        });
-        res.json(r);
-      } catch (e: any) {
-        res.status(500).json({ error: e.message });
-      }
-    }
-  );
-
-  app.get(
-    "/api/tax/reports/filings",
-    authenticateToken,
-    checkPermission("taxes:read"),
-    async (req: AuthRequest, res: Response) => {
-      try {
-        const { getFilings } = await import('./services/reports-service');
-        const r = await getFilings({
-          year: req.query.year ? Number(req.query.year) : undefined,
-          periodId: req.query.periodId as string | undefined,
-          model: (req.query.model as string | undefined)?.toUpperCase(),
-          assigneeId: req.query.assigneeId as string | undefined,
-          clientId: req.query.clientId as string | undefined,
-          status: req.query.status as string | undefined,
-          page: req.query.page ? Number(req.query.page) : 1,
-          size: req.query.size ? Number(req.query.size) : 50,
-        });
-        res.json(r);
-      } catch (e: any) {
-        res.status(500).json({ error: e.message });
-      }
-    }
-  );
-  app.post("/api/auth/login", async (req: Request, res: Response) => {
+  // SEGURIDAD: Rate limiting aplicado - máximo 5 intentos cada 15 minutos
+  app.post("/api/auth/login", loginLimiter, async (req: Request, res: Response) => {
     try {
       const { username, password } = req.body;
 
@@ -491,12 +389,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { password: _, ...userWithoutPassword } = fullUser;
       
       // Incluir permisos formateados
-      const permissions = fullUser.role?.permissions?.map((rp: any) => 
-        `${rp.permission.resource}:${rp.permission.action}`
+      const permissions = fullUser.roles?.role_permissions?.map((rp: any) => 
+        `${rp.permissions.resource}:${rp.permissions.action}`
       ) || [];
       
       // Incluir roleName para fácil acceso en el frontend
-      const roleName = fullUser.role?.name || null;
+      const roleName = fullUser.roles?.name || null;
 
       res.json({ user: { ...userWithoutPassword, permissions, roleName }, token });
     } catch (error: any) {
@@ -517,14 +415,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { password: _, ...userWithoutPassword } = user;
       
       // Incluir permisos formateados
-      const permissions = user.role?.permissions?.map((rp: any) => 
-        `${rp.permission.resource}:${rp.permission.action}`
+      const permissions = user.roles?.role_permissions?.map((rp: any) => 
+        `${rp.permissions.resource}:${rp.permissions.action}`
       ) || [];
       
       // Incluir roleName para fácil acceso en el frontend
-      const roleName = user.role?.name || null;
+      const roleName = user.roles?.name || null;
       
-      res.json({ ...userWithoutPassword, permissions, roleName });
+      // Incluir is_owner flag
+      const isOwner = (user as any).is_owner || false;
+      
+      res.json({ ...userWithoutPassword, permissions, roleName, is_owner: isOwner });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -533,9 +434,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ==================== USER ROUTES ====================
   app.get("/api/users", authenticateToken, async (req: Request, res: Response) => {
     try {
-      const users = await storage.getAllUsers();
-      const usersWithoutPassword = users.map(({ password, ...user }) => user);
-      res.json(usersWithoutPassword);
+      const users = await prisma.users.findMany({
+        select: {
+          id: true,
+          username: true,
+          email: true,
+          createdAt: true,
+          isActive: true,
+          is_owner: true,
+          roleId: true,
+          roles: {
+            select: {
+              name: true,
+              description: true
+            }
+          }
+        }
+      });
+      res.json(users);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -624,6 +540,126 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   );
 
+  // Endpoint para transferir el rol de Owner a otro usuario (solo Owner puede hacerlo)
+  app.post(
+    "/api/users/:id/transfer-owner",
+    authenticateToken,
+    async (req: AuthRequest, res: Response) => {
+      try {
+        const { id } = req.params;
+        const currentUserId = req.user!.id;
+
+        // Verificar que el usuario actual es Owner
+        const currentUser = await prisma.users.findUnique({
+          where: { id: currentUserId },
+          select: { is_owner: true }
+        });
+
+        if (!currentUser?.is_owner) {
+          return res.status(403).json({ 
+            error: 'Acceso denegado: Solo el Owner puede transferir este rol',
+            code: 'NOT_OWNER'
+          });
+        }
+
+        // Verificar que el usuario destino existe
+        const targetUser = await prisma.users.findUnique({
+          where: { id }
+        });
+
+        if (!targetUser) {
+          return res.status(404).json({ error: 'Usuario destino no encontrado' });
+        }
+
+        if (targetUser.id === currentUserId) {
+          return res.status(400).json({ error: 'No puedes transferir el rol a ti mismo' });
+        }
+
+        // Transferir el rol
+        await prisma.users.update({
+          where: { id: currentUserId },
+          data: { is_owner: false }
+        });
+
+        const newOwner = await prisma.users.update({
+          where: { id },
+          data: { is_owner: true }
+        });
+
+        // Registrar en auditoría
+        await storage.createActivityLog({
+          usuarioId: currentUserId,
+          accion: `Transfirió el rol de Owner a ${targetUser.username}`,
+          modulo: "admin",
+          detalles: `Nuevo Owner: ${targetUser.username} (${targetUser.email})`,
+        });
+
+        const { password: _, ...userWithoutPassword } = newOwner;
+        res.json({ 
+          message: 'Rol de Owner transferido exitosamente',
+          newOwner: userWithoutPassword 
+        });
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
+  // POST /api/users/:id/set-owner - Establecer usuario como Owner (Solo para admin en desarrollo)
+  app.post(
+    "/api/users/:id/set-owner",
+    authenticateToken,
+    checkPermission("admin:system"),
+    async (req: AuthRequest, res: Response) => {
+      try {
+        const { id } = req.params;
+        const currentUserId = req.user!.id;
+
+        // Verificar que el usuario destino existe
+        const targetUser = await prisma.users.findUnique({
+          where: { id },
+          select: { id: true, username: true, email: true, is_owner: true }
+        });
+
+        if (!targetUser) {
+          return res.status(404).json({ error: "Usuario no encontrado" });
+        }
+
+        if (targetUser.is_owner) {
+          return res.status(400).json({ error: "Este usuario ya es Owner" });
+        }
+
+        // Remover Owner de todos los demás
+        await prisma.users.updateMany({
+          where: { is_owner: true },
+          data: { is_owner: false }
+        });
+
+        // Establecer como Owner
+        const newOwner = await prisma.users.update({
+          where: { id },
+          data: { is_owner: true }
+        });
+
+        // Registrar en auditoría
+        await storage.createActivityLog({
+          usuarioId: currentUserId,
+          accion: `Estableció a ${targetUser.username} como Owner`,
+          modulo: "admin",
+          detalles: `Nuevo Owner: ${targetUser.username} (${targetUser.email})`,
+        });
+
+        const { password: _, ...userWithoutPassword } = newOwner;
+        res.json({ 
+          message: 'Usuario establecido como Owner exitosamente',
+          owner: userWithoutPassword 
+        });
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
   app.delete(
     "/api/users/:id",
     authenticateToken,
@@ -638,10 +674,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(404).json({ error: "Usuario no encontrado" });
         }
 
+        // ⛔ NO PERMITIR ELIMINAR AL OWNER
+        const userToDelete = await prisma.users.findUnique({
+          where: { id },
+          select: { is_owner: true, username: true }
+        });
+
+        if (userToDelete?.is_owner) {
+          return res.status(403).json({ 
+            error: `No se puede eliminar al usuario Owner (${userToDelete.username}). Solo el Owner puede transferir su rol a otro usuario antes de poder ser eliminado.`,
+            code: 'CANNOT_DELETE_OWNER'
+          });
+        }
+
         // Verificar relaciones que se borrarán en cascada
-        const manuals = await prisma.manual.count({ where: { autorId: id } });
-        const activityLogs = await prisma.activityLog.count({ where: { usuarioId: id } });
-        const auditTrails = await prisma.auditTrail.count({ where: { usuarioId: id } });
+        const manuals = await prisma.manuals.count({ where: { autor_id: id } });
+        const activityLogs = await prisma.activity_logs.count({ where: { usuarioId: id } });
+        const auditTrails = await prisma.audit_trail.count({ where: { usuarioId: id } });
 
         // Mostrar advertencia si hay manuales (se borrarán)
         if (manuals > 0) {
@@ -671,11 +720,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
         });
       } catch (error: any) {
-        if (error.code === 'P2003') {
+        if (error?.code === 'CANNOT_DELETE_OWNER') {
+          return res.status(403).json({ error: error.message || 'No se puede eliminar al Owner', code: 'CANNOT_DELETE_OWNER' });
+        }
+
+        if (error?.code === 'P2003') {
           return res.status(409).json({ 
             error: "No se puede eliminar el usuario: tiene relaciones activas con otros registros del sistema" 
           });
         }
+
         res.status(500).json({ error: error.message });
       }
     }
@@ -684,13 +738,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ==================== CLIENT ROUTES ====================
   app.get("/api/clients", authenticateToken, async (req: Request, res: Response) => {
     try {
-      const full = req.query.full === '1' || req.query.full === 'true';
-      if (full) {
-        const clients = await storage.getAllClients();
-        return res.json(clients);
-      }
-      const list = await storage.getAllClientsSummary();
-      res.json(list);
+      const clients = await storage.getAllClients();
+      res.json(clients);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -804,11 +853,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
         
         // Verificar si el cliente tiene impuestos asociados
-        const clientTaxes = await prisma.clientTax.findMany({
+        const clientTaxes = await prisma.client_tax.findMany({
           where: { clientId: id }
         });
         
-        const assignmentCount = await prisma.clientTaxAssignment.count({
+        const assignmentCount = await prisma.client_tax_assignments.count({
           where: { clientId: id },
         });
         
@@ -1105,9 +1154,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (!existing) {
           return res.status(404).json({ error: "Asignación no encontrada" });
         }
-        const hard = req.query.hard === '1' || req.query.hard === 'true';
 
-        const hasHistory = hard ? false : await storage.hasAssignmentHistoricFilings(
+        const hasHistory = await storage.hasAssignmentHistoricFilings(
           existing.clientId,
           existing.taxModelCode
         );
@@ -1121,9 +1169,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
           message = "Asignación desactivada. Posee histórico de presentaciones.";
           action = "UPDATE";
         } else {
-          if (hard) {
-            await prisma.clientTaxFiling.deleteMany({ where: { clientId: existing.clientId, taxModelCode: existing.taxModelCode } });
-          }
           result = await storage.deleteClientTaxAssignment(assignmentId);
           message = "Asignación eliminada correctamente.";
         }
@@ -1154,78 +1199,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
           softDeleted: hasHistory,
           message,
         });
-      } catch (error: any) {
-        res.status(500).json({ error: error.message });
-      }
-    }
-  );
-
-  // Bulk remove client tax assignments
-  app.delete(
-    "/api/clients/:id/tax-assignments",
-    authenticateToken,
-    checkPermission("clients:update"),
-    async (req: AuthRequest, res: Response) => {
-      try {
-        const clientId = req.params.id;
-        const client = await storage.getClient(clientId);
-        if (!client) return res.status(404).json({ error: 'Cliente no encontrado' });
-
-        const codes = Array.isArray(req.body?.codes) ? (req.body.codes as string[]).map((c) => String(c).toUpperCase()) : undefined;
-        const assignmentIds = Array.isArray(req.body?.assignmentIds) ? (req.body.assignmentIds as string[]) : undefined;
-        const hard = Boolean(req.body?.hard);
-        let result;
-        if (assignmentIds && assignmentIds.length > 0) {
-          result = await storage.bulkRemoveAssignmentsByIds(clientId, assignmentIds, { hard });
-        } else {
-          result = await storage.bulkRemoveClientTaxAssignments(clientId, { codes, hard });
-        }
-        const assignments = await storage.getClientTaxAssignments(clientId);
-
-        await storage.createActivityLog({
-          usuarioId: req.user!.id,
-          accion: `Limpieza de asignaciones fiscales (${result.deleted} eliminadas, ${result.deactivated} desactivadas)` ,
-          modulo: 'clientes',
-          detalles: `Cliente: ${client.razonSocial}${codes ? `, Modelos: ${codes.join(',')}` : ''}`,
-        });
-
-        res.json({ ...result, assignments });
-      } catch (error: any) {
-        res.status(500).json({ error: error.message });
-      }
-    }
-  );
-
-  // Alias por compatibilidad: algunos entornos filtran DELETE con body
-  app.post(
-    "/api/clients/:id/tax-assignments/delete",
-    authenticateToken,
-    checkPermission("clients:update"),
-    async (req: AuthRequest, res: Response) => {
-      try {
-        const clientId = req.params.id;
-        const client = await storage.getClient(clientId);
-        if (!client) return res.status(404).json({ error: 'Cliente no encontrado' });
-
-        const codes = Array.isArray(req.body?.codes) ? (req.body.codes as string[]).map((c) => String(c).toUpperCase()) : undefined;
-        const assignmentIds = Array.isArray(req.body?.assignmentIds) ? (req.body.assignmentIds as string[]) : undefined;
-        const hard = Boolean(req.body?.hard);
-        let result;
-        if (assignmentIds && assignmentIds.length > 0) {
-          result = await storage.bulkRemoveAssignmentsByIds(clientId, assignmentIds, { hard });
-        } else {
-          result = await storage.bulkRemoveClientTaxAssignments(clientId, { codes, hard });
-        }
-        const assignments = await storage.getClientTaxAssignments(clientId);
-
-        await storage.createActivityLog({
-          usuarioId: req.user!.id,
-          accion: `Limpieza de asignaciones fiscales (vía POST) (${result.deleted} eliminadas, ${result.deactivated} desactivadas)` ,
-          modulo: 'clientes',
-          detalles: `Cliente: ${client.razonSocial}${codes ? `, Modelos: ${codes.join(',')}` : assignmentIds ? `, IDs: ${assignmentIds.length}` : ''}`,
-        });
-
-        res.json({ ...result, assignments });
       } catch (error: any) {
         res.status(500).json({ error: error.message });
       }
@@ -1288,17 +1261,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
 
         // Eliminar empleados existentes
-        await prisma.clientEmployee.deleteMany({
+        await prisma.client_employees.deleteMany({
           where: { clientId: id }
         });
 
         // Crear nuevas asignaciones
         if (employeeIds && Array.isArray(employeeIds) && employeeIds.length > 0) {
-          await prisma.clientEmployee.createMany({
+          await prisma.client_employees.createMany({
             data: employeeIds.map((userId: string) => ({
               clientId: id,
               userId,
-              isPrimary: userId === primaryEmployeeId
+              is_primary: userId === primaryEmployeeId
             }))
           });
 
@@ -1306,7 +1279,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (primaryEmployeeId) {
             await storage.updateClient(id, { responsableAsignado: primaryEmployeeId });
           }
-        } // Si no hay empleados: no modificar responsableAsignado (puede gestionarse desde la ficha general)
+        } else {
+          // Si no hay empleados, limpiar responsableAsignado
+          await storage.updateClient(id, { responsableAsignado: null });
+        }
 
         await storage.createActivityLog({
           usuarioId: req.user!.id,
@@ -1345,14 +1321,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         // Si se marca como primario, desmarcar otros
         if (isPrimary) {
-          await prisma.clientEmployee.updateMany({
+          await prisma.client_employees.updateMany({
             where: { clientId: id },
-            data: { isPrimary: false }
+            data: { is_primary: false }
           });
         }
 
         // Crear o actualizar la asignación
-        await prisma.clientEmployee.upsert({
+        await prisma.client_employees.upsert({
           where: {
             clientId_userId: {
               clientId: id,
@@ -1362,10 +1338,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           create: {
             clientId: id,
             userId,
-            isPrimary: isPrimary || false
+            is_primary: isPrimary || false
           },
           update: {
-            isPrimary: isPrimary || false
+            is_primary: isPrimary || false
           }
         });
 
@@ -1374,8 +1350,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           await storage.updateClient(id, { responsableAsignado: userId });
         } else {
           // Si estamos desmarcando como primario, verificar si hay otro primario
-          const primaryEmployee = await prisma.clientEmployee.findFirst({
-            where: { clientId: id, isPrimary: true }
+          const primaryEmployee = await prisma.client_employees.findFirst({
+            where: { clientId: id, is_primary: true }
           });
           await storage.updateClient(id, { 
             responsableAsignado: primaryEmployee ? primaryEmployee.userId : null 
@@ -1414,7 +1390,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const user = await storage.getUser(userId);
 
         // Verificar si el empleado a eliminar era el primario
-        const employeeToDelete = await prisma.clientEmployee.findUnique({
+        const employeeToDelete = await prisma.client_employees.findUnique({
           where: {
             clientId_userId: {
               clientId: id,
@@ -1423,7 +1399,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
         });
 
-        await prisma.clientEmployee.delete({
+        await prisma.client_employees.delete({
           where: {
             clientId_userId: {
               clientId: id,
@@ -1433,21 +1409,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
 
         // Si era primario, buscar otro empleado y marcarlo como primario, o limpiar responsableAsignado
-        if (employeeToDelete?.isPrimary) {
-          const remainingEmployee = await prisma.clientEmployee.findFirst({
+        if (employeeToDelete?.is_primary) {
+          const remainingEmployee = await prisma.client_employees.findFirst({
             where: { clientId: id }
           });
           
           if (remainingEmployee) {
             // Marcar el primer empleado restante como primario
-            await prisma.clientEmployee.update({
+            await prisma.client_employees.update({
               where: {
                 clientId_userId: {
                   clientId: id,
                   userId: remainingEmployee.userId
                 }
               },
-              data: { isPrimary: true }
+              data: { is_primary: true }
             });
             await storage.updateClient(id, { responsableAsignado: remainingEmployee.userId });
           } else {
@@ -1820,7 +1796,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       try {
         const manual = await storage.createManual({
           ...req.body,
-          autorId: req.user!.id,
+          autor_id: req.user!.id,
         });
         await storage.createActivityLog({
           usuarioId: req.user!.id,
@@ -2163,6 +2139,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
   );
 
   // ==================== SMTP ACCOUNTS ROUTES (MÚLTIPLES CUENTAS) ====================
+  // Endpoint para obtener conteo de usuarios conectados
+  app.get("/api/admin/online-count", authenticateToken, async (req: Request, res: Response) => {
+    try {
+      const count = await prisma.sessions.count({
+        where: { ended_at: null }
+      });
+      res.json({ count });
+    } catch (error: any) {
+      console.error("Error getting online count:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Mount admin sessions router (list/detail/terminate/flag)
+  app.use('/api/admin/sessions', adminSessionsRouter);
+  // Price catalog and budgets routes
+  app.use('/api/price-catalog', priceCatalogRouter);
+  app.use('/api/budgets', budgetsRouter);
+  app.use('/public/budgets', publicBudgetsRouter);
+  app.use('/api/budget-parameters', budgetParametersRouter);
+  app.use('/api/budget-templates', budgetTemplatesRouter);
+  // Documents routes
+  app.use('/api/documents', documentsRouter);
   app.get(
     "/api/admin/smtp-accounts",
     authenticateToken,
@@ -2298,6 +2297,57 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   );
 
+  // ==================== MIGRATIONS ====================
+  // POST /api/admin/apply-migrations - Aplicar migraciones de datos
+  app.post(
+    "/api/admin/apply-migrations",
+    authenticateToken,
+    checkPermission("admin:system"),
+    async (req: AuthRequest, res: Response) => {
+      try {
+        console.log('🚀 Iniciando migraciones...');
+
+        // 1. Marcar al admin como Owner
+        const updatedUsers = await prisma.users.updateMany({
+          where: { username: 'CarlosAdmin' },
+          data: { is_owner: true }
+        });
+
+        // 2. Verificar admin
+        const adminUser = await prisma.users.findFirst({
+          where: { username: 'CarlosAdmin' },
+          select: { username: true, email: true, is_owner: true }
+        });
+
+        // 3. Obtener información de roles
+        const roles = await prisma.roles.findMany({
+          select: {
+            id: true,
+            name: true,
+            is_system: true
+          }
+        });
+
+        res.json({
+          success: true,
+          message: '✅ Migraciones aplicadas exitosamente',
+          migrations: {
+            usersUpdated: updatedUsers.count,
+            adminUser: adminUser,
+            rolesCount: roles.length,
+            roles: roles
+          }
+        });
+      } catch (error: any) {
+        console.error('❌ Error en migraciones:', error);
+        res.status(500).json({ 
+          success: false,
+          error: error.message 
+        });
+      }
+    }
+  );
+
   // ==================== STORAGE CONFIG ROUTES ====================
   // GET /api/admin/storage-config - Obtener configuración de almacenamiento activa
   app.get(
@@ -2306,7 +2356,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     checkPermission("admin:system"),
     async (req: AuthRequest, res: Response) => {
       try {
-        const config = await prisma.storageConfig.findFirst({
+        const config = await prisma.storage_configs.findFirst({
           where: { isActive: true },
           orderBy: { createdAt: 'desc' }
         });
@@ -2314,7 +2364,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (!config) {
           return res.json({ 
             type: 'LOCAL',
-            basePath: '/uploads',
+            base_path: '/uploads',
             isActive: true
           });
         }
@@ -2326,7 +2376,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           host: config.host,
           port: config.port,
           username: config.username,
-          basePath: config.basePath,
+          base_path: config.base_path,
           isActive: config.isActive,
           createdAt: config.createdAt,
           updatedAt: config.updatedAt
@@ -2363,20 +2413,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const encryptedPassword = password ? encryptPassword(password) : null;
 
         // Desactivar configuraciones anteriores
-        await prisma.storageConfig.updateMany({
+        await prisma.storage_configs.updateMany({
           where: { isActive: true },
           data: { isActive: false }
         });
-
         // Crear nueva configuración
-        const config = await prisma.storageConfig.create({
+        const config = await prisma.storage_configs.create({
           data: ({
+            id: randomUUID(),
             type,
+            name: `${type} - ${new Date().toISOString()}`,
             host,
             port: port ? parseInt(port) : null,
             username,
-            encryptedPassword,
-            basePath: basePath || (type === 'LOCAL' ? '/uploads' : '/'),
+            encrypted_password: encryptedPassword,
+            base_path: basePath || (type === 'LOCAL' ? '/uploads' : '/'),
             isActive: true
           } as any)
         });
@@ -2397,7 +2448,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           host: config.host,
           port: config.port,
           username: config.username,
-          basePath: config.basePath,
+          base_path: config.base_path,
           isActive: config.isActive
         });
       } catch (error: any) {
@@ -2434,7 +2485,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           port: port ? parseInt(port) : undefined,
           username,
           encryptedPassword: password ? encryptPassword(password) : null,
-          basePath: basePath || (type === 'LOCAL' ? '/uploads' : '/')
+          base_path: basePath || (type === 'LOCAL' ? '/uploads' : '/')
         };
 
         const result = await StorageFactory.testConfigurationData(config);
@@ -2547,7 +2598,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     checkPermission("admin:settings"),
     async (req: AuthRequest, res: Response) => {
       try {
-        const configs = await prisma.systemConfig.findMany({
+        const configs = await prisma.system_config.findMany({
           orderBy: { key: 'asc' },
         });
         res.json(configs);
@@ -2564,7 +2615,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     checkPermission("admin:settings"),
     async (req: AuthRequest, res: Response) => {
       try {
-        const config = await prisma.systemConfig.findUnique({
+        const config = await prisma.system_config.findUnique({
           where: { key: req.params.key },
         });
         
@@ -2593,7 +2644,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
 
         // Verificar que la configuración existe y es editable
-        const existing = await prisma.systemConfig.findUnique({
+        const existing = await prisma.system_config.findUnique({
           where: { key: req.params.key },
         });
 
@@ -2601,11 +2652,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(404).json({ error: "Configuración no encontrada" });
         }
 
-        if (!existing.isEditable) {
+        if (!existing.is_editable) {
           return res.status(403).json({ error: "Esta configuración no es editable" });
         }
 
-        const config = await prisma.systemConfig.update({
+        const config = await prisma.system_config.update({
           where: { key: req.params.key },
           data: { value: String(value) },
         });
@@ -2632,10 +2683,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     checkPermission("admin:settings"),
     async (req: AuthRequest, res: Response) => {
       try {
-        const repoConfig = await prisma.systemConfig.findUnique({
+        const repoConfig = await prisma.system_config.findUnique({
           where: { key: 'github_repo_url' }
         });
-        const branchConfig = await prisma.systemConfig.findUnique({
+        const branchConfig = await prisma.system_config.findUnique({
           where: { key: 'github_branch' }
         });
 
@@ -2693,13 +2744,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         // Actualizar o crear github_repo_url
         if (repoUrl !== undefined) {
-          await prisma.systemConfig.upsert({
+          await prisma.system_config.upsert({
             where: { key: 'github_repo_url' },
             create: {
+              id: randomUUID(),
               key: 'github_repo_url',
               value: repoUrl,
               description: 'URL del repositorio de GitHub para actualizaciones',
-              isEditable: true
+              is_editable: true,
+              updatedAt: new Date()
             },
             update: { value: repoUrl }
           });
@@ -2707,13 +2760,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         // Actualizar o crear github_branch
         if (branch !== undefined) {
-          await prisma.systemConfig.upsert({
+          await prisma.system_config.upsert({
             where: { key: 'github_branch' },
             create: {
+              id: randomUUID(),
               key: 'github_branch',
               value: branch,
               description: 'Rama de GitHub para actualizaciones',
-              isEditable: true
+              is_editable: true,
+              updatedAt: new Date()
             },
             update: { value: branch }
           });
@@ -2749,7 +2804,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const currentVersion = await getCurrentVersion();
         
         // Obtener configuración del repositorio
-        const repoConfig = await prisma.systemConfig.findUnique({
+        const repoConfig = await prisma.system_config.findUnique({
           where: { key: 'github_repo_url' }
         });
 
@@ -2927,7 +2982,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
     async (req: AuthRequest, res: Response) => {
       try {
         const roles = await storage.getAllRoles();
-        res.json(roles);
+        
+        // Enriquecer roles con valores por defecto para campos pendientes
+        const enrichedRoles = roles.map((role: any) => ({
+          ...role,
+          color: role.color || "#6366f1",
+          icon: role.icon || "shield",
+          can_create_users: role.can_create_users !== undefined ? role.can_create_users : false,
+          can_delete_users: role.can_delete_users !== undefined ? role.can_delete_users : false,
+          can_manage_roles: role.can_manage_roles !== undefined ? role.can_manage_roles : false,
+          is_active: role.is_active !== undefined ? role.is_active : true
+        }));
+        
+        res.json(enrichedRoles);
       } catch (error: any) {
         res.status(500).json({ error: error.message });
       }
@@ -2945,90 +3012,274 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (!role) {
           return res.status(404).json({ error: "Rol no encontrado" });
         }
-        res.json(role);
+        
+        // Enriquecer rol con valores por defecto
+        const enrichedRole = {
+          ...role,
+          color: role.color || "#6366f1",
+          icon: role.icon || "shield",
+          can_create_users: role.can_create_users !== undefined ? role.can_create_users : false,
+          can_delete_users: role.can_delete_users !== undefined ? role.can_delete_users : false,
+          can_manage_roles: role.can_manage_roles !== undefined ? role.can_manage_roles : false,
+          is_active: role.is_active !== undefined ? role.is_active : true
+        };
+        
+        res.json(enrichedRole);
       } catch (error: any) {
         res.status(500).json({ error: error.message });
       }
     }
   );
 
-  // POST /api/roles - Crear un nuevo rol
+  // POST /api/roles - Crear un nuevo rol personalizado
   app.post(
     "/api/roles",
     authenticateToken,
     checkPermission("admin:roles"),
     async (req: AuthRequest, res: Response) => {
       try {
-        const { name, description } = req.body;
+        const { 
+          name, 
+          description, 
+          color,
+          icon,
+          can_create_users,
+          can_delete_users,
+          can_manage_roles
+        } = req.body;
         
         if (!name) {
           return res.status(400).json({ error: "El nombre del rol es requerido" });
         }
 
-        const role = await storage.createRole({ name, description });
-        
-        await storage.createActivityLog({
-          usuarioId: req.user!.id,
-          accion: `Creó el rol: ${name}`,
-          modulo: "admin",
-          detalles: description || "",
+        // Validar que el nombre sea único
+        const existingRole = await prisma.roles.findUnique({
+          where: { name }
         });
 
-        res.status(201).json(role);
-      } catch (error: any) {
-        if (error.code === 'P2002') {
+        if (existingRole) {
           return res.status(400).json({ error: "Ya existe un rol con ese nombre" });
         }
+
+        // Crear el nuevo rol
+        const role = await prisma.roles.create({
+          data: {
+            id: randomUUID(),
+            name,
+            description: description || null,
+            is_system: false,
+            createdAt: new Date(),
+            updatedAt: new Date()
+          },
+          include: {
+            role_permissions: {
+              include: {
+                permissions: true
+              }
+            }
+          }
+        });
+        
+        // Agregar campos adicionales si existen en la BD
+        const enrichedRole = {
+          ...role,
+          color: color || "#6366f1",
+          icon: icon || "shield",
+          can_create_users: can_create_users || false,
+          can_delete_users: can_delete_users || false,
+          can_manage_roles: can_manage_roles || false,
+          is_active: true,
+          created_by: req.user!.id
+        };
+        
+        // Registrar en auditoría
+        await storage.createActivityLog({
+          usuarioId: req.user!.id,
+          accion: `Creó el rol personalizado: ${name}`,
+          modulo: "admin",
+          detalles: JSON.stringify({
+            description,
+            color,
+            icon,
+            can_create_users,
+            can_delete_users,
+            can_manage_roles
+          }),
+        });
+
+        res.status(201).json(enrichedRole);
+      } catch (error: any) {
+        console.error('Error creando rol:', error);
         res.status(500).json({ error: error.message });
       }
     }
   );
 
-  // PATCH /api/roles/:id - Actualizar un rol
+  // PATCH /api/roles/:id - Actualizar un rol personalizado
   app.patch(
     "/api/roles/:id",
     authenticateToken,
     checkPermission("admin:roles"),
     async (req: AuthRequest, res: Response) => {
       try {
-        const { name, description } = req.body;
-        const role = await storage.updateRole(req.params.id, { name, description });
-        
-        await storage.createActivityLog({
-          usuarioId: req.user!.id,
-          accion: `Actualizó el rol: ${role.name}`,
-          modulo: "admin",
-          detalles: JSON.stringify({ name, description }),
+        const { id } = req.params;
+        const { 
+          name, 
+          description, 
+          color,
+          icon,
+          can_create_users,
+          can_delete_users,
+          can_manage_roles,
+          is_active
+        } = req.body;
+
+        // Verificar que el rol existe
+        const existingRole = await prisma.roles.findUnique({
+          where: { id }
         });
 
-        res.json(role);
-      } catch (error: any) {
-        if (error.code === 'P2002') {
-          return res.status(400).json({ error: "Ya existe un rol con ese nombre" });
+        if (!existingRole) {
+          return res.status(404).json({ error: "Rol no encontrado" });
         }
+
+        // No permitir modificar roles del sistema
+        if (existingRole.is_system) {
+          return res.status(403).json({ 
+            error: "No se pueden modificar roles del sistema",
+            code: "SYSTEM_ROLE_PROTECTED"
+          });
+        }
+
+        // Si se intenta cambiar el nombre, verificar que sea único
+        if (name && name !== existingRole.name) {
+          const duplicateRole = await prisma.roles.findUnique({
+            where: { name }
+          });
+          if (duplicateRole) {
+            return res.status(400).json({ error: "Ya existe un rol con ese nombre" });
+          }
+        }
+
+        // Preparar datos para actualización (solo campos que existen en BD)
+        const updateData: any = {
+          updatedAt: new Date()
+        };
+
+        if (name !== undefined) updateData.name = name;
+        if (description !== undefined) updateData.description = description;
+        
+        // Estos campos se agregarán cuando la migración se aplique
+        const additionalFields: any = {};
+        if (color !== undefined) additionalFields.color = color;
+        if (icon !== undefined) additionalFields.icon = icon;
+        if (can_create_users !== undefined) additionalFields.can_create_users = can_create_users;
+        if (can_delete_users !== undefined) additionalFields.can_delete_users = can_delete_users;
+        if (can_manage_roles !== undefined) additionalFields.can_manage_roles = can_manage_roles;
+        if (is_active !== undefined) additionalFields.is_active = is_active;
+
+        const role = await prisma.roles.update({
+          where: { id },
+          data: updateData,
+          include: {
+            role_permissions: {
+              include: {
+                permissions: true
+              }
+            }
+          }
+        });
+        
+        // Agregar campos enriquecidos a la respuesta
+        const enrichedRole = {
+          ...role,
+          ...additionalFields,
+          color: additionalFields.color || "#6366f1",
+          icon: additionalFields.icon || "shield",
+          can_create_users: additionalFields.can_create_users || false,
+          can_delete_users: additionalFields.can_delete_users || false,
+          can_manage_roles: additionalFields.can_manage_roles || false,
+          is_active: additionalFields.is_active !== undefined ? additionalFields.is_active : true
+        };
+        
+        // Registrar en auditoría
+        await storage.createActivityLog({
+          usuarioId: req.user!.id,
+          accion: `Actualizó el rol personalizado: ${role.name}`,
+          modulo: "admin",
+          detalles: JSON.stringify({...updateData, ...additionalFields}),
+        });
+
+        res.json(enrichedRole);
+      } catch (error: any) {
+        console.error('Error actualizando rol:', error);
         res.status(500).json({ error: error.message });
       }
     }
   );
 
-  // DELETE /api/roles/:id - Eliminar un rol
+  // DELETE /api/roles/:id - Eliminar un rol personalizado
   app.delete(
     "/api/roles/:id",
     authenticateToken,
     checkPermission("admin:roles"),
     async (req: AuthRequest, res: Response) => {
       try {
-        await storage.deleteRole(req.params.id);
-        
-        await storage.createActivityLog({
-          usuarioId: req.user!.id,
-          accion: `Eliminó un rol`,
-          modulo: "admin",
-          detalles: `ID: ${req.params.id}`,
+        const { id } = req.params;
+
+        // Verificar que el rol existe
+        const role = await prisma.roles.findUnique({
+          where: { id }
         });
 
-        res.json({ success: true });
+        if (!role) {
+          return res.status(404).json({ error: "Rol no encontrado" });
+        }
+
+        // No permitir eliminar roles del sistema
+        if (role.is_system) {
+          return res.status(403).json({ 
+            error: "No se pueden eliminar roles del sistema",
+            code: "SYSTEM_ROLE_PROTECTED"
+          });
+        }
+
+        // Verificar que no hay usuarios con este rol
+        const usersWithRole = await prisma.users.count({
+          where: { roleId: id }
+        });
+
+        if (usersWithRole > 0) {
+          return res.status(409).json({ 
+            error: `No se puede eliminar el rol: hay ${usersWithRole} usuario(s) asignado(s) a este rol. Reasignalos a otro rol primero.`,
+            code: "ROLE_IN_USE"
+          });
+        }
+
+        // Eliminar permisos asociados
+        await prisma.role_permissions.deleteMany({
+          where: { roleId: id }
+        });
+
+        // Eliminar el rol
+        await prisma.roles.delete({
+          where: { id }
+        });
+        
+        // Registrar en auditoría
+        await storage.createActivityLog({
+          usuarioId: req.user!.id,
+          accion: `Eliminó el rol personalizado: ${role.name}`,
+          modulo: "admin",
+          detalles: `ID: ${id}`,
+        });
+
+        res.json({ 
+          success: true, 
+          message: `Rol "${role.name}" eliminado exitosamente`
+        });
       } catch (error: any) {
+        console.error('Error eliminando rol:', error);
         res.status(500).json({ error: error.message });
       }
     }
@@ -3073,6 +3324,100 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         res.json(role);
       } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
+  // POST /api/roles/:id/assign-permissions - Asignar permisos a un rol
+  app.post(
+    "/api/roles/:id/assign-permissions",
+    authenticateToken,
+    checkPermission("admin:roles"),
+    async (req: AuthRequest, res: Response) => {
+      try {
+        const { id } = req.params;
+        const { permissionIds } = req.body;
+
+        if (!Array.isArray(permissionIds)) {
+          return res.status(400).json({ error: "permissionIds debe ser un array" });
+        }
+
+        // Verificar que el rol existe y no es del sistema
+        const role = await prisma.roles.findUnique({
+          where: { id }
+        });
+
+        if (!role) {
+          return res.status(404).json({ error: "Rol no encontrado" });
+        }
+
+        if (role.is_system) {
+          return res.status(403).json({ 
+            error: "No se pueden modificar permisos de roles del sistema",
+            code: "SYSTEM_ROLE_PROTECTED"
+          });
+        }
+
+        // Eliminar permisos actuales
+        await prisma.role_permissions.deleteMany({
+          where: { roleId: id }
+        });
+
+        // Asignar nuevos permisos
+        const rolePermissions = await Promise.all(
+          permissionIds.map((permissionId: string) =>
+            prisma.role_permissions.create({
+              data: {
+                id: randomUUID(),
+                roleId: id,
+                permissionId: permissionId
+              }
+            })
+          )
+        );
+
+        // Obtener el rol actualizado con sus permisos
+        const updatedRole = await prisma.roles.findUnique({
+          where: { id },
+          include: {
+            role_permissions: {
+              include: {
+                permissions: true
+              }
+            }
+          }
+        });
+
+        // Enriquecer con valores por defecto
+        const enrichedRole = {
+          ...updatedRole,
+          color: updatedRole?.color || "#6366f1",
+          icon: updatedRole?.icon || "shield",
+          can_create_users: updatedRole?.can_create_users !== undefined ? updatedRole.can_create_users : false,
+          can_delete_users: updatedRole?.can_delete_users !== undefined ? updatedRole.can_delete_users : false,
+          can_manage_roles: updatedRole?.can_manage_roles !== undefined ? updatedRole.can_manage_roles : false,
+          is_active: updatedRole?.is_active !== undefined ? updatedRole.is_active : true
+        };
+
+        // Registrar en auditoría
+        await storage.createActivityLog({
+          usuarioId: req.user!.id,
+          accion: `Asignó ${permissionIds.length} permisos al rol: ${role.name}`,
+          modulo: "admin",
+          detalles: JSON.stringify({ 
+            permissionIds,
+            totalPermissions: permissionIds.length
+          }),
+        });
+
+        res.json({
+          success: true,
+          message: `${permissionIds.length} permisos asignados al rol "${role.name}"`,
+          role: enrichedRole
+        });
+      } catch (error: any) {
+        console.error('Error asignando permisos:', error);
         res.status(500).json({ error: error.message });
       }
     }
@@ -3153,8 +3498,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ==================== TAX CONTROL - REQUIREMENTS ====================
   app.get("/api/tax-requirements", authenticateToken, async (req: AuthRequest, res: Response) => {
     try {
-      const requirements = await prisma.clientTaxRequirement.findMany({
-        include: { client: true }
+      const requirements = await prisma.client_tax_requirements.findMany({
+        include: { clients: true }
       });
       res.json(requirements);
     } catch (error: any) {
@@ -3164,16 +3509,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/tax-requirements", authenticateToken, checkPermission("taxes:create"), async (req: AuthRequest, res: Response) => {
     try {
-      const { clientId, taxModelCode, required = true, note, colorTag } = req.body;
-      const requirement = await prisma.clientTaxRequirement.create({
-        data: ({
+      const { clientId, taxModelCode, impuesto, required = true, note, colorTag, detalle } = req.body;
+      const requirement = await prisma.client_tax_requirements.create({
+        data: {
+          id: randomUUID(),
           clientId,
-          taxModelCode,
+          taxModelCode: taxModelCode || null,
+          impuesto: impuesto || taxModelCode || 'SIN_ESPECIFICAR',
+          detalle: detalle || null,
           required,
-          note,
-          colorTag,
-        } as Prisma.clientTaxRequirementUncheckedCreateInput),
-        include: { client: true }
+          note: note || null,
+          color_tag: colorTag || null,
+        },
+        include: { clients: true }
       });
       res.json(requirement);
     } catch (error: any) {
@@ -3184,15 +3532,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.patch("/api/tax-requirements/:id/toggle", authenticateToken, checkPermission("taxes:update"), async (req: AuthRequest, res: Response) => {
     try {
       const { id } = req.params;
-      const current = await prisma.clientTaxRequirement.findUnique({ where: { id } });
+      const current = await prisma.client_tax_requirements.findUnique({ where: { id } });
       if (!current) {
         return res.status(404).json({ error: "Requisito no encontrado" });
       }
 
-      const updated = await prisma.clientTaxRequirement.update({
+      const updated = await prisma.client_tax_requirements.update({
         where: { id },
-        data: ({ required: !current.required } as Prisma.clientTaxRequirementUncheckedUpdateInput),
-        include: { client: true }
+        data: { required: !current.required },
+        include: { clients: true }
       });
       res.json(updated);
     } catch (error: any) {
@@ -3203,11 +3551,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.patch("/api/tax-requirements/:id", authenticateToken, checkPermission("taxes:update"), async (req: AuthRequest, res: Response) => {
     try {
       const { id } = req.params;
-      const { note, colorTag } = req.body;
-      const updated = await prisma.clientTaxRequirement.update({
+      const { note, color_tag: colorTag } = req.body;
+      const updated = await prisma.client_tax_requirements.update({
         where: { id },
-        data: ({ note, colorTag } as Prisma.clientTaxRequirementUncheckedUpdateInput),
-        include: { client: true }
+        data: { note, color_tag: colorTag },
+        include: { clients: true }
       });
       res.json(updated);
     } catch (error: any) {
@@ -3218,7 +3566,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ==================== TAX CONTROL - FISCAL PERIODS ====================
   app.get("/api/fiscal-periods", authenticateToken, async (req: AuthRequest, res: Response) => {
     try {
-      const periods = await prisma.fiscalPeriod.findMany({
+      const periods = await prisma.fiscal_periods.findMany({
         orderBy: [{ year: 'desc' }, { quarter: 'asc' }]
       });
       res.json(periods);
@@ -3322,72 +3670,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   );
 
-  // ==================== TAX FILINGS ====================
-  app.get(
-    "/api/tax/filings",
-    authenticateToken,
-    checkPermission("taxes:read"),
-    async (req: Request, res: Response) => {
-      try {
-        // Asegurar que existan periodos y tarjetas para el año solicitado
-        const requestedYear = req.query.year ? Number(req.query.year) : undefined;
-        if (requestedYear && Number.isFinite(requestedYear)) {
-          const existingPeriods = await prisma.fiscalPeriod.count({ where: { year: requestedYear } });
-          if (existingPeriods === 0) {
-            await storage.createFiscalYear(requestedYear);
-          }
-          // Solo generar filings a partir de asignaciones existentes (no crear asignaciones aquí)
-          await storage.ensureClientTaxFilingsForYear(requestedYear);
-        }
-
-        let filings = await storage.getTaxFilings({
-          periodId: req.query.periodId as string | undefined,
-          status: req.query.status as string | undefined,
-          model: req.query.model as string | undefined,
-          search: req.query.search as string | undefined,
-          clientId: req.query.clientId as string | undefined,
-          gestorId: req.query.gestorId as string | undefined,
-          year: req.query.year as string | undefined,
-        });
-        if ((filings?.length ?? 0) === 0 && requestedYear && Number.isFinite(requestedYear)) {
-          // Último intento: regenerar y reconsultar
-          await storage.ensureClientTaxFilingsForYear(requestedYear);
-          filings = await storage.getTaxFilings({
-            periodId: req.query.periodId as string | undefined,
-            status: req.query.status as string | undefined,
-            model: req.query.model as string | undefined,
-            search: req.query.search as string | undefined,
-            clientId: req.query.clientId as string | undefined,
-            gestorId: req.query.gestorId as string | undefined,
-            year: req.query.year as string | undefined,
-          });
-        }
-        res.json(filings);
-      } catch (error: any) {
-        res.status(500).json({ error: error.message });
-      }
-    }
-  );
-
-  // POST /api/tax/filings/ensure-year
-  app.post(
-    "/api/tax/filings/ensure-year",
-    authenticateToken,
-    checkPermission("taxes:create"),
-    async (req: AuthRequest, res: Response) => {
-      try {
-        const y = Number(req.body?.year);
-        if (!Number.isFinite(y)) return res.status(400).json({ error: 'Año inválido' });
-        const result = await storage.ensureClientTaxFilingsForYear(y);
-        res.json(result);
-      } catch (error: any) {
-        res.status(500).json({ error: error.message });
-      }
-    }
-  );
-
   // ==================== TAX CALENDAR (AEAT) ====================
-  // GET /api/tax/calendar
+  // GET /api/tax/calendar - Listar periodos del calendario fiscal
   app.get(
     "/api/tax/calendar",
     authenticateToken,
@@ -3407,8 +3691,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (periodicity === 'special') where.period = { in: ['M04', 'M10', 'M12'] } as any;
         if (status && ['PENDIENTE','ABIERTO','CERRADO'].includes(status)) where.status = status;
 
-        const list = await prisma.taxCalendar.findMany({ where, orderBy: [{ endDate: 'asc' }] });
-        // Mapear a los campos esperados por el front
+        const list = await prisma.tax_calendar.findMany({ where, orderBy: [{ endDate: 'asc' }] });
         const rows = list.map((r) => ({
           id: r.id,
           modelCode: r.modelCode,
@@ -3417,8 +3700,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           startDate: r.startDate,
           endDate: r.endDate,
           status: r.status,
-          daysToStart: r.daysToStart,
-          daysToEnd: r.daysToEnd,
+          daysToStart: r.days_to_start,
+          daysToEnd: r.days_to_end,
         }));
         res.json(rows);
       } catch (error: any) {
@@ -3427,7 +3710,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   );
 
-  // POST /api/tax/calendar (crear periodo)
+  // POST /api/tax/calendar - Crear periodo
   app.post(
     "/api/tax/calendar",
     authenticateToken,
@@ -3458,7 +3741,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   );
 
-  // PATCH /api/tax/calendar/:id (editar fechas/activo)
+  // PATCH /api/tax/calendar/:id - Editar fechas/activo
   app.patch(
     "/api/tax/calendar/:id",
     authenticateToken,
@@ -3477,7 +3760,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   );
 
-  // DELETE /api/tax/calendar/:id (borrar periodo)
+  // DELETE /api/tax/calendar/:id - Borrar periodo
   app.delete(
     "/api/tax/calendar/:id",
     authenticateToken,
@@ -3493,7 +3776,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   );
 
-  // POST /api/tax/calendar/create-year
+  // POST /api/tax/calendar/create-year - Duplicar año
   app.post(
     "/api/tax/calendar/create-year",
     authenticateToken,
@@ -3502,7 +3785,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       try {
         const y = Number(req.body?.year);
         if (!Number.isFinite(y)) return res.status(400).json({ error: 'Año inválido' });
-        // Duplicar desde año Y a Y+1 si existen periodos, si no, no-op
         const created = await storage.cloneTaxCalendarYear(y);
         res.json({ created: created.length });
       } catch (error: any) {
@@ -3511,7 +3793,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   );
 
-  // POST /api/tax/calendar/seed-year (crear todos los periodos del año)
+  // POST /api/tax/calendar/seed-year - Crear todos los periodos del año
   app.post(
     "/api/tax/calendar/seed-year",
     authenticateToken,
@@ -3533,7 +3815,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   );
 
-  // GET /api/tax/calendar/:year.ics
+  // GET /api/tax/calendar/:year.ics - Exportar a formato ICS
   app.get(
     "/api/tax/calendar/:year.ics",
     authenticateToken,
@@ -3542,7 +3824,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
       try {
         const y = Number(req.params.year);
         if (!Number.isFinite(y)) return res.status(400).send('');
-        const rows = await prisma.taxCalendar.findMany({ where: { year: y }, orderBy: [{ startDate: 'asc' }] });
+        const rows = await prisma.tax_calendar.findMany({ where: { year: y }, orderBy: [{ startDate: 'asc' }] });
+        
+        const toICSDate = (d: Date) => {
+          const pad = (n: number) => String(n).padStart(2, '0');
+          const yyyy = d.getUTCFullYear();
+          const mm = pad(d.getUTCMonth() + 1);
+          const dd = pad(d.getUTCDate());
+          const hh = pad(d.getUTCHours());
+          const mi = pad(d.getUTCMinutes());
+          const ss = pad(d.getUTCSeconds());
+          return `${yyyy}${mm}${dd}T${hh}${mi}${ss}Z`;
+        };
+        
         const lines: string[] = [];
         lines.push('BEGIN:VCALENDAR');
         lines.push('VERSION:2.0');
@@ -3568,6 +3862,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   );
 
+  // ==================== TAX FILINGS ====================
+  app.get(
+    "/api/tax/filings",
+    authenticateToken,
+    checkPermission("taxes:read"),
+    async (req: Request, res: Response) => {
+      try {
+        const filings = await storage.getTaxFilings({
+          periodId: req.query.periodId as string | undefined,
+          status: req.query.status as string | undefined,
+          model: req.query.model as string | undefined,
+          search: req.query.search as string | undefined,
+        });
+        res.json(filings);
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
   app.patch(
     "/api/tax/filings/:id",
     authenticateToken,
@@ -3575,25 +3889,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     async (req: AuthRequest, res: Response) => {
       try {
         const isAdmin = (req.user as any)?.roleName === "Administrador";
-        // Mapear status de UI -> enum Prisma si viene en castellano
-        let mappedStatus: FilingStatus | undefined = undefined;
-        if (req.body.status !== undefined) {
-          const raw = String(req.body.status || '').toUpperCase();
-          const map: Record<string, FilingStatus> = {
-            'PENDIENTE': FilingStatus.NOT_STARTED,
-            'NOT_STARTED': FilingStatus.NOT_STARTED,
-            'CALCULADO': FilingStatus.IN_PROGRESS,
-            'IN_PROGRESS': FilingStatus.IN_PROGRESS,
-            'PRESENTADO': FilingStatus.PRESENTED,
-            'PRESENTED': FilingStatus.PRESENTED,
-          };
-          mappedStatus = map[raw] ?? undefined;
-        }
-
         const updated = await storage.updateTaxFiling(
           req.params.id,
           {
-            status: mappedStatus ?? req.body.status ?? undefined,
+            status: req.body.status ?? undefined,
             notes: req.body.notes ?? undefined,
             presentedAt: req.body.presentedAt ? new Date(req.body.presentedAt) : req.body.presentedAt === null ? null : undefined,
             assigneeId: req.body.assigneeId ?? undefined,
@@ -3612,6 +3911,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     checkAndSendReminders(storage).catch(console.error);
   }, 60 * 60 * 1000);
 
+  // 🚀 REGISTRAR RUTAS ÉPICAS DE TAREAS
+  registerEpicTasksRoutes(app);
+
   const httpServer = createServer(app);
   
   // Configurar Socket.IO
@@ -3623,17 +3925,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  function toICSDate(d: Date) {
-    const pad = (n: number) => String(n).padStart(2, '0');
-    const yyyy = d.getUTCFullYear();
-    const mm = pad(d.getUTCMonth() + 1);
-    const dd = pad(d.getUTCDate());
-    const hh = pad(d.getUTCHours());
-    const mi = pad(d.getUTCMinutes());
-    const ss = pad(d.getUTCSeconds());
-    return `${yyyy}${mm}${dd}T${hh}${mi}${ss}Z`;
-  }
-
   // Middleware de autenticación para Socket.IO
   io.use(async (socket, next) => {
     try {
@@ -3642,16 +3933,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return next(new Error("No token provided"));
       }
 
-      const decoded = jwt.verify(token, JWT_SECRET) as { id: string; username: string; role: string };
+      const decoded = jwt.verify(token, JWT_SECRET) as { id: string; username: string; roleId: string };
       const user = await storage.getUser(decoded.id);
 
       if (!user) {
         return next(new Error("User not found"));
       }
 
-      socket.data.user = { id: user.id, username: user.username, role: user.role };
+      // Obtener el rol completo para tener el nombre del rol
+      const userWithRole = await storage.getUserWithPermissions(decoded.id);
+      const roleName = userWithRole?.roles?.name || 'Solo Lectura';
+
+      socket.data.user = { 
+        id: user.id, 
+        username: user.username, 
+        role: roleName,
+        roleId: user.roleId 
+      };
       next();
     } catch (error) {
+      console.error("Socket.IO auth error:", error);
       next(new Error("Invalid token"));
     }
   });
@@ -3924,6 +4225,47 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // Unirse a sala de rol
     socket.join(`role:${user.role}`);
 
+    // Sistema de heartbeat para mantener sesiones activas
+    let heartbeatInterval: NodeJS.Timeout;
+    let lastHeartbeat = Date.now();
+    
+    // Configurar heartbeat cada 30 segundos
+    heartbeatInterval = setInterval(async () => {
+      try {
+        // Actualizar last_seen_at en la base de datos
+        await prisma.sessions.updateMany({
+          where: { socket_id: socket.id, ended_at: null as any },
+          data: { last_seen_at: new Date() } as any,
+        });
+        
+        // Verificar si el socket sigue conectado
+        if (socket.connected) {
+          socket.emit("heartbeat", { timestamp: Date.now() });
+        } else {
+          clearInterval(heartbeatInterval);
+        }
+      } catch (err) {
+        console.error('Error en heartbeat:', err);
+      }
+    }, 30000); // 30 segundos
+
+    // Manejar respuesta de heartbeat del cliente
+    socket.on("heartbeat-response", async () => {
+      lastHeartbeat = Date.now();
+      try {
+        await prisma.sessions.updateMany({
+          where: { socket_id: socket.id, ended_at: null as any },
+          data: { last_seen_at: new Date() } as any,
+        });
+      } catch (err) {
+        console.error('Error actualizando heartbeat:', err);
+      }
+    });
+
+    // Emitir conteo actualizado de usuarios conectados
+    const connectedCount = io.sockets.sockets.size;
+    io.emit("online-count", connectedCount);
+
     // Emitir evento de conexión
     io.emit("user:connected", {
       userId: user.id,
@@ -3931,13 +4273,103 @@ export async function registerRoutes(app: Express): Promise<Server> {
       timestamp: new Date().toISOString()
     });
 
-    socket.on("disconnect", () => {
-      console.log(`Usuario desconectado: ${user.username}`);
-      io.emit("user:disconnected", {
-        userId: user.id,
-        username: user.username,
-        timestamp: new Date().toISOString()
-      });
+    // Notificar a administradores sobre nueva sesión sospechosa
+    (async () => {
+      try {
+        // Verificar si la sesión es sospechosa (VPN, IP diferente, etc.)
+        const ipHeader = (socket.handshake.headers['x-forwarded-for'] as string) || '';
+        const ip = ipHeader ? ipHeader.split(',')[0].trim() : socket.handshake.address;
+        
+        // Aquí podrías agregar lógica para detectar sesiones sospechosas
+        // Por ejemplo: múltiples sesiones desde diferentes IPs, uso de VPN, etc.
+        
+        // Notificar a administradores sobre nueva sesión
+        io.to('role:Administrador').emit('session:new', {
+          userId: user.id,
+          username: user.username,
+          ip: ip,
+          timestamp: new Date().toISOString(),
+          socket_id: socket.id
+        });
+      } catch (err) {
+        console.error('Error notificando nueva sesión:', err);
+      }
+    })();
+
+    // Registrar sesión en base de datos (si existe el modelo Session)
+    (async () => {
+      try {
+        const ipHeader = (socket.handshake.headers['x-forwarded-for'] as string) || '';
+        const ip = ipHeader ? ipHeader.split(',')[0].trim() : socket.handshake.address;
+        const userAgent = String(socket.handshake.headers['user-agent'] || '');
+
+        // Verificar que la tabla Session existe antes de crear el registro
+        await prisma.sessions.create({
+          data: {
+            id: randomUUID(),
+            userId: user.id,
+            socket_id: socket.id,
+            ip: ip as any,
+            user_agent: userAgent as any,
+            last_seen_at: new Date(),
+            createdAt: new Date(),
+          } as any,
+        });
+        
+        console.log(`✅ Sesión creada para usuario ${user.username} (${socket.id})`);
+      } catch (err) {
+        console.error('❌ Error al crear sesión:', err);
+        // No fallar la conexión por esto, solo loguear el error
+        // Esto puede pasar si la tabla Session no está sincronizada con Prisma
+      }
+    })();
+
+    // Manejar solicitud de conteo de usuarios conectados
+    socket.on("get:online-count", () => {
+      const connectedCount = io.sockets.sockets.size;
+      socket.emit("online-count", connectedCount);
+    });
+
+    socket.on("disconnect", (reason) => {
+      console.log(`Usuario desconectado: ${user.username} - Razón: ${reason}`);
+      
+      // Limpiar intervalo de heartbeat
+      if (heartbeatInterval) {
+        clearInterval(heartbeatInterval);
+      }
+      
+      // Solo marcar como desconectado si es una desconexión real (no temporal)
+      const isTemporaryDisconnect = reason === 'client namespace disconnect' || 
+                                   reason === 'server namespace disconnect' ||
+                                   reason === 'ping timeout';
+      
+      if (!isTemporaryDisconnect) {
+        // Emitir conteo actualizado de usuarios conectados
+        const connectedCount = io.sockets.sockets.size;
+        io.emit("online-count", connectedCount);
+        
+        io.emit("user:disconnected", {
+          userId: user.id,
+          username: user.username,
+          timestamp: new Date().toISOString(),
+          reason: reason
+        });
+        
+        // Marcar sesión como finalizada solo si es una desconexión real
+        (async () => {
+          try {
+            await prisma.sessions.updateMany({
+              where: { socket_id: socket.id, ended_at: null as any },
+              data: { ended_at: new Date(), last_seen_at: new Date() } as any,
+            });
+            console.log(`✅ Sesión finalizada para usuario ${user.username} (${socket.id}) - Razón: ${reason}`);
+          } catch (err) {
+            console.error('❌ Error al finalizar sesión:', err);
+          }
+        })();
+      } else {
+        console.log(`🔄 Desconexión temporal para usuario ${user.username} - No cerrando sesión`);
+      }
     });
   });
 

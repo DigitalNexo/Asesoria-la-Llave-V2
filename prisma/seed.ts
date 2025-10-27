@@ -1,199 +1,17 @@
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcrypt';
 import { randomUUID } from 'crypto';
-import { Prisma } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
 async function main() {
   console.log('🌱 Iniciando seed de la base de datos...\n');
 
-  // 1. Crear permisos
-  console.log('🔐 Creando permisos...');
-  
-  const permissionsData = [
-    // Clients permissions
-    { resource: 'clients', action: 'create', description: 'Crear clientes' },
-    { resource: 'clients', action: 'read', description: 'Ver clientes' },
-    { resource: 'clients', action: 'update', description: 'Editar clientes' },
-    { resource: 'clients', action: 'delete', description: 'Eliminar clientes' },
-    { resource: 'clients', action: 'export', description: 'Exportar clientes' },
-    
-    // Taxes permissions
-    { resource: 'taxes', action: 'create', description: 'Crear impuestos' },
-    { resource: 'taxes', action: 'read', description: 'Ver impuestos' },
-    { resource: 'taxes', action: 'update', description: 'Editar impuestos' },
-    { resource: 'taxes', action: 'delete', description: 'Eliminar impuestos' },
-    { resource: 'taxes', action: 'upload', description: 'Subir archivos fiscales' },
-    { resource: 'taxes', action: 'export', description: 'Exportar impuestos' },
-    
-    // Tasks permissions
-    { resource: 'tasks', action: 'create', description: 'Crear tareas' },
-    { resource: 'tasks', action: 'read', description: 'Ver tareas' },
-    { resource: 'tasks', action: 'update', description: 'Editar tareas' },
-    { resource: 'tasks', action: 'delete', description: 'Eliminar tareas' },
-    
-    // Manuals permissions
-    { resource: 'manuals', action: 'create', description: 'Crear manuales' },
-    { resource: 'manuals', action: 'read', description: 'Ver manuales' },
-    { resource: 'manuals', action: 'update', description: 'Editar manuales' },
-    { resource: 'manuals', action: 'delete', description: 'Eliminar manuales' },
-    { resource: 'manuals', action: 'publish', description: 'Publicar manuales' },
-    
-    // Users permissions
-    { resource: 'users', action: 'create', description: 'Crear usuarios' },
-    { resource: 'users', action: 'read', description: 'Ver usuarios' },
-    { resource: 'users', action: 'update', description: 'Editar usuarios' },
-    { resource: 'users', action: 'delete', description: 'Eliminar usuarios' },
-    
-    // Admin permissions
-    { resource: 'admin', action: 'roles', description: 'Gestionar roles y permisos' },
-    { resource: 'admin', action: 'settings', description: 'Configurar sistema' },
-    { resource: 'admin', action: 'smtp_manage', description: 'Gestionar configuración SMTP' },
-    { resource: 'admin', action: 'system', description: 'Gestionar sistema (actualización, backups, restore)' },
-    { resource: 'admin', action: 'logs', description: 'Ver registros de actividad' },
-  ];
-
-  const permissions: { [key: string]: any } = {};
-  
-  for (const perm of permissionsData) {
-    const permission = await prisma.permission.upsert({
-      where: {
-        resource_action: {
-          resource: perm.resource,
-          action: perm.action,
-        },
-      },
-      update: {},
-      create: {
-        id: randomUUID(),
-        resource: perm.resource,
-        action: perm.action,
-        description: perm.description,
-      },
-    });
-    permissions[`${perm.resource}:${perm.action}`] = permission;
-  }
-
-  console.log(`✅ ${permissionsData.length} permisos creados\n`);
-
-  // 2. Crear roles
-  console.log('👥 Creando roles...');
-  
-  const roleAdmin = await prisma.role.upsert({
-    where: { name: 'Administrador' },
-    update: {},
-    create: {
-      id: randomUUID(),
-      name: 'Administrador',
-      description: 'Acceso completo al sistema',
-      isSystem: true,
-    },
-  });
-
-  const roleGestor = await prisma.role.upsert({
-    where: { name: 'Gestor' },
-    update: {},
-    create: {
-      id: randomUUID(),
-      name: 'Gestor',
-      description: 'Gestión de clientes, impuestos y tareas',
-      isSystem: true,
-    },
-  });
-
-  const roleLectura = await prisma.role.upsert({
-    where: { name: 'Lectura' },
-    update: {},
-    create: {
-      id: randomUUID(),
-      name: 'Lectura',
-      description: 'Solo lectura de información',
-      isSystem: true,
-    },
-  });
-
-  console.log(`✅ 3 roles creados\n`);
-
-  // 3. Asignar permisos a roles
-  console.log('🔗 Asignando permisos a roles...');
-
-  // Administrador - Todos los permisos
-  const adminPermissions = Object.values(permissions);
-  for (const perm of adminPermissions) {
-    await prisma.rolePermission.upsert({
-      where: {
-        roleId_permissionId: {
-          roleId: roleAdmin.id,
-          permissionId: perm.id,
-        },
-      },
-      update: {},
-      create: {
-        id: randomUUID(),
-        roleId: roleAdmin.id,
-        permissionId: perm.id,
-      },
-    });
-  }
-
-  // Gestor - Permisos de gestión (sin admin:*)
-  const gestorPermissionKeys = permissionsData
-    .filter(p => !p.resource.startsWith('admin'))
-    .map(p => `${p.resource}:${p.action}`);
-  
-  for (const key of gestorPermissionKeys) {
-    const perm = permissions[key];
-    if (perm) {
-      await prisma.rolePermission.upsert({
-        where: {
-          roleId_permissionId: {
-            roleId: roleGestor.id,
-            permissionId: perm.id,
-          },
-        },
-        update: {},
-        create: {
-          id: randomUUID(),
-          roleId: roleGestor.id,
-          permissionId: perm.id,
-        },
-      });
-    }
-  }
-
-  // Lectura - Solo permisos de lectura
-  const lecturaPermissionKeys = permissionsData
-    .filter(p => p.action === 'read')
-    .map(p => `${p.resource}:${p.action}`);
-  
-  for (const key of lecturaPermissionKeys) {
-    const perm = permissions[key];
-    if (perm) {
-      await prisma.rolePermission.upsert({
-        where: {
-          roleId_permissionId: {
-            roleId: roleLectura.id,
-            permissionId: perm.id,
-          },
-        },
-        update: {},
-        create: {
-          id: randomUUID(),
-          roleId: roleLectura.id,
-          permissionId: perm.id,
-        },
-      });
-    }
-  }
-
-  console.log(`✅ Permisos asignados a roles\n`);
-
-  // 4. Crear usuarios
+  // 1. Crear usuarios
   console.log('👤 Creando usuarios...');
   const password = await bcrypt.hash('admin123', 10);
 
-  const admin = await prisma.user.upsert({
+  const admin = await prisma.users.upsert({
     where: { username: 'admin' },
     update: {},
     create: {
@@ -201,11 +19,10 @@ async function main() {
       username: 'admin',
       email: 'admin@asesoriallave.com',
       password,
-      roleId: roleAdmin.id,
     },
   });
 
-  const gestor = await prisma.user.upsert({
+  const gestor = await prisma.users.upsert({
     where: { username: 'gestor' },
     update: {},
     create: {
@@ -213,11 +30,10 @@ async function main() {
       username: 'gestor',
       email: 'gestor@asesoriallave.com',
       password,
-      roleId: roleGestor.id,
     },
   });
 
-  const lectura = await prisma.user.upsert({
+  const lectura = await prisma.users.upsert({
     where: { username: 'lectura' },
     update: {},
     create: {
@@ -225,16 +41,15 @@ async function main() {
       username: 'lectura',
       email: 'lectura@asesoriallave.com',
       password,
-      roleId: roleLectura.id,
     },
   });
 
   console.log(`✅ Usuarios creados: admin, gestor, lectura\n`);
 
-  // 5. Crear clientes
+  // 2. Crear clientes
   console.log('🏢 Creando clientes...');
   
-  const cliente1 = await prisma.client.create({
+  const cliente1 = await prisma.clients.create({
     data: {
       id: randomUUID(),
       razonSocial: 'Juan Pérez García',
@@ -247,7 +62,7 @@ async function main() {
     },
   });
 
-  const cliente2 = await prisma.client.create({
+  const cliente2 = await prisma.clients.create({
     data: {
       id: randomUUID(),
       razonSocial: 'Tech Solutions SL',
@@ -260,7 +75,7 @@ async function main() {
     },
   });
 
-  const cliente3 = await prisma.client.create({
+  const cliente3 = await prisma.clients.create({
     data: {
       id: randomUUID(),
       razonSocial: 'María López Martínez',
@@ -273,7 +88,7 @@ async function main() {
     },
   });
 
-  const cliente4 = await prisma.client.create({
+  const cliente4 = await prisma.clients.create({
     data: {
       id: randomUUID(),
       razonSocial: 'Consultoría Global SA',
@@ -286,7 +101,7 @@ async function main() {
     },
   });
 
-  const cliente5 = await prisma.client.create({
+  const cliente5 = await prisma.clients.create({
     data: {
       id: randomUUID(),
       razonSocial: 'Carlos Rodríguez Sánchez',
@@ -301,10 +116,10 @@ async function main() {
 
   console.log(`✅ ${5} clientes creados\n`);
 
-  // 6. Crear modelos fiscales
+  // 3. Crear modelos fiscales
   console.log('📋 Creando modelos fiscales...');
   
-  const modelo303 = await prisma.taxModel.create({
+  const modelo303 = await prisma.tax_models.create({
     data: {
       id: randomUUID(),
       nombre: '303',
@@ -312,7 +127,7 @@ async function main() {
     },
   });
 
-  const modelo390 = await prisma.taxModel.create({
+  const modelo390 = await prisma.tax_models.create({
     data: {
       id: randomUUID(),
       nombre: '390',
@@ -320,7 +135,7 @@ async function main() {
     },
   });
 
-  const modelo130 = await prisma.taxModel.create({
+  const modelo130 = await prisma.tax_models.create({
     data: {
       id: randomUUID(),
       nombre: '130',
@@ -328,7 +143,7 @@ async function main() {
     },
   });
 
-  const modelo131 = await prisma.taxModel.create({
+  const modelo131 = await prisma.tax_models.create({
     data: {
       id: randomUUID(),
       nombre: '131',
@@ -338,7 +153,7 @@ async function main() {
 
   console.log(`✅ ${4} modelos fiscales creados\n`);
 
-  // 7. Crear periodos tributarios 2024 y 2025
+  // 4. Crear periodos tributarios 2024 y 2025
   console.log('📅 Creando periodos tributarios...');
   
   const periodos: Array<{ id: string }> = [];
@@ -356,14 +171,14 @@ async function main() {
     const fechas = fechasPresentacion[trimestre - 1];
     const anioInicio = trimestre === 4 ? 2025 : 2024;
     periodos.push(
-      await prisma.taxPeriod.create({
+      await prisma.tax_periods.create({
         data: {
           id: randomUUID(),
-          modeloId: modelo303.id,
+          modelo_id: modelo303.id,
           anio: 2024,
           trimestre,
-          inicioPresentacion: new Date(`${anioInicio}-${fechas.inicio}`),
-          finPresentacion: new Date(`${anioInicio}-${fechas.fin}`),
+          inicio_presentacion: new Date(`${anioInicio}-${fechas.inicio}`),
+          fin_presentacion: new Date(`${anioInicio}-${fechas.fin}`),
         },
       })
     );
@@ -374,14 +189,14 @@ async function main() {
     const fechas = fechasPresentacion[trimestre - 1];
     const anioInicio = trimestre === 4 ? 2025 : 2024;
     periodos.push(
-      await prisma.taxPeriod.create({
+      await prisma.tax_periods.create({
         data: {
           id: randomUUID(),
-          modeloId: modelo130.id,
+          modelo_id: modelo130.id,
           anio: 2024,
           trimestre,
-          inicioPresentacion: new Date(`${anioInicio}-${fechas.inicio}`),
-          finPresentacion: new Date(`${anioInicio}-${fechas.fin}`),
+          inicio_presentacion: new Date(`${anioInicio}-${fechas.inicio}`),
+          fin_presentacion: new Date(`${anioInicio}-${fechas.fin}`),
         },
       })
     );
@@ -392,14 +207,14 @@ async function main() {
     const fechas = fechasPresentacion[trimestre - 1];
     const anioInicio = trimestre === 4 ? 2026 : 2025;
     periodos.push(
-      await prisma.taxPeriod.create({
+      await prisma.tax_periods.create({
         data: {
           id: randomUUID(),
-          modeloId: modelo303.id,
+          modelo_id: modelo303.id,
           anio: 2025,
           trimestre,
-          inicioPresentacion: new Date(`${anioInicio}-${fechas.inicio}`),
-          finPresentacion: new Date(`${anioInicio}-${fechas.fin}`),
+          inicio_presentacion: new Date(`${anioInicio}-${fechas.inicio}`),
+          fin_presentacion: new Date(`${anioInicio}-${fechas.fin}`),
         },
       })
     );
@@ -407,7 +222,7 @@ async function main() {
 
   console.log(`✅ ${periodos.length} periodos tributarios creados\n`);
 
-  // 8. Asignar algunos impuestos a clientes
+  // 5. Asignar algunos impuestos a clientes
   console.log('🧾 Asignando impuestos a clientes...');
 
   const clientTaxes = [
@@ -441,17 +256,17 @@ async function main() {
   ];
 
   for (const ct of clientTaxes) {
-    await prisma.clientTax.create({
+    await prisma.client_tax.create({
       data: ({
         id: randomUUID(),
         ...ct,
-      } as Prisma.clientTaxUncheckedCreateInput),
+      } as any),
     });
   }
 
   console.log(`✅ ${clientTaxes.length} impuestos asignados\n`);
 
-  // 9. Crear tareas
+  // 6. Crear tareas
   console.log('📋 Creando tareas...');
 
   const tareas = [
@@ -508,17 +323,18 @@ async function main() {
   ];
 
   for (const tarea of tareas) {
-    await prisma.task.create({
+    await prisma.tasks.create({
       data: {
         id: randomUUID(),
         ...tarea,
+        fecha_actualizacion: new Date(),
       },
     });
   }
 
   console.log(`✅ ${tareas.length} tareas creadas\n`);
 
-  // 10. Crear manuales
+  // 7. Crear manuales
   console.log('📚 Creando manuales...');
 
   const manuales = [
@@ -570,55 +386,31 @@ async function main() {
   ];
 
   for (const manual of manuales) {
-    await prisma.manual.create({
+    await prisma.manuals.create({
       data: {
         id: randomUUID(),
-        ...manual,
+        titulo: manual.titulo,
+        contenido_html: manual.contenidoHtml,
+        autor_id: manual.autorId,
+        etiquetas: manual.etiquetas,
+        categoria: manual.categoria,
+        status: manual.publicado ? 'PUBLISHED' : 'DRAFT',
+        fecha_actualizacion: new Date(),
       },
     });
   }
 
   console.log(`✅ ${manuales.length} manuales creados\n`);
 
-  // 11. Crear configuración de sistema (para backup patterns)
-  console.log('⚙️ Creando configuración del sistema...');
-  
-  await prisma.systemConfig.upsert({
-    where: { key: 'backup_db_pattern' },
-    update: {},
-    create: {
-      id: randomUUID(),
-      key: 'backup_db_pattern',
-      value: 'backup_db_{fecha}_{hora}.sql',
-      description: 'Patrón de nombres para backups de base de datos',
-    },
-  });
-
-  await prisma.systemConfig.upsert({
-    where: { key: 'backup_files_pattern' },
-    update: {},
-    create: {
-      id: randomUUID(),
-      key: 'backup_files_pattern',
-      value: 'backup_files_{fecha}_{hora}.zip',
-      description: 'Patrón de nombres para backups de archivos',
-    },
-  });
-
-  console.log(`✅ Configuración del sistema creada\n`);
-
   console.log('🎉 Seed completado exitosamente!\n');
   console.log('Datos creados:');
-  console.log(`  - ${permissionsData.length} permisos`);
-  console.log(`  - ${3} roles con permisos asignados`);
   console.log(`  - ${3} usuarios (admin, gestor, lectura) - password: admin123`);
   console.log(`  - ${5} clientes`);
   console.log(`  - ${4} modelos fiscales`);
   console.log(`  - ${periodos.length} periodos tributarios`);
   console.log(`  - ${clientTaxes.length} impuestos asignados`);
   console.log(`  - ${tareas.length} tareas`);
-  console.log(`  - ${manuales.length} manuales`);
-  console.log(`  - ${2} configuraciones del sistema\n`);
+  console.log(`  - ${manuales.length} manuales\n`);
 }
 
 main()

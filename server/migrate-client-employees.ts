@@ -7,7 +7,7 @@ async function migrateClientEmployees() {
 
   try {
     // Obtener todos los clientes que tienen responsableAsignado
-    const clients = await prisma.client.findMany({
+    const clients = await prisma.clients.findMany({
       where: {
         responsableAsignado: {
           not: null

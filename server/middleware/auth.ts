@@ -1,0 +1,59 @@
+import type { Request, Response, NextFunction } from 'express';
+import jwt from 'jsonwebtoken';
+import { prismaStorage as storage } from '../prisma-storage';
+
+// SEGURIDAD: JWT_SECRET sin fallback inseguro
+// La validación se hace en server/index.ts con validateSecurityConfig()
+if (!process.env.JWT_SECRET) {
+  throw new Error('FATAL: JWT_SECRET no está configurado. Este valor es OBLIGATORIO para la seguridad del sistema.');
+}
+const JWT_SECRET = process.env.JWT_SECRET;
+
+export interface AuthRequest extends Request {
+  user?: {
+    id: string;
+    username: string;
+    roleId: string;
+    roleName?: string | null;
+    permissions: string[];
+  };
+}
+
+export const authenticateToken = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && String(authHeader).split(' ')[1];
+    if (!token) return res.status(401).json({ error: 'Token no proporcionado' });
+
+    const decoded = jwt.verify(token, JWT_SECRET) as { id: string };
+    if (!decoded || !decoded.id) return res.status(403).json({ error: 'Token inválido' });
+
+    const user = await storage.getUserWithPermissions(decoded.id);
+    if (!user) return res.status(401).json({ error: 'Usuario no encontrado' });
+
+    const permissions = (user.roles?.role_permissions || []).map((rp: any) => `${rp.permissions.resource}:${rp.permissions.action}`);
+
+    req.user = {
+      id: user.id,
+      username: user.username,
+      roleId: user.roleId,
+      roleName: user.roles?.name || null,
+      permissions,
+    };
+
+    next();
+  } catch (err) {
+    return res.status(403).json({ error: 'Token inválido' });
+  }
+};
+
+export const checkIsAdmin = (req: AuthRequest, res: Response, next: NextFunction) => {
+  if (!req.user) return res.status(401).json({ error: 'Usuario no autenticado' });
+  // Prefer role name check; fall back to permission
+  if (req.user.roleName === 'Administrador' || req.user.permissions.includes('admin:read') || req.user.permissions.includes('admin:settings')) {
+    return next();
+  }
+  return res.status(403).json({ error: 'No tienes permisos de administrador' });
+};
+
+export default {};

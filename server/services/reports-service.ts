@@ -34,7 +34,7 @@ function buildWhere(filters: ReportsFilters) {
 
 export async function getReportsKpis(filters: ReportsFilters) {
   const where = buildWhere(filters);
-  const rows = await prisma.clientTaxFiling.findMany({ where, select: { status: true, presentedAt: true, period: { select: { endsAt: true, startsAt: true } } } });
+  const rows = await prisma.client_tax_filings.findMany({ where, select: { status: true, presentedAt: true, period: { select: { endsAt: true, startsAt: true } } } });
   let pending = 0, inProgress = 0, presented = 0, dueIn3 = 0;
   let ltSum = 0, ltCount = 0;
   const now = Date.now();
@@ -61,7 +61,7 @@ export async function getReportsKpis(filters: ReportsFilters) {
 
 export async function getSummaryByModel(filters: ReportsFilters) {
   const where = buildWhere(filters);
-  const rows = await prisma.clientTaxFiling.findMany({ where, select: { status: true, taxModelCode: true, presentedAt: true, period: { select: { startsAt: true } } } });
+  const rows = await prisma.client_tax_filings.findMany({ where, select: { status: true, taxModelCode: true, presentedAt: true, period: { select: { startsAt: true } } } });
   const map = new Map<string, any>();
   for (const r of rows) {
     const key = r.taxModelCode;
@@ -91,7 +91,7 @@ export async function getSummaryByModel(filters: ReportsFilters) {
 
 export async function getSummaryByAssignee(filters: ReportsFilters) {
   const where = buildWhere(filters);
-  const rows = await prisma.clientTaxFiling.findMany({ where, select: { status: true, assigneeId: true, assignee: { select: { username: true } } } });
+  const rows = await prisma.client_tax_filings.findMany({ where, select: { status: true, assigneeId: true, assignee: { select: { username: true } } } });
   const map = new Map<string, any>();
   for (const r of rows) {
     const id = r.assigneeId ?? 'sin-gestor';
@@ -106,7 +106,7 @@ export async function getSummaryByAssignee(filters: ReportsFilters) {
 
 export async function getSummaryByClient(filters: ReportsFilters) {
   const where = buildWhere(filters);
-  const rows = await prisma.clientTaxFiling.findMany({ where, select: { status: true, clientId: true, client: { select: { razonSocial: true } }, taxModelCode: true } });
+  const rows = await prisma.client_tax_filings.findMany({ where, select: { status: true, clientId: true, client: { select: { razonSocial: true } }, taxModelCode: true } });
   const map = new Map<string, any>();
   for (const r of rows) {
     const id = r.clientId;
@@ -121,7 +121,7 @@ export async function getSummaryByClient(filters: ReportsFilters) {
 
 export async function getTrends(filters: ReportsFilters & { granularity?: 'month'|'week' }) {
   const where = buildWhere(filters);
-  const rows = await prisma.clientTaxFiling.findMany({ where, select: { presentedAt: true, period: { select: { startsAt: true } } } });
+  const rows = await prisma.client_tax_filings.findMany({ where, select: { presentedAt: true, period: { select: { startsAt: true } } } });
   const fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
   const map = new Map<string, { presented: number; ltSum: number; ltCount: number }>();
   for (const r of rows) {
@@ -141,7 +141,7 @@ export async function getTrends(filters: ReportsFilters & { granularity?: 'month
 export async function getExceptions(filters: ReportsFilters) {
   // Simplificado: duplicados (si existieran), latePresented
   const where = buildWhere(filters);
-  const rows = await prisma.clientTaxFiling.findMany({ where, select: { clientId: true, taxModelCode: true, periodId: true, status: true, presentedAt: true, period: { select: { endsAt: true } } } });
+  const rows = await prisma.client_tax_filings.findMany({ where, select: { clientId: true, taxModelCode: true, periodId: true, status: true, presentedAt: true, period: { select: { endsAt: true } } } });
   const key = (r: any) => `${r.clientId}:${r.taxModelCode}:${r.periodId}`;
   const countMap = new Map<string, number>();
   const latePresented: any[] = [];
@@ -160,8 +160,8 @@ export async function getFilings(filters: ReportsFilters & { page?: number; size
   const size = Math.min(200, Number(filters.size||50));
   const skip = (page-1)*size;
   const [total, items] = await Promise.all([
-    prisma.clientTaxFiling.count({ where }),
-    prisma.clientTaxFiling.findMany({
+    prisma.client_tax_filings.count({ where }),
+    prisma.client_tax_filings.findMany({
       where,
       include: { client: { select: { razonSocial: true } }, period: true, assignee: { select: { username: true } } },
       orderBy: [{ period: { startsAt: 'desc' } }],
