@@ -3,10 +3,9 @@
  * AHORA CON PARÁMETROS CONFIGURABLES desde base de datos
  */
 
-import { PrismaClient } from '@prisma/client';
+import prisma from '../../prisma-client';
 import { RentaInput, CalculationResult, BudgetItemInput } from './types';
 
-const prisma = new PrismaClient();
 
 // Caché de parámetros para evitar consultas repetidas
 let parametersCache: Map<string, any> | null = null;

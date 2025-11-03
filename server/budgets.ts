@@ -1,5 +1,5 @@
 import express from 'express';
-import { PrismaClient } from '@prisma/client';
+import prisma from './prisma-client';
 import { authenticateToken, AuthRequest } from './middleware/auth';
 import { generateAcceptanceHash, createBudgetPdf } from './utils';
 import { getSMTPConfig } from './email';
@@ -18,9 +18,83 @@ import {
   type RentaInput,
   type HerenciasInput,
 } from './services/budgets';
-
-const prisma = new PrismaClient();
+import { randomUUID } from 'crypto';
 const router = express.Router();
+
+const toNumber = (value: any | null | undefined, fallback = 0) => {
+  if (value === null || value === undefined) return fallback;
+  if (typeof value === 'string' && value.trim() === '') return fallback;
+  const num = Number(value);
+  return Number.isFinite(num) ? num : fallback;
+};
+
+const parseJsonMaybe = (value: any) => {
+  if (value === null || value === undefined || value === '') return null;
+  if (typeof value !== 'string') return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+};
+
+const normalizeBudgetItem = (item: any) => {
+  if (!item) return item;
+  const quantity = toNumber(item.quantity, 0) || 1;
+  let unitPriceRaw = item.unitPrice ?? item.unit_price ?? item.price ?? null;
+  if (!unitPriceRaw || toNumber(unitPriceRaw, 0) === 0) {
+    if (item.subtotal !== undefined) {
+      unitPriceRaw = toNumber(item.subtotal, 0) / quantity;
+    }
+  }
+  return {
+    ...item,
+    quantity,
+    unitPrice: toNumber(unitPriceRaw, 0),
+    price: toNumber(unitPriceRaw, 0),
+    vatPct: item.vatPct !== undefined ? toNumber(item.vatPct, null) : toNumber(item.vat_pct, null),
+    subtotal: toNumber(item.subtotal, 0),
+    total: toNumber(item.total, 0),
+  };
+};
+
+const normalizeBudget = (budget: any) => {
+  if (!budget) return null;
+  const {
+    budget_items,
+    budget_email_logs,
+    client_nif,
+    client_email,
+    client_phone,
+    client_address,
+    company_brand,
+    template_snapshot,
+    vat_total,
+    custom_total,
+    manually_edited,
+    ...rest
+  } = budget;
+
+  const subtotal = toNumber(rest.subtotal, 0);
+  const total = toNumber(rest.total, 0);
+
+  return {
+    ...rest,
+    subtotal,
+    total,
+    clientNif: client_nif ?? null,
+    clientEmail: client_email ?? null,
+    clientPhone: client_phone ?? null,
+    clientAddress: client_address ?? null,
+    companyBrand: company_brand ?? 'LA_LLAVE',
+    templateSnapshot: parseJsonMaybe(template_snapshot),
+    vatTotal: vat_total !== undefined ? toNumber(vat_total, 0) : null,
+    customTotal: custom_total !== undefined ? (custom_total === null ? null : toNumber(custom_total)) : null,
+    manuallyEdited: Boolean(manually_edited),
+    items: Array.isArray(budget_items) ? budget_items.map(normalizeBudgetItem) : undefined,
+    emails: Array.isArray(budget_email_logs) ? budget_email_logs : undefined,
+  };
+};
 
 function ensureRole(req: AuthRequest, res: any, next: any) {
   const roleName = req.user?.roleName;
@@ -51,7 +125,8 @@ router.get('/', authenticateToken, ensureRole, async (req: AuthRequest, res) => 
       p.budgets.findMany({ where, orderBy: { date: 'desc' }, take: size, skip }),
       p.budgets.count({ where }),
     ]);
-    res.json({ items, total, page, size });
+    const normalizedItems = items.map((item: any) => normalizeBudget(item));
+    res.json({ items: normalizedItems, total, page, size });
   } catch (err: any) {
     console.error('GET /api/budgets', err);
     res.status(500).json({ error: err.message });
@@ -67,13 +142,13 @@ router.get('/:id', authenticateToken, ensureRole, async (req: AuthRequest, res) 
     const budget = await p.budgets.findUnique({ 
       where: { id },
       include: {
-        items: { orderBy: { position: 'asc' } },
-        emails: { orderBy: { createdAt: 'desc' } }
+        budget_items: { orderBy: { position: 'asc' } },
+        budget_email_logs: { orderBy: { createdAt: 'desc' } }
       }
     });
     console.log('📊 Resultado de la consulta:', budget ? `Encontrado: ${budget.code}` : 'No encontrado');
     if (!budget) return res.status(404).json({ error: 'Not found' });
-    res.json(budget);
+    res.json(normalizeBudget(budget));
   } catch (err: any) {
     console.error('❌ Error en GET /api/budgets/:id', err);
     res.status(500).json({ error: err.message });
@@ -206,52 +281,64 @@ router.post('/', authenticateToken, ensureRole, async (req: AuthRequest, res) =>
     const acceptanceHash = generateAcceptanceHash(code, date);
 
     // 3. Crear presupuesto
-    const created = await p.budgets.create({ data: {
-      series,
-      number,
-      year,
-      code,
-      date,
-      validDays: Number(validDays),
-      expiresAt,
-      acceptanceHash, // Hash de aceptación generado
-      type: data.type || 'PYME', // Nuevo campo
-      companyBrand: data.companyBrand || 'LA_LLAVE', // Empresa emisora
-      clientName: data.clientName || '',
-      clientNif: data.clientNif || null,
-      clientEmail: data.clientEmail || null,
-      clientPhone: data.clientPhone || null,
-      clientAddress: data.clientAddress || null,
-      notes: data.notes || null,
-      subtotal: calculatedSubtotal ?? data.subtotal ?? 0,
-      vatTotal: calculatedVatTotal ?? data.vatTotal ?? 0,
-      total: calculatedTotal ?? data.total ?? 0,
-      templateSnapshot: data.templateSnapshot || {},
-      // CRITICAL: Incluir timestamps explícitamente para MariaDB
-      createdAt: now,
-      updatedAt: now,
-    } as any });
+    const budgetId = randomUUID();
+
+    const created = await p.budgets.create({
+      data: {
+        id: budgetId,
+        series,
+        number,
+        year,
+        code,
+        date,
+        validDays: Number(validDays),
+        expiresAt,
+        acceptanceHash,
+        type: data.type || 'PYME',
+        company_brand: data.companyBrand || 'LA_LLAVE',
+        clientName: data.clientName || '',
+        client_nif: data.clientNif || null,
+        client_email: data.clientEmail || null,
+        client_phone: data.clientPhone || null,
+        client_address: data.clientAddress || null,
+        notes: data.notes || null,
+        subtotal: calculatedSubtotal ?? Number(data.subtotal || 0),
+        vat_total: calculatedVatTotal ?? Number(data.vatTotal || 0),
+        total: calculatedTotal ?? Number(data.total || 0),
+        template_snapshot: data.templateSnapshot ? JSON.stringify(data.templateSnapshot) : null,
+        manually_edited: Boolean(data.manuallyEdited ?? false),
+        custom_total: data.customTotal !== undefined && data.customTotal !== null ? Number(data.customTotal) : null,
+        currency: data.currency || 'EUR',
+        createdAt: now,
+        updatedAt: now,
+      },
+    });
 
     // 4. Create budget items (usar calculatedItems si existe, sino data.items)
     const itemsToCreate = calculatedItems || data.items || [];
     if (Array.isArray(itemsToCreate) && itemsToCreate.length > 0) {
       for (let i = 0; i < itemsToCreate.length; i++) {
         const item = itemsToCreate[i];
-        const subtotal = Number(item.subtotal || 0);
-        const vatPct = Number(item.vatPct || 0);
+        const quantity = toNumber(item.quantity, 1);
+        const unitPrice = toNumber(
+          item.unitPrice ?? item.price ?? (item.subtotal !== undefined ? toNumber(item.subtotal, 0) / (quantity || 1) : 0),
+          0
+        );
+        const vatPct = toNumber(item.vatPct, 0);
+        const subtotal = item.subtotal !== undefined ? toNumber(item.subtotal, 0) : quantity * unitPrice;
         const total = subtotal * (1 + vatPct / 100);
-        
         await p.budget_items.create({
           data: {
+            id: randomUUID(),
             budgetId: created.id,
             concept: item.description || item.concept || '',
             category: item.category || null,
-            position: item.position ?? i + 1,
-            quantity: Number(item.quantity || 1),
-            unitPrice: Number(item.unitPrice || 0),
-            vatPct: vatPct,
-            subtotal: subtotal,
-            total: total,
+            position: item.position ?? item.order ?? i + 1,
+            quantity,
+            unitPrice,
+            vatPct,
+            subtotal,
+            total,
           } as any
         });
       }
@@ -260,10 +347,13 @@ router.post('/', authenticateToken, ensureRole, async (req: AuthRequest, res) =>
     // 5. Return created budget with items
     const budgetWithItems = await p.budgets.findUnique({
       where: { id: created.id },
-      include: { items: { orderBy: { position: 'asc' } } }
+      include: {
+        budget_items: { orderBy: { position: 'asc' } },
+        budget_email_logs: { orderBy: { createdAt: 'desc' } },
+      },
     });
 
-    res.status(201).json(budgetWithItems);
+    res.status(201).json(normalizeBudget(budgetWithItems));
   } catch (err: any) {
     console.error('POST /api/budgets', err);
     res.status(500).json({ error: err.message });
@@ -291,26 +381,37 @@ router.put('/:id', authenticateToken, ensureRole, async (req: AuthRequest, res) 
     }
 
     // Actualizar datos del presupuesto
-    const updateData: any = {};
+    const updateData: any = {
+      updatedAt: new Date(),
+    };
     
     if (data.clientName !== undefined) updateData.clientName = data.clientName;
-    if (data.clientNif !== undefined) updateData.clientNif = data.clientNif;
-    if (data.clientEmail !== undefined) updateData.clientEmail = data.clientEmail;
-    if (data.clientPhone !== undefined) updateData.clientPhone = data.clientPhone;
-    if (data.clientAddress !== undefined) updateData.clientAddress = data.clientAddress;
-    if (data.validityDays !== undefined) updateData.validityDays = data.validityDays;
-    if (data.paymentTerms !== undefined) updateData.paymentTerms = data.paymentTerms;
+    if (data.clientNif !== undefined) updateData.client_nif = data.clientNif;
+    if (data.clientEmail !== undefined) updateData.client_email = data.clientEmail;
+    if (data.clientPhone !== undefined) updateData.client_phone = data.clientPhone;
+    if (data.clientAddress !== undefined) updateData.client_address = data.clientAddress;
+    if (data.companyBrand !== undefined) updateData.company_brand = data.companyBrand;
+    if (data.validDays !== undefined) updateData.validDays = Number(data.validDays);
+    if (data.validityDays !== undefined) updateData.validDays = Number(data.validityDays);
     if (data.notes !== undefined) updateData.notes = data.notes;
+    if (data.templateSnapshot !== undefined) {
+      updateData.template_snapshot = data.templateSnapshot ? JSON.stringify(data.templateSnapshot) : null;
+    }
     
     // Si se proporciona customTotal, marcar como editado manualmente
-    if (data.customTotal !== undefined && data.customTotal !== null) {
-      updateData.customTotal = Number(data.customTotal);
-      updateData.manuallyEdited = true;
+    if (data.customTotal !== undefined) {
+      if (data.customTotal === null) {
+        updateData.custom_total = null;
+        updateData.manually_edited = false;
+      } else {
+        updateData.custom_total = Number(data.customTotal);
+        updateData.manually_edited = true;
+      }
     }
     
     // Actualizar totales si se proporcionan
     if (data.subtotal !== undefined) updateData.subtotal = Number(data.subtotal);
-    if (data.vatTotal !== undefined) updateData.vatTotal = Number(data.vatTotal);
+    if (data.vatTotal !== undefined) updateData.vat_total = Number(data.vatTotal);
     if (data.total !== undefined) updateData.total = Number(data.total);
 
     const updated = await p.budgets.update({
@@ -326,18 +427,22 @@ router.put('/:id', authenticateToken, ensureRole, async (req: AuthRequest, res) 
       // Crear nuevos items
       for (let i = 0; i < data.items.length; i++) {
         const item = data.items[i];
-        const quantity = Number(item.quantity || 1);
-        const unitPrice = Number(item.unitPrice || 0);
-        const vatPct = Number(item.vatPct || 21);
-        const subtotal = quantity * unitPrice;
-        const total = subtotal * (1 + vatPct / 100);
+        const quantity = toNumber(item.quantity, 1);
+        const unitPrice = toNumber(
+          item.unitPrice ?? item.price ?? (item.subtotal !== undefined ? toNumber(item.subtotal, 0) / (quantity || 1) : 0),
+          0
+        );
+        const vatPct = toNumber(item.vatPct, 21);
+        const subtotal = item.subtotal !== undefined ? toNumber(item.subtotal, quantity * unitPrice) : quantity * unitPrice;
+        const total = item.total !== undefined ? toNumber(item.total, subtotal * (1 + vatPct / 100)) : subtotal * (1 + vatPct / 100);
         
         await p.budget_items.create({
           data: {
+            id: randomUUID(),
             budgetId: id,
             concept: item.concept || item.description || '',
             category: item.category || null,
-            position: item.position ?? i + 1,
+            position: item.position ?? item.order ?? i + 1,
             quantity: quantity,
             unitPrice: unitPrice,
             vatPct: vatPct,
@@ -352,12 +457,15 @@ router.put('/:id', authenticateToken, ensureRole, async (req: AuthRequest, res) 
     // Retornar presupuesto actualizado con items
     const budgetWithItems = await p.budgets.findUnique({
       where: { id },
-      include: { items: { orderBy: { position: 'asc' } } }
+      include: {
+        budget_items: { orderBy: { position: 'asc' } },
+        budget_email_logs: { orderBy: { createdAt: 'desc' } },
+      }
     });
 
     console.log(`✅ Presupuesto ${updated.code} actualizado por ${req.user?.username}`);
     
-    res.json(budgetWithItems);
+    res.json(normalizeBudget(budgetWithItems));
   } catch (err: any) {
     console.error('PUT /api/budgets/:id', err);
     res.status(500).json({ error: err.message });
@@ -387,7 +495,7 @@ router.post('/:id/send', authenticateToken, ensureRole, async (req: AuthRequest,
     // send email with acceptance link
     let emailLog: any = null;
     try {
-      if (budget.clientEmail) {
+      if (budget.client_email) {
         const smtp = getSMTPConfig();
         const transporter = smtp ? nodemailer.createTransport({ host: smtp.host, port: smtp.port, secure: smtp.port === 465, auth: { user: smtp.user, pass: (smtp as any).pass } }) : null;
         const acceptUrl = `${process.env.FRONTEND_URL || 'https://tu-dominio'}/public/budgets/${encodeURIComponent(budget.code)}/accept?t=${encodeURIComponent(hash)}`;
@@ -404,14 +512,14 @@ router.post('/:id/send', authenticateToken, ensureRole, async (req: AuthRequest,
         let response: any = null;
         if (transporter) {
           try {
-            response = await transporter.sendMail({ from: smtp!.user, to: budget.clientEmail, subject, html, attachments: pdfRecord ? [{ filename: pdfRecord.filename, path: path.join(process.cwd(), 'uploads', 'budgets', pdfRecord.filename) }] : undefined });
+            response = await transporter.sendMail({ from: smtp!.user, to: budget.client_email, subject, html, attachments: pdfRecord ? [{ filename: pdfRecord.filename, path: path.join(process.cwd(), 'uploads', 'budgets', pdfRecord.filename) }] : undefined });
             sent = true;
           } catch (mailErr) {
             console.warn('Failed sending budget email', mailErr);
           }
         }
 
-        emailLog = await p.budget_email_logs.create({ data: { budgetId: id, status: sent ? 'SENT' : 'FAILED', toEmail: budget.clientEmail, subject, response: response ? response : null } as any });
+        emailLog = await p.budget_email_logs.create({ data: { budgetId: id, status: sent ? 'SENT' : 'FAILED', toEmail: budget.client_email, subject, response: response ? response : null } as any });
       }
     } catch (mailErr) {
       console.warn('Error sending email for budget', id, mailErr);
@@ -431,7 +539,7 @@ router.post('/:id/remind', authenticateToken, ensureRole, async (req: AuthReques
     const p: any = prisma;
     const budget = await p.budgets.findUnique({ where: { id } });
     if (!budget) return res.status(404).json({ error: 'Not found' });
-    if (!budget.clientEmail) return res.status(400).json({ error: 'No client email' });
+    if (!budget.client_email) return res.status(400).json({ error: 'No client email' });
     if (budget.status !== 'SENT' && budget.status !== 'DRAFT') {
       return res.status(400).json({ error: 'Can only remind SENT or DRAFT budgets' });
     }
@@ -458,7 +566,7 @@ router.post('/:id/remind', authenticateToken, ensureRole, async (req: AuthReques
     let response: any = null;
     if (transporter) {
       try {
-        response = await transporter.sendMail({ from: smtp!.user, to: budget.clientEmail, subject, html });
+        response = await transporter.sendMail({ from: smtp!.user, to: budget.client_email, subject, html });
         sent = true;
       } catch (mailErr) {
         console.warn('Failed sending reminder email', mailErr);
@@ -469,7 +577,7 @@ router.post('/:id/remind', authenticateToken, ensureRole, async (req: AuthReques
       data: { 
         budgetId: id, 
         status: sent ? 'SENT' : 'FAILED', 
-        toEmail: budget.clientEmail, 
+        toEmail: budget.client_email, 
         subject, 
         response: response ? response : null 
       } as any 
@@ -495,7 +603,8 @@ router.get('/export.csv', authenticateToken, ensureRole, async (req: AuthRequest
     res.setHeader('Content-Disposition', `attachment; filename=\"budgets.csv\"`);
     // simple csv
     res.write('code,date,clientName,clientEmail,series,status,subtotal,vatTotal,total,expiresAt,acceptedAt\n');
-    for (const b of items) {
+    for (const raw of items) {
+      const b = normalizeBudget(raw);
       res.write(`${b.code},${new Date(b.date).toISOString()},"${(b.clientName||'').replace(/"/g,'""')}",${b.clientEmail || ''},${b.series},${b.status},${b.subtotal},${b.vatTotal},${b.total},${b.expiresAt || ''},${b.acceptedAt || ''}\n`);
     }
     res.end();
@@ -531,7 +640,8 @@ router.get('/export.xlsx', authenticateToken, ensureRole, async (req: AuthReques
       { header: 'acceptedAt', key: 'acceptedAt', width: 20 },
     ];
 
-    items.forEach((b: any) => {
+    items.forEach((raw: any) => {
+      const b = normalizeBudget(raw);
       sheet.addRow({
         code: b.code,
         date: new Date(b.date).toISOString(),

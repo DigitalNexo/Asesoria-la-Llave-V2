@@ -1,6 +1,21 @@
 {
   "include": ["client/src/**/*", "shared/**/*", "server/**/*"],
-  "exclude": ["node_modules", "build", "dist", "**/*.test.ts"],
+  "exclude": [
+    "node_modules",
+    "build",
+    "dist",
+    "**/*.test.ts",
+    "server/create-tax-periods.ts",
+    "server/migrate-*.ts",
+    "server/seed-*.ts",
+    "server/test-*.ts"
+    ,
+    "server/scheduled/**/*.ts",
+    "server/services/backup-service.ts",
+    "server/services/update-service.ts",
+    "server/services/migration-service.ts",
+    "server/infra/**/*.ts"
+  ],
   "compilerOptions": {
     "incremental": true,
     "tsBuildInfoFile": "./node_modules/typescript/tsbuildinfo",

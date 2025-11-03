@@ -21,6 +21,7 @@ import Tareas from "@/pages/tareas";
 import Manuales from "@/pages/manuales";
 import ImpuestosControl from "@/pages/impuestos-control";
 import CalendarioAEATPage from "@/pages/calendario-aeat";
+import TaxModelsPage from "@/pages/tax-models";
 import ReportsPage from "@/features/reports/ReportsPage";
 import ManualView from "@/pages/manual-view";
 import ManualEditor from "@/pages/manual-editor";
@@ -37,6 +38,11 @@ import BudgetTemplatesManager from "@/pages/documentacion/presupuestos/BudgetTem
 import DocumentacionMenu from "@/pages/documentacion-menu";
 import DocumentacionPage from "@/pages/documentacion-page";
 import Documentos from "@/pages/documentos";
+// Presupuestos Gestoría
+import PresupuestosLista from "@/pages/presupuestos/PresupuestosLista";
+import PresupuestoNuevo from "@/pages/presupuestos/PresupuestoNuevo";
+import PresupuestoDetalle from "@/pages/presupuestos/PresupuestoDetalle";
+import ConfiguracionPrecios from "@/pages/presupuestos/ConfiguracionPrecios";
 
 function ConnectionIndicator() {
   const { connected, onlineUsers } = useWebSocket();
@@ -127,6 +133,7 @@ function Router() {
               </Route>
               <Route path="/impuestos/control" component={ImpuestosControl} />
               <Route path="/impuestos/calendario" component={CalendarioAEATPage} />
+              <Route path="/impuestos/modelos" component={TaxModelsPage} />
               <Route path="/impuestos/reportes" component={ReportsPage} />
               <Route path="/notificaciones" component={Notificaciones} />
               {/* Documentación - Main menu para elegir entre Presupuestos y Documentos */}
@@ -143,6 +150,12 @@ function Router() {
               <Route path="/documentacion/presupuestos/:id/editar" component={PresupuestoEdit} />
               <Route path="/documentacion/presupuestos/:id/ver" component={PresupuestoView} />
               <Route path="/documentacion/presupuestos/:id" component={PresupuestoView} />
+              {/* Presupuestos Gestoría - Sistema completo OFICIAL/ONLINE */}
+              <Route path="/presupuestos" component={PresupuestosLista} />
+              <Route path="/presupuestos/nuevo" component={PresupuestoNuevo} />
+              <Route path="/presupuestos/configuracion" component={ConfiguracionPrecios} />
+              <Route path="/presupuestos/:id" component={PresupuestoDetalle} />
+              <Route path="/presupuestos/:id/editar" component={PresupuestoNuevo} />
               {/* Admin main path plus wildcard to support nested admin routes and direct /admin navigation */}
               <Route path="/admin" component={() => ((user as any)?.roleName === "Administrador" ? <Admin /> : <Redirect to="/" />)} />
               <Route path="/admin/:rest*">

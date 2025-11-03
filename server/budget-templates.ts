@@ -1,9 +1,8 @@
 import express from 'express';
-import { PrismaClient } from '@prisma/client';
+import { randomUUID } from 'crypto';
+import prisma from './prisma-client';
 import { authenticateToken, checkIsAdmin } from './middleware/auth';
 import logger from './logger';
-
-const prisma = new PrismaClient();
 const router = express.Router();
 
 // Aplicar autenticación y verificación de admin a todas las rutas
@@ -97,6 +96,7 @@ router.post('/', async (req, res) => {
 
     const template = await prisma.budget_templates.create({
       data: {
+        id: randomUUID(),
         name,
         description,
         type,
@@ -107,7 +107,8 @@ router.post('/', async (req, res) => {
         isDefault: isDefault || false,
         isActive: isActive !== undefined ? isActive : true,
         createdBy: (req as any).user?.id,
-        updatedBy: (req as any).user?.id
+        updatedBy: (req as any).user?.id,
+        updatedAt: new Date()
       }
     });
 

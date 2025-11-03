@@ -10,6 +10,7 @@ import {
   UserCircle,
   Building2,
   User,
+  FileSpreadsheet,
 } from "lucide-react";
 
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -40,6 +41,9 @@ import type { ClientType } from "@shared/tax-rules";
 import {
   ClientFiscalForm,
 } from "@/features/clients/ClientFiscalForm";
+import {
+  ClientsImportDialog,
+} from "@/features/clients/ImportDialog";
 import {
   createClient as createClientApi,
   updateClient as updateClientApi,
@@ -152,6 +156,7 @@ export default function Clientes() {
   const [searchTerm, setSearchTerm] = useState("");
   const [filterTipo, setFilterTipo] = useState<string>("todos");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<"general" | "fiscal">("general");
   const [editingClient, setEditingClient] = useState<ClientListItem | null>(null);
   const [clientDetail, setClientDetail] = useState<ClientDetail | null>(null);
@@ -178,10 +183,14 @@ export default function Clientes() {
     return map;
   }, [users]);
 
-  const { data: taxModelsConfig = [] } = useQuery<TaxModelsConfig[]>({
+  const { data: taxModelsConfig = [], isLoading: isLoadingTaxModels, error: taxModelsError } = useQuery<TaxModelsConfig[]>({
     queryKey: ["tax-models-config"],
     queryFn: () => fetchTaxModelsConfig(),
   });
+
+  // Debug: Log tax models config
+  console.log('📋 Tax Models Config:', taxModelsConfig?.length, 'modelos', taxModelsConfig);
+  console.log('📋 Loading:', isLoadingTaxModels, 'Error:', taxModelsError);
 
   const {
     data: fetchedClientDetail,
@@ -497,22 +506,31 @@ export default function Clientes() {
           <h1 className="text-3xl font-display font-bold">Clientes</h1>
           <p className="text-muted-foreground mt-1">Gestión de clientes y contactos</p>
         </div>
-        <Dialog
-          open={isDialogOpen}
-          onOpenChange={(open) => {
-            if (!open) {
-              handleCloseDialog();
-            } else {
-              setIsDialogOpen(true);
-            }
-          }}
-        >
-          <DialogTrigger asChild>
-            <Button onClick={handleOpenCreate} data-testid="button-add-client">
-              <Plus className="mr-2 h-4 w-4" />
-              Nuevo Cliente
-            </Button>
-          </DialogTrigger>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            onClick={() => setIsImportDialogOpen(true)}
+            className="gap-2"
+          >
+            <FileSpreadsheet className="h-4 w-4" />
+            Importar desde Excel
+          </Button>
+          <Dialog
+            open={isDialogOpen}
+            onOpenChange={(open) => {
+              if (!open) {
+                handleCloseDialog();
+              } else {
+                setIsDialogOpen(true);
+              }
+            }}
+          >
+            <DialogTrigger asChild>
+              <Button onClick={handleOpenCreate} data-testid="button-add-client">
+                <Plus className="mr-2 h-4 w-4" />
+                Nuevo Cliente
+              </Button>
+            </DialogTrigger>
           <DialogContent className="max-w-4xl">
             <DialogHeader className="space-y-1">
               <DialogTitle>{editingClient ? "Editar Cliente" : "Nuevo Cliente"}</DialogTitle>
@@ -526,9 +544,14 @@ export default function Clientes() {
               <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as any)}>
                 <div className="flex items-center justify-between gap-4">
                   <TabsList>
-                    <TabsTrigger value="general">Datos del cliente</TabsTrigger>
+                    <TabsTrigger value="general">
+                      📋 Datos del cliente
+                    </TabsTrigger>
                     <TabsTrigger value="fiscal" disabled={!currentClientId}>
-                      Datos fiscales y contables
+                      💼 Datos fiscales y contables
+                      {!currentClientId && (
+                        <span className="ml-2 text-xs opacity-60">(guarda primero)</span>
+                      )}
                     </TabsTrigger>
                   </TabsList>
                   <Button type="submit" disabled={isSaving} className="shrink-0">
@@ -584,27 +607,7 @@ export default function Clientes() {
                         </SelectContent>
                       </Select>
                     </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="responsableAsignado">Responsable</Label>
-                      <Select
-                        value={formData.responsableAsignado ?? NO_RESPONSABLE_VALUE}
-                        onValueChange={(value) =>
-                          setFormData((prev) => ({ ...prev, responsableAsignado: value }))
-                        }
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Sin asignar" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value={NO_RESPONSABLE_VALUE}>Sin asignar</SelectItem>
-                          {users.map((user) => (
-                            <SelectItem value={user.id} key={user.id}>
-                              {user.username}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
+                    {/* Campo "Responsable" eliminado - ahora se usa "Empleados asignados" más abajo */}
                     <div className="space-y-2">
                       <Label htmlFor="fechaAlta">Fecha de alta</Label>
                       <Input
@@ -691,11 +694,16 @@ export default function Clientes() {
                       </div>
                     </div>
                     <div className="md:col-span-2 space-y-3">
-                      <Label className="flex items-center gap-2">
-                        <UserCircle className="h-4 w-4" />
-                        Empleados asignados
-                      </Label>
-                      <div className="border rounded-md p-4 space-y-3 max-h-48 overflow-y-auto">
+                      <div>
+                        <Label className="flex items-center gap-2 text-base font-semibold">
+                          <UserCircle className="h-5 w-5" />
+                          Responsables del cliente
+                        </Label>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Selecciona uno o varios empleados. El marcado como "Principal" será el responsable principal del cliente.
+                        </p>
+                      </div>
+                      <div className="border rounded-md p-4 space-y-3 max-h-64 overflow-y-auto">
                         {users.map((user) => {
                           const isSelected = selectedEmployees.includes(user.id);
                           const isPrimary = primaryEmployeeId === user.id;
@@ -736,8 +744,8 @@ export default function Clientes() {
                                 >
                                   {user.username}
                                   {isPrimary && (
-                                    <Badge variant="default" className="text-xs">
-                                      Primario
+                                    <Badge variant="default" className="text-xs bg-primary">
+                                      ⭐ Principal
                                     </Badge>
                                   )}
                                 </Label>
@@ -745,11 +753,12 @@ export default function Clientes() {
                               {isSelected && !isPrimary && (
                                 <Button
                                   type="button"
-                                  variant="ghost"
+                                  variant="outline"
                                   size="sm"
                                   onClick={() => setPrimaryEmployeeId(user.id)}
+                                  className="text-xs"
                                 >
-                                  Marcar como primario
+                                  Marcar como principal
                                 </Button>
                               )}
                             </div>
@@ -757,9 +766,18 @@ export default function Clientes() {
                         })}
                       </div>
                       {selectedEmployees.length === 0 && (
-                        <p className="text-xs text-muted-foreground">
-                          Selecciona al menos un empleado para asignar al cliente
-                        </p>
+                        <div className="bg-amber-50 border border-amber-200 rounded-md p-3">
+                          <p className="text-xs text-amber-800">
+                            ⚠️ Selecciona al menos un responsable para asignar al cliente. El primero seleccionado será el principal por defecto.
+                          </p>
+                        </div>
+                      )}
+                      {selectedEmployees.length > 0 && !primaryEmployeeId && (
+                        <div className="bg-amber-50 border border-amber-200 rounded-md p-3">
+                          <p className="text-xs text-amber-800">
+                            ⚠️ Marca un empleado como principal para establecer el responsable principal del cliente.
+                          </p>
+                        </div>
                       )}
                     </div>
                   </div>
@@ -798,6 +816,7 @@ export default function Clientes() {
             </form>
           </DialogContent>
         </Dialog>
+      </div>
       </div>
 
       <div className="flex flex-col md:flex-row gap-4">
@@ -905,6 +924,12 @@ export default function Clientes() {
           </Table>
         </CardContent>
       </Card>
+
+      {/* Dialog de importación */}
+      <ClientsImportDialog
+        open={isImportDialogOpen}
+        onOpenChange={setIsImportDialogOpen}
+      />
     </div>
   );
 }

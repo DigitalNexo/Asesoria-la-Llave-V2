@@ -1,0 +1,26 @@
+✅ Validaciones de seguridad completadas exitosamente
+{"level":"INFO","time":1761624973179,"pid":217565,"hostname":"vps-zap880072-1","msg":"ℹ️  Usuario administrador ya existe en el sistema"}
+{"level":"INFO","time":1761624973186,"pid":217565,"hostname":"vps-zap880072-1","msg":"ℹ️  Cron jobs deshabilitados (entorno Autoscale). Use Scheduled Deployments de Replit para tareas programadas."}
+{"level":"INFO","time":1761624973399,"pid":217565,"hostname":"vps-zap880072-1","msg":"🚀 Epic Tasks routes registered successfully"}
+{"level":"WARN","time":1761624973416,"pid":217565,"hostname":"vps-zap880072-1","port":5000,"msg":"Puerto 5000 en uso, intentando puerto 5001..."}
+⚠️  SMTP no configurado - emails deshabilitados: Invalid login: 535-5.7.8 Username and Password not accepted. For more information, go to
+535 5.7.8  https://support.google.com/mail/?p=BadCredentials 4fb4d7f45d1cf-63e7efb8e54sm7677040a12.25 - gsmtp
+{"level":"INFO","time":1761624973619,"pid":217565,"hostname":"vps-zap880072-1","port":5001,"env":"production","nodeVersion":"v20.19.5","reusePort":true,"msg":"🚀 Server listening on port 5001"}
+{"level":"INFO","time":1761624973619,"pid":217565,"hostname":"vps-zap880072-1","port":5001,"env":"production","nodeVersion":"v20.19.5","reusePort":true,"msg":"🚀 Server listening on port 5001"}
+TypeError: storage.getAllClientTax is not a function
+    at checkAndSendReminders (file:///root/www/Asesoria-la-Llave-V2/dist/index.js:3832:37)
+TypeError: storage.getAllClientTax is not a function
+    at checkAndSendReminders (file:///root/www/Asesoria-la-Llave-V2/dist/index.js:3832:37)
+TypeError: storage.getAllClientTax is not a function
+    at checkAndSendReminders (file:///root/www/Asesoria-la-Llave-V2/dist/index.js:3832:37)
+TypeError: storage.getAllClientTax is not a function
+    at checkAndSendReminders (file:///root/www/Asesoria-la-Llave-V2/dist/index.js:3832:37)
+TypeError: storage.getAllClientTax is not a function
+    at checkAndSendReminders (file:///root/www/Asesoria-la-Llave-V2/dist/index.js:3832:37)
+TypeError: storage.getAllClientTax is not a function
+    at checkAndSendReminders (file:///root/www/Asesoria-la-Llave-V2/dist/index.js:3832:37)
+TypeError: storage.getAllClientTax is not a function
+    at checkAndSendReminders (file:///root/www/Asesoria-la-Llave-V2/dist/index.js:3832:37)
+TypeError: storage.getAllClientTax is not a function
+    at checkAndSendReminders (file:///root/www/Asesoria-la-Llave-V2/dist/index.js:3832:37)
+{"level":"INFO","time":1761654943323,"pid":217565,"hostname":"vps-zap880072-1","request":{"id":"dc86607a-eef2-4b24-b8bb-61e0af932a0a","method":"GET","url":"/","headers":{}},"response":{"statusCode":200,"headers":{}},"duration":48,"msg":"GET / 200"}

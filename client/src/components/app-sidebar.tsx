@@ -15,6 +15,9 @@ import {
   Server,
   HardDrive,
   Clock,
+  Calendar,
+  BarChart3,
+  ListChecks,
 } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import {
@@ -26,9 +29,6 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarMenuSub,
-  SidebarMenuSubItem,
-  SidebarMenuSubButton,
   SidebarFooter,
 } from "@/components/ui/sidebar";
 import { useAuth } from "@/contexts/auth-context";
@@ -40,7 +40,6 @@ type MenuItem = {
   url: string;
   icon: React.ComponentType<any>;
   roles?: string[];
-  children?: MenuItem[];
 };
 
 const mainMenuItems: MenuItem[] = [
@@ -129,57 +128,22 @@ export function AppSidebar() {
           <SidebarGroupLabel>Navegación</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {filteredMain.map((item) => {
-                // If the item has children, render a submenu similar to Administración
-                if (item.children && Array.isArray(item.children) && item.children.length > 0) {
-                  const isParentActive = item.children.some((c: any) => location.startsWith(c.url)) || location === item.url;
-                  return (
-                    <SidebarMenuItem key={item.title}>
-                      <SidebarMenuButton asChild isActive={isParentActive}>
-                        <Link href={item.url} data-testid={`link-${item.title.toLowerCase()}`}>
-                          <item.icon className="h-4 w-4" />
-                          <span>{item.title}</span>
-                        </Link>
-                      </SidebarMenuButton>
-
-                      <SidebarMenuSub>
-                        {item.children.filter((c: any) => {
-                          // respect roles on subitems if provided
-                          if (!c.roles) return true;
-                          return (user && (user as any).roleName && c.roles.includes((user as any).roleName));
-                        }).map((child: any) => (
-                          <SidebarMenuSubItem key={child.title}>
-                            <SidebarMenuSubButton
-                              asChild
-                              isActive={location.startsWith(child.url)}
-                            >
-                              <Link href={child.url} data-testid={`link-${child.title.toLowerCase()}`}>
-                                <child.icon className="h-3.5 w-3.5" />
-                                <span>{child.title}</span>
-                              </Link>
-                            </SidebarMenuSubButton>
-                          </SidebarMenuSubItem>
-                        ))}
-                      </SidebarMenuSub>
-                    </SidebarMenuItem>
-                  );
-                }
-
-                return (
-                  <SidebarMenuItem key={item.title}>
-                    <SidebarMenuButton asChild isActive={location === item.url}>
-                      <Link href={item.url} data-testid={`link-${item.title.toLowerCase()}`}>
-                        <item.icon className="h-4 w-4" />
-                        <span>{item.title}</span>
-                      </Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                );
-              })}
+              {filteredMain.map((item) => (
+                <SidebarMenuItem key={item.title}>
+                  <SidebarMenuButton 
+                    asChild 
+                    isActive={location.startsWith(item.url) || location === item.url}
+                  >
+                    <Link href={item.url} data-testid={`link-${item.title.toLowerCase()}`}>
+                      <item.icon className="h-4 w-4" />
+                      <span>{item.title}</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
-        {/* Documentación is now part of the main menu as a submenu. */}
       </SidebarContent>
       <SidebarFooter className="p-4">
         {user && (

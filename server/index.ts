@@ -3,7 +3,7 @@ import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import helmet from "helmet";
 import cors from "cors";
-import { PrismaClient } from "@prisma/client";
+import prisma from "./prisma-client";
 import { httpLogger, logger, dbLogger, logError } from "./logger";
 import { initializeJobs, startAllJobs, stopAllJobs } from "./jobs";
 import bcrypt from "bcrypt";
@@ -57,29 +57,23 @@ try {
   logger.warn({ err: e }, 'No se pudo parsear DATABASE_URL para validación de host');
 }
 
-const prisma = new PrismaClient({
-  log: [
-    { level: "query", emit: "event" },
-    { level: "error", emit: "event" },
-    { level: "warn", emit: "event" },
-  ],
-});
+const isDev = process.env.NODE_ENV === "development";
 
-// Logging de Prisma
-prisma.$on("query", (e) => {
-  dbLogger.debug({ duration: e.duration, query: e.query }, "Database query");
-});
+// Prisma client ahora se importa como singleton desde prisma-client.ts
+// Configurar event listeners solo si es necesario
+if (isDev) {
+  prisma.$on("query" as any, (e: any) => {
+    dbLogger.debug({ duration: e.duration, query: e.query }, "Database query");
+  });
+}
 
-prisma.$on("error", (e) => {
+prisma.$on("error" as any, (e: any) => {
   dbLogger.error({ target: e.target }, e.message);
 });
 
-prisma.$on("warn", (e) => {
+prisma.$on("warn" as any, (e: any) => {
   dbLogger.warn({ target: e.target }, e.message);
 });
-
-// Security middleware
-const isDev = process.env.NODE_ENV === "development";
 
 app.use(helmet({
   contentSecurityPolicy: isDev ? false : {

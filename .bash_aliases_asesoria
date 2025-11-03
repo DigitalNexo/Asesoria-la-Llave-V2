@@ -1,0 +1,101 @@
+# ========================================
+# Alias para Asesoría La Llave
+# ========================================
+# Para activar estos alias, añade esto a tu ~/.bashrc:
+#   source /root/www/Asesoria-la-Llave-V2/.bash_aliases_asesoria
+# Luego ejecuta: source ~/.bashrc
+# ========================================
+
+# Directorio del proyecto
+export ASESORIA_DIR="/root/www/Asesoria-la-Llave-V2"
+
+# Alias de navegación
+alias ase-cd='cd /root/www/Asesoria-la-Llave-V2'
+alias ase-server='cd /root/www/Asesoria-la-Llave-V2/server'
+alias ase-client='cd /root/www/Asesoria-la-Llave-V2/client'
+
+# Alias de gestión del servicio
+alias ase-status='systemctl status asesoria-llave --no-pager'
+alias ase-start='systemctl start asesoria-llave'
+alias ase-stop='systemctl stop asesoria-llave'
+alias ase-restart='systemctl restart asesoria-llave'
+alias ase-enable='systemctl enable asesoria-llave'
+alias ase-disable='systemctl disable asesoria-llave'
+
+# Alias de logs
+alias ase-logs='journalctl -u asesoria-llave -f'
+alias ase-logs-100='journalctl -u asesoria-llave -n 100 --no-pager'
+alias ase-logs-error='journalctl -u asesoria-llave -p err -n 50 --no-pager'
+
+# Alias de despliegue
+alias ase-deploy='cd /root/www/Asesoria-la-Llave-V2 && ./deploy.sh'
+alias ase-deploy-db='cd /root/www/Asesoria-la-Llave-V2 && ./deploy-with-db.sh'
+alias ase-quick='cd /root/www/Asesoria-la-Llave-V2 && ./quick-restart.sh'
+alias ase-check='cd /root/www/Asesoria-la-Llave-V2 && ./check-status.sh'
+
+# Alias de desarrollo
+alias ase-build='cd /root/www/Asesoria-la-Llave-V2 && npm run build'
+alias ase-prisma='cd /root/www/Asesoria-la-Llave-V2 && npm run prisma:generate && npm run prisma:push'
+
+# Alias de base de datos
+alias ase-db='mysql -u app_area -p area_privada'
+alias ase-db-status='systemctl status mariadb --no-pager'
+alias ase-db-restart='systemctl restart mariadb'
+
+# Alias de utilidades
+alias ase-port='ss -tlnp | grep 5000'
+alias ase-ps='ps aux | grep "node dist/index.js" | grep -v grep'
+alias ase-health='curl -s http://localhost:5000/health | jq .'
+alias ase-env='cat /root/www/Asesoria-la-Llave-V2/.env'
+
+# Alias de ayuda
+alias ase-help='cat << EOF
+╔═══════════════════════════════════════════════════════════╗
+║         COMANDOS ASESORÍA LA LLAVE - GUÍA RÁPIDA         ║
+╠═══════════════════════════════════════════════════════════╣
+║ 🎯 MÁS USADOS:                                            ║
+║   ase-deploy        → Desplegar cambios (BUILD + RESTART) ║
+║   ase-logs          → Ver logs en tiempo real             ║
+║   ase-status        → Ver estado del servicio             ║
+║   ase-check         → Verificación completa del sistema   ║
+║                                                            ║
+║ 📁 NAVEGACIÓN:                                             ║
+║   ase-cd            → Ir al directorio del proyecto       ║
+║   ase-server        → Ir a /server                        ║
+║   ase-client        → Ir a /client                        ║
+║                                                            ║
+║ 🔄 SERVICIO:                                               ║
+║   ase-restart       → Reiniciar servicio                  ║
+║   ase-stop          → Detener servicio                    ║
+║   ase-start         → Iniciar servicio                    ║
+║                                                            ║
+║ 🚀 DESPLIEGUE:                                             ║
+║   ase-deploy        → Despliegue normal                   ║
+║   ase-deploy-db     → Despliegue con actualización de DB  ║
+║   ase-quick         → Reinicio rápido (solo restart)      ║
+║                                                            ║
+║ 📝 LOGS:                                                   ║
+║   ase-logs          → Ver logs en tiempo real             ║
+║   ase-logs-100      → Ver últimos 100 logs                ║
+║   ase-logs-error    → Ver solo errores                    ║
+║                                                            ║
+║ 🗄️  BASE DE DATOS:                                         ║
+║   ase-db            → Conectar a MySQL                    ║
+║   ase-db-status     → Estado de MariaDB                   ║
+║   ase-prisma        → Generar y aplicar Prisma            ║
+║                                                            ║
+║ 🔍 UTILIDADES:                                             ║
+║   ase-health        → Health check de la app              ║
+║   ase-port          → Ver puerto 5000                     ║
+║   ase-ps            → Ver procesos Node                   ║
+║   ase-env           → Ver variables de entorno            ║
+║                                                            ║
+║ 📚 DOCUMENTACIÓN:                                          ║
+║   cat ~/www/Asesoria-la-Llave-V2/COMANDOS-RAPIDOS.md     ║
+║   cat ~/www/Asesoria-la-Llave-V2/DESARROLLO-VPS.md       ║
+╚═══════════════════════════════════════════════════════════╝
+EOF
+'
+
+# Mensaje de bienvenida (opcional)
+echo "✅ Alias de Asesoría La Llave cargados. Escribe 'ase-help' para ver la ayuda."

@@ -4,7 +4,7 @@
  */
 
 import { Router, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
+import prisma from './prisma-client';
 import { authenticateToken, AuthRequest } from './middleware/auth';
 import { clearParametersCache as clearPymeCache } from './services/budgets/calculatePyme';
 import { clearParametersCache as clearAutonomoCache } from './services/budgets/calculateAutonomo';
@@ -12,7 +12,6 @@ import { clearParametersCache as clearRentaCache } from './services/budgets/calc
 import { clearParametersCache as clearHerenciasCache } from './services/budgets/calculateHerencias';
 
 const router = Router();
-const prisma = new PrismaClient();
 
 // Middleware: Solo Administrador puede editar parámetros
 function ensureAdmin(req: AuthRequest, res: any, next: any) {

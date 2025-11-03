@@ -29,21 +29,38 @@ import adminSessionsRouter from './admin-sessions';
 import priceCatalogRouter from './price-catalog';
 import budgetsRouter from './budgets';
 import publicBudgetsRouter from './public-budgets';
+// Gestoría budgets (new subsystem)
+import gestoriaBudgetsRouter from './routes/gestoria-budgets';
+import { generateClientsTemplate, processClientsImport } from './services/clients-import';
 import budgetParametersRouter from './budget-parameters';
 import budgetTemplatesRouter from './budget-templates';
 import { documentsRouter } from './documents';
 import { checkForUpdates, getCurrentVersion } from "./services/version-service.js";
-import { createSystemBackup, listBackups, restoreFromBackup } from "./services/backup-service.js";
-import { performSystemUpdate, verifyGitSetup, getUpdateHistory } from "./services/update-service.js";
+import { createSystemBackup, listBackups, restoreFromBackup } from "./services/backup-service-wrapper";
+import { performSystemUpdate, verifyGitSetup, getUpdateHistory } from "./services/update-service-wrapper";
 import { StorageFactory, encryptPassword, decryptPassword } from "./services/storage-factory";
 import { uploadToStorage } from "./middleware/storage-upload";
 import { TAX_RULES, type ClientType, type TaxPeriodicity } from "@shared/tax-rules";
 import { logger } from "./logger";
 import { buildTaxControlCsv, buildTaxControlXlsx } from "./services/tax-control-utils";
+import { processExcelImport, generateTemplate } from "./services/tax-calendar-import";
+import {
+  getReportsKpis,
+  getSummaryByModel,
+  getSummaryByAssignee,
+  getSummaryByClient,
+  getTrends,
+  getExceptions,
+  getFilings,
+} from "./services/reports-service";
 import { loginLimiter, registerLimiter, apiLimiter, strictLimiter } from "./middleware/rate-limit";
 import { validateSecurityConfig } from "./middleware/security-validation";
 import { registerEpicTasksRoutes } from "./epic-tasks-routes";
+import nodemailer from 'nodemailer';
+import { exec } from 'child_process';
+import { promisify } from 'util';
 
+const execPromise = promisify(exec);
 const prisma = new PrismaClient();
 
 // SEGURIDAD: JWT_SECRET sin fallback inseguro
@@ -110,6 +127,23 @@ const upload = multer({
     },
   }),
   limits: { fileSize: 10 * 1024 * 1024 }, // 10MB max
+});
+
+// Middleware específico para importación de Excel (usa memoria en lugar de disco)
+const uploadExcel = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB max
+  fileFilter: (req, file, cb) => {
+    const allowedMimeTypes = [
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
+      'application/vnd.ms-excel', // .xls
+    ];
+    if (allowedMimeTypes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Solo se permiten archivos Excel (.xlsx, .xls)'));
+    }
+  },
 });
 
 const uploadManualImage = multer({
@@ -736,6 +770,80 @@ export async function registerRoutes(app: Express, options?: { skipDbInit?: bool
   );
 
   // ==================== CLIENT ROUTES ====================
+  
+  // ==================== CLIENT IMPORT (debe ir ANTES de /api/clients/:id) ====================
+  
+  logger.info('✅ [DIAGNOSTICO] Registrando rutas de importación de clientes...');
+
+  // GET /api/clients/import-template - Descargar plantilla Excel
+  app.get(
+    "/api/clients/import-template",
+    authenticateToken,
+    checkPermission("clients:read"),
+    async (req: Request, res: Response) => {
+      try {
+        logger.info('Generando plantilla de importación de clientes');
+        const buffer = await generateClientsTemplate();
+
+        logger.info({ bufferSize: buffer.length }, 'Plantilla generada exitosamente');
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', 'attachment; filename="plantilla-importacion-clientes.xlsx"');
+        res.setHeader('Content-Length', buffer.length.toString());
+        res.send(buffer);
+      } catch (error: any) {
+        logger.error({ err: error }, 'Error generando plantilla de clientes');
+        res.status(500).json({ error: 'Error generando la plantilla', details: error?.message });
+      }
+    }
+  );
+
+  // POST /api/clients/import-excel - Importar clientes desde Excel
+  app.post(
+    "/api/clients/import-excel",
+    authenticateToken,
+    checkPermission("clients:create"),
+    uploadExcel.single('file'),
+    async (req: AuthRequest, res: Response) => {
+      try {
+        if (!req.file) {
+          return res.status(400).json({ error: 'No se proporcionó ningún archivo' });
+        }
+
+        logger.info('Iniciando importación de clientes desde Excel');
+        const userId = req.user?.id || 'system';
+        const result = await processClientsImport(req.file.buffer, userId);
+
+        if (!result.success && result.errors.length > 0) {
+          return res.status(400).json({
+            error: 'Errores durante la importación',
+            result,
+          });
+        }
+
+        // Log de actividad
+        await storage.createActivityLog({
+          usuarioId: userId,
+          accion: `Importó ${result.imported + result.updated} clientes desde Excel`,
+          modulo: 'clientes',
+          detalles: `Nuevos: ${result.imported}, Actualizados: ${result.updated}`,
+        });
+
+        res.json({
+          message: 'Importación completada',
+          result,
+        });
+      } catch (error: any) {
+        logger.error({ err: error }, 'Error en importación de clientes Excel');
+        res.status(500).json({
+          error: 'Error procesando el archivo Excel',
+          details: error?.message,
+        });
+      }
+    }
+  );
+
+  // ==================== OTRAS RUTAS DE CLIENTES ====================
+  
   app.get("/api/clients", authenticateToken, async (req: Request, res: Response) => {
     try {
       const clients = await storage.getAllClients();
@@ -1025,6 +1133,21 @@ export async function registerRoutes(app: Express, options?: { skipDbInit?: bool
           notes: req.body.notes ?? null,
         });
 
+        // Debug: log payload and created assignment to help trace persistence issues
+        try {
+          console.log('DEBUG: createClientTaxAssignment payload for client', clientId, {
+            taxModelCode,
+            periodicity,
+            startDate,
+            endDate,
+            activeFlag,
+            notes: req.body.notes ?? null,
+          });
+          console.log('DEBUG: createClientTaxAssignment returned', assignment && typeof assignment === 'object' ? JSON.stringify(assignment) : assignment);
+        } catch (e) {
+          console.error('DEBUG: error logging assignment debug info', e);
+        }
+
         await storage.createActivityLog({
           usuarioId: req.user!.id,
           accion: `Asignó modelo ${taxModelCode} al cliente ${client.razonSocial}`,
@@ -1150,6 +1273,8 @@ export async function registerRoutes(app: Express, options?: { skipDbInit?: bool
     async (req: AuthRequest, res: Response) => {
       try {
         const { assignmentId } = req.params;
+        const hardDelete = req.query.hard === '1' || req.query.hard === 'true';
+
         const existing = await storage.getClientTaxAssignment(assignmentId);
         if (!existing) {
           return res.status(404).json({ error: "Asignación no encontrada" });
@@ -1164,13 +1289,22 @@ export async function registerRoutes(app: Express, options?: { skipDbInit?: bool
         let message;
         let action: "DELETE" | "UPDATE" = "DELETE";
 
-        if (hasHistory) {
+        // Si el usuario solicita hard delete, forzar eliminación completa
+        // Si no, respetar la lógica de histórico
+        if (hardDelete) {
+          result = await storage.deleteClientTaxAssignment(assignmentId);
+          message = hasHistory
+            ? "Asignación eliminada definitivamente (incluyendo histórico)."
+            : "Asignación eliminada correctamente.";
+          action = "DELETE";
+        } else if (hasHistory) {
           result = await storage.softDeactivateClientTaxAssignment(assignmentId, new Date());
           message = "Asignación desactivada. Posee histórico de presentaciones.";
           action = "UPDATE";
         } else {
           result = await storage.deleteClientTaxAssignment(assignmentId);
           message = "Asignación eliminada correctamente.";
+          action = "DELETE";
         }
 
         await storage.createActivityLog({
@@ -1796,7 +1930,7 @@ export async function registerRoutes(app: Express, options?: { skipDbInit?: bool
       try {
         const manual = await storage.createManual({
           ...req.body,
-          autor_id: req.user!.id,
+          autorId: req.user!.id,
         });
         await storage.createActivityLog({
           usuarioId: req.user!.id,
@@ -2158,10 +2292,12 @@ export async function registerRoutes(app: Express, options?: { skipDbInit?: bool
   app.use('/api/price-catalog', priceCatalogRouter);
   app.use('/api/budgets', budgetsRouter);
   app.use('/public/budgets', publicBudgetsRouter);
+  // Mount gestoria budgets routes (prefixed)
+  app.use('/api/gestoria-budgets', gestoriaBudgetsRouter);
   app.use('/api/budget-parameters', budgetParametersRouter);
   app.use('/api/budget-templates', budgetTemplatesRouter);
   // Documents routes
-  app.use('/api/documents', documentsRouter);
+  app.use('/api/documents', authenticateToken, documentsRouter);
   app.get(
     "/api/admin/smtp-accounts",
     authenticateToken,
@@ -2281,7 +2417,7 @@ export async function registerRoutes(app: Express, options?: { skipDbInit?: bool
       try {
         const { host, port, user, password } = req.body;
         
-        const nodemailer = require('nodemailer');
+        // Use top-level imported nodemailer to avoid dynamic require/import issues
         const transporter = nodemailer.createTransport({
           host,
           port: parseInt(port),
@@ -3670,6 +3806,136 @@ export async function registerRoutes(app: Express, options?: { skipDbInit?: bool
     }
   );
 
+  // ==================== TAX MODELS MANAGEMENT ====================
+  // GET /api/tax-models - Listar todos los modelos fiscales
+  app.get(
+    "/api/tax-models",
+    authenticateToken,
+    checkPermission("taxes:read"),
+    async (_req: AuthRequest, res: Response) => {
+      try {
+        const models = await storage.getAllTaxModels();
+        res.json(models);
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
+  // POST /api/tax-models - Crear nuevo modelo fiscal
+  app.post(
+    "/api/tax-models",
+    authenticateToken,
+    checkPermission("taxes:update"),
+    async (req: AuthRequest, res: Response) => {
+      try {
+        const { code, name, allowedTypes, allowedPeriods } = req.body;
+
+        if (!code || !name) {
+          return res.status(400).json({ error: "Código y nombre son requeridos" });
+        }
+
+        // Validar que el código no exista
+        const existing = await storage.getTaxModelByCode(code.toUpperCase());
+        if (existing) {
+          return res.status(409).json({ error: "Ya existe un modelo con ese código" });
+        }
+
+        const model = await storage.createTaxModel({
+          code: code.toUpperCase(),
+          name,
+          allowedTypes: Array.isArray(allowedTypes) ? allowedTypes : [],
+          allowedPeriods: Array.isArray(allowedPeriods) ? allowedPeriods : [],
+        });
+
+        await storage.createActivityLog({
+          usuarioId: req.user!.id,
+          accion: `Creó modelo fiscal ${code}`,
+          modulo: "impuestos",
+          detalles: `Nombre: ${name}`,
+        });
+
+        res.status(201).json(model);
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
+  // PUT /api/tax-models/:code - Actualizar modelo fiscal
+  app.put(
+    "/api/tax-models/:code",
+    authenticateToken,
+    checkPermission("taxes:update"),
+    async (req: AuthRequest, res: Response) => {
+      try {
+        const { code } = req.params;
+        const { name, allowedTypes, allowedPeriods, isActive } = req.body;
+
+        const existing = await storage.getTaxModelByCode(code.toUpperCase());
+        if (!existing) {
+          return res.status(404).json({ error: "Modelo no encontrado" });
+        }
+
+        const updated = await storage.updateTaxModel(code.toUpperCase(), {
+          name,
+          allowedTypes: Array.isArray(allowedTypes) ? allowedTypes : undefined,
+          allowedPeriods: Array.isArray(allowedPeriods) ? allowedPeriods : undefined,
+          isActive,
+        });
+
+        await storage.createActivityLog({
+          usuarioId: req.user!.id,
+          accion: `Actualizó modelo fiscal ${code}`,
+          modulo: "impuestos",
+          detalles: `Nombre: ${name}`,
+        });
+
+        res.json(updated);
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
+  // DELETE /api/tax-models/:code - Eliminar modelo fiscal
+  app.delete(
+    "/api/tax-models/:code",
+    authenticateToken,
+    checkPermission("taxes:delete"),
+    async (req: AuthRequest, res: Response) => {
+      try {
+        const { code } = req.params;
+
+        const existing = await storage.getTaxModelByCode(code.toUpperCase());
+        if (!existing) {
+          return res.status(404).json({ error: "Modelo no encontrado" });
+        }
+
+        // Verificar si hay asignaciones activas
+        const assignments = await storage.getAssignmentsByTaxModel(code.toUpperCase());
+        if (assignments && assignments.length > 0) {
+          return res.status(409).json({
+            error: `No se puede eliminar el modelo ${code} porque tiene ${assignments.length} asignaciones activas`,
+          });
+        }
+
+        await storage.deleteTaxModel(code.toUpperCase());
+
+        await storage.createActivityLog({
+          usuarioId: req.user!.id,
+          accion: `Eliminó modelo fiscal ${code}`,
+          modulo: "impuestos",
+          detalles: `Nombre: ${existing.name}`,
+        });
+
+        res.json({ success: true, message: "Modelo eliminado correctamente" });
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
   // ==================== TAX CALENDAR (AEAT) ====================
   // GET /api/tax/calendar - Listar periodos del calendario fiscal
   app.get(
@@ -3702,6 +3968,8 @@ export async function registerRoutes(app: Express, options?: { skipDbInit?: bool
           status: r.status,
           daysToStart: r.days_to_start,
           daysToEnd: r.days_to_end,
+          active: r.active,
+          locked: r.locked,
         }));
         res.json(rows);
       } catch (error: any) {
@@ -3741,7 +4009,7 @@ export async function registerRoutes(app: Express, options?: { skipDbInit?: bool
     }
   );
 
-  // PATCH /api/tax/calendar/:id - Editar fechas/activo
+  // PATCH /api/tax/calendar/:id - Editar fechas/activo/locked
   app.patch(
     "/api/tax/calendar/:id",
     authenticateToken,
@@ -3752,6 +4020,7 @@ export async function registerRoutes(app: Express, options?: { skipDbInit?: bool
         if (req.body.startDate) data.startDate = new Date(req.body.startDate);
         if (req.body.endDate) data.endDate = new Date(req.body.endDate);
         if (typeof req.body.active !== 'undefined') data.active = Boolean(req.body.active);
+        if (typeof req.body.locked !== 'undefined') data.locked = Boolean(req.body.locked);
         const updated = await storage.updateTaxCalendar(req.params.id, data);
         res.json(updated);
       } catch (error: any) {
@@ -3815,6 +4084,45 @@ export async function registerRoutes(app: Express, options?: { skipDbInit?: bool
     }
   );
 
+  // POST /api/tax/calendar/generate-aeat-calendar - Generar calendario completo AEAT
+  app.post(
+    "/api/tax/calendar/generate-aeat-calendar",
+    authenticateToken,
+    checkPermission("taxes:create"),
+    async (req: AuthRequest, res: Response) => {
+      try {
+        const y = Number(req.body?.year);
+        if (!Number.isFinite(y)) return res.status(400).json({ error: 'Año inválido' });
+
+        logger.info({ year: y }, 'Generando calendario AEAT completo');
+
+        // Ejecutar el script de generación de calendario completo
+        const dbUrl = process.env.DATABASE_URL;
+        const { stdout, stderr } = await execPromise(
+          `DATABASE_URL="${dbUrl}" YEAR="${y}" npx tsx server/scripts/generate-tax-calendar-aeat.ts --year=${y}`,
+          {
+            cwd: process.cwd(),
+            timeout: 30000 // 30 segundos timeout
+          }
+        );
+
+        logger.info({ stdout, stderr }, 'Calendario AEAT generado exitosamente');
+
+        res.json({
+          success: true,
+          message: `Calendario AEAT completo generado para ${y} y ${y + 1}`,
+          output: stdout
+        });
+      } catch (error: any) {
+        logger.error({ error: error.message, stderr: error.stderr }, 'Error generando calendario AEAT');
+        res.status(500).json({
+          error: error.message || 'Error al generar el calendario',
+          details: error.stderr
+        });
+      }
+    }
+  );
+
   // GET /api/tax/calendar/:year.ics - Exportar a formato ICS
   app.get(
     "/api/tax/calendar/:year.ics",
@@ -3862,7 +4170,413 @@ export async function registerRoutes(app: Express, options?: { skipDbInit?: bool
     }
   );
 
+  // GET /api/tax/calendar/download-template - Descargar plantilla Excel para importación
+  app.get(
+    "/api/tax/calendar/download-template",
+    authenticateToken,
+    checkPermission("taxes:read"),
+    async (req: Request, res: Response) => {
+      try {
+        const buffer = await generateTemplate();
+        res.setHeader(
+          'Content-Type',
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+        res.setHeader(
+          'Content-Disposition',
+          'attachment; filename="plantilla-calendario-fiscal.xlsx"'
+        );
+        res.send(buffer);
+      } catch (error: any) {
+        logger.error({ err: error }, 'Error generando plantilla Excel');
+        res.status(500).json({
+          error: 'No se pudo generar la plantilla',
+          details: error?.message,
+        });
+      }
+    }
+  );
+
+  // POST /api/tax/calendar/import-excel - Importar periodos desde Excel
+  app.post(
+    "/api/tax/calendar/import-excel",
+    authenticateToken,
+    checkPermission("taxes:create"),
+    uploadExcel.single('file'),
+    async (req: AuthRequest, res: Response) => {
+      try {
+        if (!req.file) {
+          return res.status(400).json({ error: 'No se proporcionó ningún archivo' });
+        }
+
+        const userId = req.user?.id || 'system';
+        const result = await processExcelImport(req.file.buffer, userId);
+
+        if (!result.success) {
+          return res.status(400).json({
+            error: 'Errores durante la importación',
+            result,
+          });
+        }
+
+        res.json({
+          message: 'Importación completada',
+          result,
+        });
+      } catch (error: any) {
+        logger.error({ err: error }, 'Error en importación Excel');
+        res.status(500).json({
+          error: 'Error procesando el archivo Excel',
+          details: error?.message,
+        });
+      }
+    }
+  );
+
   // ==================== TAX FILINGS ====================
+  const parseReportFilters = (req: Request) => {
+    const parseNumber = (value: unknown) => {
+      if (value === undefined || value === null || value === '') return undefined;
+      const n = Number(value);
+      return Number.isFinite(n) ? n : undefined;
+    };
+
+    return {
+      year: parseNumber(req.query.year),
+      periodId: req.query.periodId ? String(req.query.periodId) : undefined,
+      model: req.query.model ? String(req.query.model) : undefined,
+      assigneeId: req.query.assigneeId ? String(req.query.assigneeId) : undefined,
+      clientId: req.query.clientId ? String(req.query.clientId) : undefined,
+      status: req.query.status ? String(req.query.status) : undefined,
+    };
+  };
+
+  app.get(
+    "/api/tax/reports/kpis",
+    authenticateToken,
+    checkPermission("taxes:read"),
+    async (req: Request, res: Response) => {
+      try {
+        const data = await getReportsKpis(parseReportFilters(req));
+        res.json(data);
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
+  app.get(
+    "/api/tax/reports/summary/model",
+    authenticateToken,
+    checkPermission("taxes:read"),
+    async (req: Request, res: Response) => {
+      try {
+        const data = await getSummaryByModel(parseReportFilters(req));
+        res.json(data);
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
+  app.get(
+    "/api/tax/reports/summary/assignee",
+    authenticateToken,
+    checkPermission("taxes:read"),
+    async (req: Request, res: Response) => {
+      try {
+        const data = await getSummaryByAssignee(parseReportFilters(req));
+        res.json(data);
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
+  app.get(
+    "/api/tax/reports/summary/client",
+    authenticateToken,
+    checkPermission("taxes:read"),
+    async (req: Request, res: Response) => {
+      try {
+        const data = await getSummaryByClient(parseReportFilters(req));
+        res.json(data);
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
+  app.get(
+    "/api/tax/reports/trends",
+    authenticateToken,
+    checkPermission("taxes:read"),
+    async (req: Request, res: Response) => {
+      try {
+        const filters = parseReportFilters(req);
+        const data = await getTrends({ ...filters, granularity: req.query.granularity === 'week' ? 'week' : 'month' });
+        res.json(data);
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
+  app.get(
+    "/api/tax/reports/exceptions",
+    authenticateToken,
+    checkPermission("taxes:read"),
+    async (req: Request, res: Response) => {
+      try {
+        const data = await getExceptions(parseReportFilters(req));
+        res.json(data);
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
+  app.get(
+    "/api/tax/reports/filings",
+    authenticateToken,
+    checkPermission("taxes:read"),
+    async (req: Request, res: Response) => {
+      try {
+        const filters = parseReportFilters(req);
+        const page = Number(req.query.page || 1);
+        const size = Number(req.query.size || 50);
+        const data = await getFilings({ ...filters, page, size });
+        res.json(data);
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
+  app.get(
+    "/api/tax/reports/export",
+    authenticateToken,
+    checkPermission("taxes:read"),
+    async (req: Request, res: Response) => {
+      try {
+        const filters = parseReportFilters(req);
+        const data = await getFilings({ ...filters, page: 1, size: 2000 });
+        const headers = [
+          'Modelo',
+          'Periodo',
+          'Cliente',
+          'Gestor',
+          'Estado',
+          'Fecha presentación',
+          'Fecha límite',
+          'Días restantes',
+          'Días ciclo',
+        ];
+        const lines = [
+          headers.join(','),
+          ...data.items.map((item) => {
+            const fields = [
+              item.modelCode,
+              item.periodLabel,
+              item.cliente ?? '',
+              item.gestor ?? '',
+              String(item.status ?? '').toUpperCase(),
+              item.presentedAt ? new Date(item.presentedAt).toISOString() : '',
+              item.dueDate ? new Date(item.dueDate).toISOString() : '',
+              item.daysRemaining ?? '',
+              item.cycleDays ?? '',
+            ];
+            return fields
+              .map((field) => {
+                if (field === null || field === undefined) return '';
+                const text = String(field);
+                return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+              })
+              .join(',');
+          }),
+        ].join('\n');
+
+        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+        res.setHeader(
+          'Content-Disposition',
+          `attachment; filename="reporte-impuestos-${filters.year ?? 'global'}.csv"`
+        );
+        res.send(lines);
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
+  // Exportación avanzada en Excel
+  app.get(
+    "/api/tax/reports/export-excel",
+    authenticateToken,
+    checkPermission("taxes:read"),
+    async (req: Request, res: Response) => {
+      try {
+        const filters = parseReportFilters(req);
+        const { generateAdvancedExcelBuffer } = await import('./services/reports-export-service');
+        const buffer = await generateAdvancedExcelBuffer(filters);
+
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader(
+          'Content-Disposition',
+          `attachment; filename="reporte-impuestos-${filters.year ?? 'global'}-${Date.now()}.xlsx"`
+        );
+        res.send(buffer);
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
+  // Nuevas rutas avanzadas de reportes
+  app.get(
+    "/api/tax/reports/year-comparison",
+    authenticateToken,
+    checkPermission("taxes:read"),
+    async (req: Request, res: Response) => {
+      try {
+        const year1 = Number(req.query.year1 || new Date().getFullYear() - 1);
+        const year2 = Number(req.query.year2 || new Date().getFullYear());
+        const filters = {
+          model: req.query.model ? String(req.query.model) : undefined,
+          assigneeId: req.query.assigneeId ? String(req.query.assigneeId) : undefined,
+          clientId: req.query.clientId ? String(req.query.clientId) : undefined,
+        };
+        const { getYearComparison } = await import('./services/reports-service');
+        const data = await getYearComparison(year1, year2, filters);
+        res.json(data);
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
+  app.get(
+    "/api/tax/reports/productivity",
+    authenticateToken,
+    checkPermission("taxes:read"),
+    async (req: Request, res: Response) => {
+      try {
+        const { getProductivityAnalysis } = await import('./services/reports-service');
+        const data = await getProductivityAnalysis(parseReportFilters(req));
+        res.json(data);
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
+  app.get(
+    "/api/tax/reports/predictions",
+    authenticateToken,
+    checkPermission("taxes:read"),
+    async (req: Request, res: Response) => {
+      try {
+        const { getPredictions } = await import('./services/reports-service');
+        const data = await getPredictions(parseReportFilters(req));
+        res.json(data);
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
+  app.get(
+    "/api/tax/reports/temporal-performance",
+    authenticateToken,
+    checkPermission("taxes:read"),
+    async (req: Request, res: Response) => {
+      try {
+        const { getTemporalPerformance } = await import('./services/reports-service');
+        const data = await getTemporalPerformance(parseReportFilters(req));
+        res.json(data);
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
+  app.get(
+    "/api/tax/reports/goals",
+    authenticateToken,
+    checkPermission("taxes:read"),
+    async (req: Request, res: Response) => {
+      try {
+        const { getGoals, evaluateGoals } = await import('./services/goals-service');
+        const kpis = await getReportsKpis(parseReportFilters(req));
+        const goals = getGoals();
+        const evaluated = evaluateGoals(kpis, goals);
+        res.json(evaluated);
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
+  // Ruta de diagnóstico para verificar datos de reportes
+  app.get(
+    "/api/tax/reports/diagnostic",
+    authenticateToken,
+    checkPermission("taxes:read"),
+    async (req: Request, res: Response) => {
+      try {
+        const year = req.query.year ? Number(req.query.year) : new Date().getFullYear();
+
+        const totalFilings = await prisma.client_tax_filings.count();
+        const filingsWithPeriods = await prisma.client_tax_filings.count({
+          where: { fiscal_periods: { isNot: null } }
+        });
+        const totalPeriods = await prisma.fiscal_periods.count();
+        const periodsThisYear = await prisma.fiscal_periods.count({ where: { year } });
+        const periods = await prisma.fiscal_periods.findMany({
+          select: { year: true },
+          distinct: ['year'],
+          orderBy: { year: 'desc' }
+        });
+        const filingsThisYear = await prisma.client_tax_filings.count({
+          where: { fiscal_periods: { year } }
+        });
+        const sampleFilings = await prisma.client_tax_filings.findMany({
+          take: 3,
+          include: {
+            fiscal_periods: true,
+            clients: { select: { razonSocial: true } }
+          }
+        });
+
+        res.json({
+          summary: {
+            totalFilings,
+            filingsWithPeriods,
+            filingsWithoutPeriods: totalFilings - filingsWithPeriods,
+            totalPeriods,
+            periodsThisYear,
+            filingsThisYear,
+          },
+          availableYears: periods.map(p => p.year),
+          requestedYear: year,
+          sampleFilings: sampleFilings.map(f => ({
+            id: f.id,
+            model: f.taxModelCode,
+            client: f.clients?.razonSocial,
+            status: f.status,
+            periodId: f.periodId,
+            periodYear: f.fiscal_periods?.year,
+            periodLabel: f.fiscal_periods?.label,
+          })),
+          message: filingsThisYear === 0 && totalFilings > 0
+            ? `Hay ${totalFilings} declaraciones pero ninguna para el año ${year}. Años disponibles: ${periods.map(p => p.year).join(', ')}`
+            : `Todo correcto: ${filingsThisYear} declaraciones para ${year}`,
+        });
+      } catch (error: any) {
+        res.status(500).json({ error: error.message, stack: error.stack });
+      }
+    }
+  );
+
   app.get(
     "/api/tax/filings",
     authenticateToken,
@@ -3870,14 +4584,46 @@ export async function registerRoutes(app: Express, options?: { skipDbInit?: bool
     async (req: Request, res: Response) => {
       try {
         const filings = await storage.getTaxFilings({
+          year: req.query.year ? Number(req.query.year) : undefined,
+          clientId: req.query.clientId as string | undefined,
+          gestorId: req.query.gestorId as string | undefined,
           periodId: req.query.periodId as string | undefined,
           status: req.query.status as string | undefined,
           model: req.query.model as string | undefined,
-          search: req.query.search as string | undefined,
+          search: (req.query.q || req.query.search) as string | undefined,
+          includeClosedPeriods: req.query.includeClosedPeriods === 'true',
         });
         res.json(filings);
       } catch (error: any) {
         res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
+  app.post(
+    "/api/tax/filings/ensure-year",
+    authenticateToken,
+    checkPermission("taxes:update"),
+    async (req: AuthRequest, res: Response) => {
+      try {
+        const rawYear = req.body?.year ?? req.query?.year;
+        const yearNumber = rawYear === undefined || rawYear === null || rawYear === ""
+          ? new Date().getFullYear()
+          : Number(rawYear);
+
+        if (!Number.isFinite(yearNumber)) {
+          return res.status(400).json({ error: "Año inválido" });
+        }
+
+        const result = await storage.ensureClientTaxFilingsForYear(yearNumber);
+
+        res.json({
+          success: true,
+          year: result.year,
+          generated: result.generated,
+        });
+      } catch (error: any) {
+        res.status(500).json({ error: error.message || "No se pudieron generar las tarjetas fiscales" });
       }
     }
   );
@@ -3901,6 +4647,85 @@ export async function registerRoutes(app: Express, options?: { skipDbInit?: bool
         );
         res.json(updated);
       } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
+  // POST /api/tax/filings/cleanup - Limpiar filings huérfanos (sin asignación válida)
+  app.post(
+    "/api/tax/filings/cleanup",
+    authenticateToken,
+    checkPermission("taxes:delete"),
+    async (req: AuthRequest, res: Response) => {
+      try {
+        // Obtener todos los filings
+        const allFilings = await prisma.client_tax_filings.findMany({
+          include: {
+            fiscal_periods: true,
+          },
+        });
+
+        // Obtener todas las asignaciones activas
+        const assignments = await prisma.client_tax_assignments.findMany({
+          where: { activeFlag: true },
+        });
+
+        // Crear mapa de asignaciones por cliente + modelo
+        const assignmentMap = new Map<string, typeof assignments>();
+        assignments.forEach(a => {
+          const key = `${a.clientId}:${a.taxModelCode}`;
+          if (!assignmentMap.has(key)) assignmentMap.set(key, []);
+          assignmentMap.get(key)!.push(a);
+        });
+
+        // Identificar filings huérfanos
+        const orphanIds: string[] = [];
+        for (const filing of allFilings) {
+          const key = `${filing.clientId}:${filing.taxModelCode}`;
+          const clientAssignments = assignmentMap.get(key);
+          
+          if (!clientAssignments || clientAssignments.length === 0) {
+            // No hay asignación para este modelo
+            orphanIds.push(filing.id);
+            continue;
+          }
+
+          // Verificar si el filing está dentro del rango de alguna asignación
+          const period = filing.fiscal_periods;
+          if (!period) {
+            orphanIds.push(filing.id);
+            continue;
+          }
+
+          const ps = period.starts_at as Date;
+          const pe = period.ends_at as Date;
+
+          const hasValidAssignment = clientAssignments.some(a => {
+            const startOk = a.startDate <= pe;
+            const endOk = !a.endDate || a.endDate >= ps;
+            return startOk && endOk;
+          });
+
+          if (!hasValidAssignment) {
+            orphanIds.push(filing.id);
+          }
+        }
+
+        // Eliminar filings huérfanos
+        if (orphanIds.length > 0) {
+          await prisma.client_tax_filings.deleteMany({
+            where: { id: { in: orphanIds } },
+          });
+        }
+
+        res.json({
+          success: true,
+          deleted: orphanIds.length,
+          message: `Se eliminaron ${orphanIds.length} tarjetas huérfanas`,
+        });
+      } catch (error: any) {
+        logger.error({ err: error }, 'Error limpiando filings huérfanos');
         res.status(500).json({ error: error.message });
       }
     }

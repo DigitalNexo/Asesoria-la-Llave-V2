@@ -1,10 +1,8 @@
-import { PrismaClient } from '@prisma/client';
+import prisma from '../prisma-client';
 import * as fs from 'fs';
 import * as path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import multer from 'multer';
-
-const prisma = new PrismaClient();
 
 export class DocumentService {
   private uploadDir: string;
@@ -45,11 +43,6 @@ export class DocumentService {
         status: 'draft',
         updated_at: new Date(),
       },
-      include: {
-        users: true,
-        template: true,
-        signatures: true,
-      },
     });
 
     return document;
@@ -70,15 +63,6 @@ export class DocumentService {
 
     const documents = await prisma.documents.findMany({
       where,
-      include: {
-        users: true,
-        template: true,
-        signatures: {
-          include: {
-            users: true,
-          },
-        },
-      },
       orderBy: {
         created_at: 'desc',
       },
@@ -90,20 +74,6 @@ export class DocumentService {
   async getDocumentById(id: string) {
     const document = await prisma.documents.findUnique({
       where: { id },
-      include: {
-        users: true,
-        template: true,
-        signatures: {
-          include: {
-            users: true,
-          },
-        },
-        versions: {
-          orderBy: {
-            version: 'desc',
-          },
-        },
-      },
     });
 
     return document;
@@ -134,11 +104,6 @@ export class DocumentService {
     const document = await prisma.documents.update({
       where: { id },
       data: updateData,
-      include: {
-        users: true,
-        template: true,
-        signatures: true,
-      },
     });
 
     return document;
@@ -359,9 +324,6 @@ export class DocumentService {
         file_type: file.mimetype,
         updated_at: new Date(),
       },
-      include: {
-        users: true,
-      },
     });
 
     return document;
@@ -373,13 +335,13 @@ export class DocumentService {
     });
 
     if (!document || !document.file_path) {
-      throw new Error('Document or file not found');
+      return null;
     }
 
     const filePath = path.join(process.cwd(), document.file_path);
 
     if (!fs.existsSync(filePath)) {
-      throw new Error('File not found on server');
+      return null;
     }
 
     const fileBuffer = fs.readFileSync(filePath);

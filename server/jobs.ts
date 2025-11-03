@@ -17,13 +17,19 @@ export function initializeJobs(client: PrismaClient) {
 }
 
 // Configuración SMTP
+const smtpPassword = process.env.SMTP_PASS || process.env.SMTP_PASSWORD;
+
+if (process.env.SMTP_USER && !smtpPassword) {
+  console.warn("⚠️  SMTP password environment variable missing. Define SMTP_PASS or SMTP_PASSWORD.");
+}
+
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST,
   port: parseInt(process.env.SMTP_PORT || "587"),
   secure: process.env.SMTP_SECURE === "true",
-  auth: process.env.SMTP_USER && process.env.SMTP_PASS ? {
+  auth: process.env.SMTP_USER && smtpPassword ? {
     user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
+    pass: smtpPassword,
   } : undefined,
 });
 
@@ -214,9 +220,10 @@ export const taxRemindersJob = cron.createTask("0 8 * * *", async () => {
 });
 
 /**
- * Job: Recalcular estado del calendario fiscal (cada día a medianoche)
+ * Job: Recalcular estado del calendario fiscal (cada 6 horas)
+ * Actualiza estados de PENDIENTE → ABIERTO → CERRADO según fechas
  */
-export const taxCalendarRefreshJob = cron.createTask("0 0 * * *", async () => {
+export const taxCalendarRefreshJob = cron.createTask("0 */6 * * *", async () => {
   if (!prisma) {
     console.warn("⚠️  taxCalendarRefreshJob: Prisma no inicializado");
     return;
@@ -254,6 +261,75 @@ export const taxCalendarRefreshJob = cron.createTask("0 0 * * *", async () => {
 });
 
 /**
+ * Job: Actualizar estados de fiscal_periods (cada 6 horas)
+ * Cambia automáticamente de OPEN → CLOSED según la fecha de fin
+ * Abre automáticamente períodos cuando llega su fecha de inicio
+ */
+export const fiscalPeriodsStatusJob = cron.createTask("0 */6 * * *", async () => {
+  if (!prisma) {
+    console.warn("⚠️  fiscalPeriodsStatusJob: Prisma no inicializado");
+    return;
+  }
+
+  console.log("📅 Ejecutando job: actualización de estados de períodos fiscales");
+
+  try {
+    const now = new Date();
+    now.setHours(0, 0, 0, 0); // Normalizar a medianoche
+
+    // Obtener todos los períodos
+    const periods = await prisma.fiscal_periods.findMany({
+      select: {
+        id: true,
+        starts_at: true,
+        ends_at: true,
+        status: true,
+      },
+    });
+
+    let toOpen = 0;
+    let toClosed = 0;
+
+    for (const period of periods) {
+      const startsAt = new Date(period.starts_at);
+      const endsAt = new Date(period.ends_at);
+      startsAt.setHours(0, 0, 0, 0);
+      endsAt.setHours(0, 0, 0, 0);
+
+      let newStatus: 'OPEN' | 'CLOSED' | null = null;
+
+      // Determinar el estado correcto basado en fechas
+      if (now >= startsAt && now <= endsAt) {
+        // En curso (abierto) - la fecha de inicio ha llegado
+        if (period.status !== 'OPEN') {
+          newStatus = 'OPEN';
+          toOpen++;
+        }
+      } else if (now > endsAt) {
+        // Ya finalizó - la fecha de fin ha pasado
+        if (period.status !== 'CLOSED') {
+          newStatus = 'CLOSED';
+          toClosed++;
+        }
+      }
+      // Si now < startsAt, el período aún no inicia, pero se mantiene OPEN por defecto
+
+      // Actualizar si cambió el estado
+      if (newStatus && newStatus !== period.status) {
+        await prisma.fiscal_periods.update({
+          where: { id: period.id },
+          data: { status: newStatus },
+        });
+      }
+    }
+
+    console.log(`✅ Estados de períodos actualizados: ${toOpen} abiertos, ${toClosed} cerrados`);
+  } catch (error) {
+    console.error("❌ Error actualizando estados de fiscal_periods:", error);
+  }
+});
+
+/**
  * Job: Generar declaraciones faltantes para el año en curso (01:10 diario)
  */
 export const ensureDeclarationsDailyJob = cron.createTask("10 1 * * *", async () => {
@@ -263,6 +339,29 @@ export const ensureDeclarationsDailyJob = cron.createTask("10 1 * * *", async ()
     console.log(`🧩 ensureDeclarationsDailyJob: año ${year} => creadas ${result.created}, omitidas ${result.skipped}`);
   } catch (e) {
     console.error("❌ Error en ensureDeclarationsDailyJob:", e);
+  }
+});
+
+/**
+ * Job: Asegurar tarjetas fiscales del tablero (cada hora en el minuto 10)
+ */
+export const ensureTaxFilingsJob = cron.createTask("10 * * * *", async () => {
+  try {
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const years = [currentYear];
+
+    // Desde octubre en adelante también preparamos el año siguiente
+    if (now.getMonth() >= 9) {
+      years.push(currentYear + 1);
+    }
+
+    for (const year of years) {
+      const result = await storage.ensureClientTaxFilingsForYear(year);
+      console.log(`📇 ensureTaxFilingsJob: sincronizado año ${year} (${result.generated} periodos revisados)`);
+    }
+  } catch (error) {
+    console.error("❌ Error en ensureTaxFilingsJob:", error);
   }
 });
 
@@ -377,7 +476,14 @@ export function startAllJobs() {
   taxRemindersJob.start();
   console.log("  ✓ Recordatorios fiscales (08:00 diario)");
 
-  // Eliminados jobs de calendario/AEAT
+  taxCalendarRefreshJob.start();
+  console.log("  ✓ Actualización de calendario fiscal (cada 6 horas)");
+
+  fiscalPeriodsStatusJob.start();
+  console.log("  ✓ Actualización de estados de períodos (cada 6 horas)");
+
+  ensureTaxFilingsJob.start();
+  console.log("  ✓ Sincronización de tarjetas fiscales (cada hora)");
   
   cleanupSessionsJob.start();
   console.log("  ✓ Limpieza de sesiones (cada hora)");
@@ -398,7 +504,9 @@ export function stopAllJobs() {
   
   taskRemindersJob.stop();
   taxRemindersJob.stop();
-  // Eliminados jobs de calendario/AEAT
+  taxCalendarRefreshJob.stop();
+  fiscalPeriodsStatusJob.stop();
+  ensureTaxFilingsJob.stop();
   cleanupSessionsJob.stop();
   backupDatabaseJob.stop();
   console.log("🛑 Todos los jobs detenidos");
@@ -410,6 +518,9 @@ export default {
   stopAllJobs,
   taskRemindersJob,
   taxRemindersJob,
+  taxCalendarRefreshJob,
+  fiscalPeriodsStatusJob,
+  ensureTaxFilingsJob,
   cleanupSessionsJob,
   backupDatabaseJob,
 };

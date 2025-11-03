@@ -8,7 +8,10 @@ import {
   type ManualVersion, type InsertManualVersion,
   type ActivityLog, type InsertActivityLog,
   type AuditTrail, type InsertAuditTrail,
-  type SystemSettings, type InsertSystemSettings
+  type SystemSettings, type InsertSystemSettings,
+  type ClientTax,
+  type TaxPeriod,
+  type TaxModel
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 import { calculateDerivedFields } from "./services/tax-calendar-service";
@@ -63,6 +66,11 @@ export interface IStorage {
   createDeclaracion(data: any): Promise<any>;
   updateDeclaracion(id: string, data: any): Promise<any>;
   deleteDeclaracion(id: string): Promise<boolean>;
+
+  // Tax reminders support
+  getAllClientTax(): Promise<ClientTax[]>;
+  getTaxPeriod(id: string): Promise<TaxPeriod | undefined>;
+  getTaxModel(id: string): Promise<TaxModel | undefined>;
 
   // Tasks
   getTask(id: string): Promise<Task | undefined>;

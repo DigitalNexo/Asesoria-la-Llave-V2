@@ -14,960 +14,992 @@ var __export = (target, all) => {
     __defProp(target, name, { get: all[name], enumerable: true });
 };
 
-// server/websocket.ts
-function setSocketIO(socketIO) {
-  io = socketIO;
-}
-function getSocketIO() {
-  return io;
-}
-function getSocketServer() {
-  return getSocketIO();
-}
-function notifyUser(userId, notification) {
-  if (!io) {
-    console.warn("Socket.IO no est\xE1 inicializado");
-    return;
-  }
-  io.to(`user:${userId}`).emit("notification", {
-    ...notification,
-    timestamp: (/* @__PURE__ */ new Date()).toISOString()
-  });
-}
-function notifyRole(role, notification) {
-  if (!io) {
-    console.warn("Socket.IO no est\xE1 inicializado");
-    return;
-  }
-  io.to(`role:${role}`).emit("notification", {
-    ...notification,
-    timestamp: (/* @__PURE__ */ new Date()).toISOString()
-  });
-}
-function notifyAll(notification) {
-  if (!io) {
-    console.warn("Socket.IO no est\xE1 inicializado");
-    return;
-  }
-  io.emit("notification", {
-    ...notification,
-    timestamp: (/* @__PURE__ */ new Date()).toISOString()
-  });
-}
-function emitSystemLog(log2) {
-  if (!io) {
-    console.warn("Socket.IO no est\xE1 inicializado");
-    return;
-  }
-  io.emit("system:log", {
-    ...log2,
-    timestamp: (/* @__PURE__ */ new Date()).toISOString()
-  });
-  console.log(`[SYSTEM ${log2.type.toUpperCase()}] ${log2.message}${log2.details ? ` - ${log2.details}` : ""}`);
-}
-function notifyTaskChange(action, task, userId) {
-  const notification = {
-    type: "task",
-    action,
-    title: `Tarea ${action === "created" ? "creada" : action === "updated" ? "actualizada" : "eliminada"}`,
-    message: `La tarea "${task.titulo}" ha sido ${action === "created" ? "creada" : action === "updated" ? "actualizada" : "eliminada"}`,
-    data: task
-  };
-  if (userId) {
-    notifyUser(userId, notification);
-  } else if (task.asignadoA) {
-    notifyUser(task.asignadoA, notification);
-  } else {
-    notifyAll(notification);
-  }
-}
-function notifyTaxChange(action, clientTax, userId) {
-  const notification = {
-    type: "tax",
-    action,
-    title: `Impuesto ${action === "created" ? "asignado" : action === "updated" ? "actualizado" : "eliminado"}`,
-    message: `Un impuesto ha sido ${action === "created" ? "asignado" : action === "updated" ? "actualizado" : "eliminado"}`,
-    data: clientTax
-  };
-  if (userId) {
-    notifyUser(userId, notification);
-  } else {
-    notifyRole("ADMIN", notification);
-    notifyRole("GESTOR", notification);
-  }
-}
-function notifyClientChange(action, client) {
-  const notification = {
-    type: "client",
-    action,
-    title: `Cliente ${action === "created" ? "creado" : action === "updated" ? "actualizado" : "eliminado"}`,
-    message: `El cliente "${client.razonSocial}" ha sido ${action === "created" ? "creado" : action === "updated" ? "actualizado" : "eliminado"}`,
-    data: client
-  };
-  notifyRole("ADMIN", notification);
-  notifyRole("GESTOR", notification);
-}
-var io;
-var init_websocket = __esm({
-  "server/websocket.ts"() {
-    io = null;
-  }
-});
-
-// server/services/storage-provider.ts
-import fs6 from "fs/promises";
-import path5 from "path";
-var LocalStorageProvider;
-var init_storage_provider = __esm({
-  "server/services/storage-provider.ts"() {
-    LocalStorageProvider = class {
-      constructor(basePath = path5.join(process.cwd(), "uploads")) {
-        this.basePath = basePath;
-      }
-      async upload(file, relativePath) {
-        const fullPath = path5.join(this.basePath, relativePath);
-        const dir = path5.dirname(fullPath);
-        await fs6.mkdir(dir, { recursive: true });
-        if (Buffer.isBuffer(file)) {
-          await fs6.writeFile(fullPath, file);
-        } else {
-          const writeStream = (await import("fs")).createWriteStream(fullPath);
-          await new Promise((resolve, reject) => {
-            file.pipe(writeStream);
-            file.on("end", resolve);
-            file.on("error", reject);
-            writeStream.on("error", reject);
-          });
-        }
-        return relativePath;
-      }
-      async download(relativePath) {
-        const fullPath = path5.join(this.basePath, relativePath);
-        return await fs6.readFile(fullPath);
-      }
-      async delete(relativePath) {
-        const fullPath = path5.join(this.basePath, relativePath);
-        await fs6.unlink(fullPath);
-      }
-      async list(relativePath = "", recursive = false) {
-        const fullPath = path5.join(this.basePath, relativePath);
-        const files = [];
-        try {
-          const entries = await fs6.readdir(fullPath, { withFileTypes: true });
-          for (const entry of entries) {
-            const entryPath = path5.join(relativePath, entry.name);
-            if (entry.isFile()) {
-              files.push(entryPath);
-            } else if (entry.isDirectory() && recursive) {
-              const subFiles = await this.list(entryPath, true);
-              files.push(...subFiles);
-            }
-          }
-        } catch (error) {
-          if (error.code !== "ENOENT") {
-            throw error;
+// server/prisma-client.ts
+import { PrismaClient as PrismaClient4 } from "@prisma/client";
+var prismaClientSingleton, prisma4, prisma_client_default;
+var init_prisma_client = __esm({
+  "server/prisma-client.ts"() {
+    prismaClientSingleton = () => {
+      return new PrismaClient4({
+        log: process.env.NODE_ENV === "development" ? ["query", "error", "warn"] : ["error"],
+        datasources: {
+          db: {
+            url: process.env.DATABASE_URL
           }
         }
-        return files;
-      }
-      async exists(relativePath) {
-        const fullPath = path5.join(this.basePath, relativePath);
-        try {
-          await fs6.access(fullPath);
-          return true;
-        } catch {
-          return false;
-        }
-      }
-      getPublicUrl(relativePath) {
-        return `/uploads/${relativePath}`;
-      }
-    };
-  }
-});
-
-// server/services/ftp-storage-provider.ts
-import { Client as FTPClient } from "basic-ftp";
-import { Readable } from "stream";
-import path6 from "path";
-var FTPStorageProvider;
-var init_ftp_storage_provider = __esm({
-  "server/services/ftp-storage-provider.ts"() {
-    FTPStorageProvider = class {
-      constructor(config) {
-        this.client = null;
-        this.isConnected = false;
-        this.connectionPromise = null;
-        this.config = {
-          ...config,
-          basePath: config.basePath || "/uploads",
-          secure: config.secure || false
-        };
-      }
-      async ensureConnection() {
-        if (this.isConnected && this.client) {
-          return;
-        }
-        if (this.connectionPromise) {
-          return this.connectionPromise;
-        }
-        this.connectionPromise = (async () => {
-          try {
-            this.client = new FTPClient();
-            this.client.ftp.verbose = false;
-            await this.client.access({
-              host: this.config.host,
-              port: this.config.port,
-              user: this.config.user,
-              password: this.config.password,
-              secure: this.config.secure
-            });
-            this.isConnected = true;
-          } catch (error) {
-            this.client = null;
-            this.isConnected = false;
-            throw new Error(`Error al conectar con FTP: ${error instanceof Error ? error.message : "Error desconocido"}`);
-          } finally {
-            this.connectionPromise = null;
-          }
-        })();
-        return this.connectionPromise;
-      }
-      async upload(file, relativePath) {
-        await this.ensureConnection();
-        if (!this.client) throw new Error("Cliente FTP no conectado");
-        const fullPath = path6.posix.join(this.config.basePath, relativePath);
-        const dir = path6.posix.dirname(fullPath);
-        await this.client.ensureDir(dir);
-        if (Buffer.isBuffer(file)) {
-          try {
-            const stream = Readable.from(file);
-            await this.client.uploadFrom(stream, fullPath);
-          } catch (error) {
-            this.isConnected = false;
-            await this.ensureConnection();
-            const stream = Readable.from(file);
-            await this.client.uploadFrom(stream, fullPath);
-          }
-        } else {
-          await this.client.uploadFrom(file, fullPath);
-        }
-        return relativePath;
-      }
-      async download(relativePath) {
-        await this.ensureConnection();
-        if (!this.client) throw new Error("Cliente FTP no conectado");
-        const fullPath = path6.posix.join(this.config.basePath, relativePath);
-        const chunks = [];
-        try {
-          const writableStream = new (__require("stream")).Writable({
-            write(chunk, encoding, callback) {
-              chunks.push(chunk);
-              callback();
-            }
-          });
-          await this.client.downloadTo(writableStream, fullPath);
-          return Buffer.concat(chunks);
-        } catch (error) {
-          this.isConnected = false;
-          await this.ensureConnection();
-          const writableStream = new (__require("stream")).Writable({
-            write(chunk, encoding, callback) {
-              chunks.push(chunk);
-              callback();
-            }
-          });
-          await this.client.downloadTo(writableStream, fullPath);
-          return Buffer.concat(chunks);
-        }
-      }
-      async delete(relativePath) {
-        await this.ensureConnection();
-        if (!this.client) throw new Error("Cliente FTP no conectado");
-        const fullPath = path6.posix.join(this.config.basePath, relativePath);
-        try {
-          await this.client.remove(fullPath);
-        } catch (error) {
-          this.isConnected = false;
-          await this.ensureConnection();
-          await this.client.remove(fullPath);
-        }
-      }
-      async list(relativePath = "", recursive = false) {
-        await this.ensureConnection();
-        if (!this.client) throw new Error("Cliente FTP no conectado");
-        const fullPath = path6.posix.join(this.config.basePath, relativePath);
-        const files = [];
-        try {
-          if (recursive) {
-            await this.listRecursive(fullPath, relativePath, files);
-          } else {
-            const items = await this.client.list(fullPath);
-            for (const item of items) {
-              if (item.type === 1) {
-                const filePath = path6.posix.join(relativePath, item.name);
-                files.push(filePath);
-              }
-            }
-          }
-          return files;
-        } catch (error) {
-          if (error.code === 550) {
-            return [];
-          }
-          this.isConnected = false;
-          await this.ensureConnection();
-          return this.list(relativePath, recursive);
-        }
-      }
-      async listRecursive(fullPath, relativePath, files) {
-        if (!this.client) return;
-        const items = await this.client.list(fullPath);
-        for (const item of items) {
-          const itemRelativePath = path6.posix.join(relativePath, item.name);
-          const itemFullPath = path6.posix.join(fullPath, item.name);
-          if (item.type === 1) {
-            files.push(itemRelativePath);
-          } else if (item.type === 2) {
-            await this.listRecursive(itemFullPath, itemRelativePath, files);
-          }
-        }
-      }
-      async exists(relativePath) {
-        await this.ensureConnection();
-        if (!this.client) throw new Error("Cliente FTP no conectado");
-        const fullPath = path6.posix.join(this.config.basePath, relativePath);
-        const dir = path6.posix.dirname(fullPath);
-        const filename = path6.posix.basename(fullPath);
-        try {
-          const items = await this.client.list(dir);
-          return items.some((item) => item.name === filename);
-        } catch (error) {
-          if (error.code === 550) {
-            return false;
-          }
-          this.isConnected = false;
-          await this.ensureConnection();
-          return this.exists(relativePath);
-        }
-      }
-      getPublicUrl(relativePath) {
-        return `/uploads/${relativePath}`;
-      }
-      async disconnect() {
-        if (this.client) {
-          this.client.close();
-          this.client = null;
-          this.isConnected = false;
-        }
-      }
-      // Método de prueba de conexión
-      async testConnection() {
-        try {
-          await this.ensureConnection();
-          return this.isConnected;
-        } catch (error) {
-          return false;
-        }
-      }
-    };
-  }
-});
-
-// server/services/smb-storage-provider.ts
-import SMB2 from "@marsaud/smb2";
-import path7 from "path";
-var SMBStorageProvider;
-var init_smb_storage_provider = __esm({
-  "server/services/smb-storage-provider.ts"() {
-    SMBStorageProvider = class {
-      constructor(config) {
-        this.client = null;
-        this.config = {
-          ...config,
-          port: config.port || 445,
-          basePath: config.basePath || "/uploads",
-          domain: config.domain || ""
-        };
-        this.initializeClient();
-      }
-      initializeClient() {
-        this.client = new SMB2({
-          share: `\\\\${this.config.host}\\${this.config.share}`,
-          domain: this.config.domain || "",
-          username: this.config.username,
-          password: this.config.password,
-          port: this.config.port
-        });
-      }
-      getSMBPath(relativePath) {
-        const combined = path7.posix.join(this.config.basePath, relativePath);
-        return combined.replace(/\//g, "\\");
-      }
-      async upload(file, relativePath) {
-        const smbPath = this.getSMBPath(relativePath);
-        const dir = path7.dirname(smbPath);
-        return new Promise((resolve, reject) => {
-          this.client.mkdir(dir, (err) => {
-            if (err && err.code !== "STATUS_OBJECT_NAME_COLLISION") {
-            }
-            if (Buffer.isBuffer(file)) {
-              this.client.writeFile(smbPath, file, (writeErr) => {
-                if (writeErr) {
-                  reject(new Error(`Error al escribir archivo SMB: ${writeErr.message}`));
-                } else {
-                  resolve(relativePath);
-                }
-              });
-            } else {
-              const writeStream = this.client.createWriteStream(smbPath);
-              writeStream.on("error", (streamErr) => {
-                reject(new Error(`Error al escribir stream SMB: ${streamErr.message}`));
-              });
-              writeStream.on("finish", () => {
-                resolve(relativePath);
-              });
-              file.pipe(writeStream);
-            }
-          });
-        });
-      }
-      async download(relativePath) {
-        const smbPath = this.getSMBPath(relativePath);
-        return new Promise((resolve, reject) => {
-          this.client.readFile(smbPath, (err, data) => {
-            if (err) {
-              reject(new Error(`Error al leer archivo SMB: ${err.message}`));
-            } else {
-              resolve(data);
-            }
-          });
-        });
-      }
-      async delete(relativePath) {
-        const smbPath = this.getSMBPath(relativePath);
-        return new Promise((resolve, reject) => {
-          this.client.unlink(smbPath, (err) => {
-            if (err) {
-              reject(new Error(`Error al eliminar archivo SMB: ${err.message}`));
-            } else {
-              resolve();
-            }
-          });
-        });
-      }
-      async list(relativePath = "", recursive = false) {
-        const smbPath = this.getSMBPath(relativePath);
-        const files = [];
-        try {
-          if (recursive) {
-            await this.listRecursive(smbPath, relativePath, files);
-          } else {
-            const items = await this.readdir(smbPath);
-            for (const item of items) {
-              if (item.type === "file") {
-                const filePath = path7.posix.join(relativePath, item.name);
-                files.push(filePath);
-              }
-            }
-          }
-          return files;
-        } catch (error) {
-          return [];
-        }
-      }
-      async readdir(smbPath) {
-        return new Promise((resolve, reject) => {
-          this.client.readdir(smbPath, (err, files) => {
-            if (err) {
-              reject(err);
-            } else {
-              const items = files.map((file) => ({
-                name: file.name,
-                type: file.type === "directory" ? "directory" : "file"
-              }));
-              resolve(items);
-            }
-          });
-        });
-      }
-      async listRecursive(smbPath, relativePath, files) {
-        const items = await this.readdir(smbPath);
-        for (const item of items) {
-          const itemRelativePath = path7.posix.join(relativePath, item.name);
-          const itemSMBPath = path7.join(smbPath, item.name);
-          if (item.type === "file") {
-            files.push(itemRelativePath);
-          } else if (item.type === "directory") {
-            await this.listRecursive(itemSMBPath, itemRelativePath, files);
-          }
-        }
-      }
-      async exists(relativePath) {
-        const smbPath = this.getSMBPath(relativePath);
-        return new Promise((resolve) => {
-          this.client.exists(smbPath, (err, exists) => {
-            if (err) {
-              resolve(false);
-            } else {
-              resolve(exists);
-            }
-          });
-        });
-      }
-      getPublicUrl(relativePath) {
-        return `/uploads/${relativePath}`;
-      }
-      async disconnect() {
-        return new Promise((resolve) => {
-          if (this.client) {
-            this.client.disconnect();
-            this.client = null;
-          }
-          resolve();
-        });
-      }
-      // Método de prueba de conexión
-      async testConnection() {
-        try {
-          const basePath = this.config.basePath.replace(/\//g, "\\");
-          await this.readdir(basePath);
-          return true;
-        } catch (error) {
-          return false;
-        }
-      }
-    };
-  }
-});
-
-// server/services/storage-factory.ts
-import { PrismaClient as PrismaClient15 } from "@prisma/client";
-import crypto3 from "crypto";
-import path8 from "path";
-function getEncryptionKey2() {
-  const envKey = process.env.STORAGE_ENCRYPTION_KEY;
-  if (!envKey || envKey.length < 32) {
-    throw new Error("STORAGE_ENCRYPTION_KEY no configurada o muy corta. Debe tener al menos 32 caracteres.");
-  }
-  return envKey;
-}
-function encryptPassword2(password) {
-  const ENCRYPTION_KEY = getEncryptionKey2();
-  const iv = crypto3.randomBytes(16);
-  const cipher = crypto3.createCipheriv(ALGORITHM2, Buffer.from(ENCRYPTION_KEY.slice(0, 32)), iv);
-  let encrypted = cipher.update(password, "utf8", "hex");
-  encrypted += cipher.final("hex");
-  const authTag = cipher.getAuthTag();
-  return `${iv.toString("hex")}:${authTag.toString("hex")}:${encrypted}`;
-}
-function decryptPassword2(encryptedData) {
-  try {
-    const ENCRYPTION_KEY = getEncryptionKey2();
-    const parts = encryptedData.split(":");
-    if (parts.length !== 3) {
-      throw new Error("Formato de datos cifrados inv\xE1lido");
-    }
-    const iv = Buffer.from(parts[0], "hex");
-    const authTag = Buffer.from(parts[1], "hex");
-    const encrypted = parts[2];
-    const decipher = crypto3.createDecipheriv(ALGORITHM2, Buffer.from(ENCRYPTION_KEY.slice(0, 32)), iv);
-    decipher.setAuthTag(authTag);
-    let decrypted = decipher.update(encrypted, "hex", "utf8");
-    decrypted += decipher.final("utf8");
-    return decrypted;
-  } catch (error) {
-    throw new Error("Error al descifrar contrase\xF1a");
-  }
-}
-var prisma15, ALGORITHM2, StorageFactory;
-var init_storage_factory = __esm({
-  "server/services/storage-factory.ts"() {
-    init_storage_provider();
-    init_ftp_storage_provider();
-    init_smb_storage_provider();
-    prisma15 = new PrismaClient15();
-    ALGORITHM2 = "aes-256-gcm";
-    StorageFactory = class {
-      static {
-        this.instance = null;
-      }
-      static {
-        this.currentConfigId = null;
-      }
-      // Obtener el provider de almacenamiento activo
-      static async getActiveProvider() {
-        const activeConfig = await prisma15.storageConfig.findFirst({
-          where: { isActive: true }
-        });
-        if (!activeConfig || this.currentConfigId !== activeConfig.id || !this.instance) {
-          this.instance = await this.createProvider(activeConfig);
-          this.currentConfigId = activeConfig?.id || null;
-        }
-        return this.instance;
-      }
-      // Obtener provider para una configuración específica por ID
-      static async getProviderById(configId) {
-        const config = await prisma15.storageConfig.findUnique({
-          where: { id: configId }
-        });
-        if (!config) {
-          throw new Error(`Configuraci\xF3n de storage no encontrada: ${configId}`);
-        }
-        return this.createProvider(config);
-      }
-      // Crear provider según configuración
-      static async createProvider(config) {
-        if (!config || config.type === "LOCAL") {
-          const basePath = config?.basePath ? path8.join(process.cwd(), config.basePath) : void 0;
-          return new LocalStorageProvider(basePath);
-        }
-        if (config.type === "FTP") {
-          if (!config.host || !config.port || !config.username || !config.encryptedPassword) {
-            throw new Error("Configuraci\xF3n FTP incompleta");
-          }
-          const ftpConfig = {
-            host: config.host,
-            port: config.port,
-            user: config.username,
-            password: decryptPassword2(config.encryptedPassword),
-            basePath: config.basePath || "/uploads",
-            secure: false
-            // Puede ser configurable
-          };
-          return new FTPStorageProvider(ftpConfig);
-        }
-        if (config.type === "SMB") {
-          if (!config.host || !config.username || !config.encryptedPassword) {
-            throw new Error("Configuraci\xF3n SMB incompleta");
-          }
-          const pathParts = config.basePath.split("/").filter((p) => p);
-          const share = pathParts[0] || "uploads";
-          const basePath = "/" + pathParts.slice(1).join("/");
-          const smbConfig = {
-            host: config.host,
-            port: config.port || 445,
-            domain: "",
-            // Puede ser configurable
-            username: config.username,
-            password: decryptPassword2(config.encryptedPassword),
-            basePath: basePath || "/",
-            share
-          };
-          return new SMBStorageProvider(smbConfig);
-        }
-        return new LocalStorageProvider("/uploads");
-      }
-      // Probar conexión con una configuración específica guardada
-      static async testConfiguration(configId) {
-        const config = await prisma15.storageConfig.findUnique({
-          where: { id: configId }
-        });
-        if (!config) {
-          throw new Error("Configuraci\xF3n no encontrada");
-        }
-        const provider = await this.createProvider(config);
-        if ("testConnection" in provider && typeof provider.testConnection === "function") {
-          return await provider.testConnection();
-        }
-        return true;
-      }
-      // Probar conexión con una configuración temporal (sin guardar)
-      static async testConfigurationData(config) {
-        try {
-          const provider = await this.createProvider(config);
-          if ("testConnection" in provider && typeof provider.testConnection === "function") {
-            const success = await provider.testConnection();
-            if (success) {
-              return { success: true, message: "Conexi\xF3n exitosa" };
-            } else {
-              return { success: false, message: "Conexi\xF3n fallida" };
-            }
-          }
-          return { success: true, message: "Provider creado correctamente" };
-        } catch (error) {
-          return { success: false, message: error.message || "Error al probar configuraci\xF3n" };
-        }
-      }
-      // Limpiar instancia (útil para pruebas o cambio de configuración)
-      static async clearInstance() {
-        if (this.instance && "disconnect" in this.instance) {
-          await this.instance.disconnect?.();
-        }
-        this.instance = null;
-        this.currentConfigId = null;
-      }
-      // Crear provider para una configuración específica (sin activarla)
-      static async createProviderForConfig(configId) {
-        const config = await prisma15.storageConfig.findUnique({
-          where: { id: configId }
-        });
-        if (!config) {
-          throw new Error("Configuraci\xF3n no encontrada");
-        }
-        return await this.createProvider(config);
-      }
-    };
-  }
-});
-
-// server/services/migration-service.ts
-var migration_service_exports = {};
-__export(migration_service_exports, {
-  MigrationService: () => MigrationService,
-  migrateStorage: () => migrateStorage
-});
-import { PrismaClient as PrismaClient17 } from "@prisma/client";
-import path11 from "path";
-async function migrateStorage(targetConfigId) {
-  try {
-    const currentConfig = await prisma17.storageConfig.findFirst({
-      where: { isActive: true }
-    });
-    if (!currentConfig) {
-      throw new Error("No hay configuraci\xF3n de almacenamiento activa");
-    }
-    const targetConfig = await prisma17.storageConfig.findUnique({
-      where: { id: targetConfigId }
-    });
-    if (!targetConfig) {
-      throw new Error("Configuraci\xF3n de destino no encontrada");
-    }
-    if (currentConfig.id === targetConfig.id) {
-      throw new Error("La configuraci\xF3n origen y destino son la misma");
-    }
-    emitSystemLog({
-      type: "migration",
-      level: "info",
-      message: `Migrando de ${currentConfig.type} a ${targetConfig.type}`
-    });
-    const sourceProvider = await StorageFactory.getActiveProvider();
-    const targetProvider = await StorageFactory.getProviderById(targetConfigId);
-    const migrationService = new MigrationService(sourceProvider, targetProvider);
-    const result = await migrationService.migrate();
-    if (result.success) {
-      await prisma17.storageConfig.updateMany({
-        where: { isActive: true },
-        data: { isActive: false }
       });
-      await prisma17.storageConfig.update({
-        where: { id: targetConfigId },
-        data: { isActive: true }
+    };
+    prisma4 = globalThis.prismaGlobal ?? prismaClientSingleton();
+    if (process.env.NODE_ENV !== "production") {
+      globalThis.prismaGlobal = prisma4;
+    }
+    prisma4.$connect().catch((err) => {
+      console.error("Error conectando a la base de datos:", err);
+      process.exit(1);
+    });
+    process.on("beforeExit", async () => {
+      await prisma4.$disconnect();
+    });
+    prisma_client_default = prisma4;
+  }
+});
+
+// server/services/reports-service.ts
+var reports_service_exports = {};
+__export(reports_service_exports, {
+  getExceptions: () => getExceptions,
+  getFilings: () => getFilings,
+  getPredictions: () => getPredictions,
+  getProductivityAnalysis: () => getProductivityAnalysis,
+  getReportsKpis: () => getReportsKpis,
+  getSummaryByAssignee: () => getSummaryByAssignee,
+  getSummaryByClient: () => getSummaryByClient,
+  getSummaryByModel: () => getSummaryByModel,
+  getTemporalPerformance: () => getTemporalPerformance,
+  getTrends: () => getTrends,
+  getYearComparison: () => getYearComparison
+});
+function mapStatus(input) {
+  if (!input) return void 0;
+  const s = String(input).toUpperCase();
+  if (s === "PENDIENTE" || s === "NOT_STARTED") return FilingStatus2.NOT_STARTED;
+  if (s === "CALCULADO" || s === "IN_PROGRESS") return FilingStatus2.IN_PROGRESS;
+  if (s === "PRESENTADO" || s === "PRESENTED") return FilingStatus2.PRESENTED;
+  return void 0;
+}
+function buildWhere(filters) {
+  const where = {};
+  if (filters.periodId) where.periodId = filters.periodId;
+  const m = mapStatus(filters.status);
+  if (m) where.status = m;
+  if (filters.model) where.taxModelCode = filters.model.toUpperCase();
+  if (filters.clientId) where.clientId = filters.clientId;
+  if (filters.assigneeId) where.assigneeId = filters.assigneeId;
+  if (filters.year) {
+    where.fiscal_periods = {
+      ...where.fiscal_periods || {},
+      year: filters.year
+    };
+  }
+  return where;
+}
+async function getReportsKpis(filters) {
+  const where = buildWhere(filters);
+  let rows = await prisma_client_default.client_tax_filings.findMany({
+    where,
+    select: {
+      status: true,
+      presentedAt: true,
+      fiscal_periods: { select: { ends_at: true, starts_at: true, year: true } }
+    }
+  });
+  if (rows.length === 0 && filters.year) {
+    const whereWithoutYear = { ...where };
+    delete whereWithoutYear.fiscal_periods;
+    const allRows = await prisma_client_default.client_tax_filings.findMany({
+      where: whereWithoutYear,
+      select: {
+        status: true,
+        presentedAt: true,
+        fiscal_periods: { select: { ends_at: true, starts_at: true, year: true } }
+      }
+    });
+    if (allRows.length > 0) {
+      rows = allRows;
+    }
+  }
+  let pending = 0;
+  let inProgress = 0;
+  let presented = 0;
+  let dueIn3 = 0;
+  let dueIn7 = 0;
+  let overdue = 0;
+  let ltSum = 0;
+  let ltCount = 0;
+  let lateFilings = 0;
+  let onTimeFilings = 0;
+  let processingTimeSum = 0;
+  let processingTimeCount = 0;
+  let urgentCount = 0;
+  const now = Date.now();
+  const dayMs = 1e3 * 60 * 60 * 24;
+  for (const r of rows) {
+    if (r.status === FilingStatus2.NOT_STARTED) pending += 1;
+    else if (r.status === FilingStatus2.IN_PROGRESS) inProgress += 1;
+    else presented += 1;
+    const periodStart = r.fiscal_periods?.starts_at?.getTime();
+    const periodEnd = r.fiscal_periods?.ends_at?.getTime();
+    const createdAt = r.fiscal_periods?.starts_at?.getTime();
+    if (r.presentedAt && periodStart) {
+      const end = r.presentedAt.getTime();
+      const start = periodStart;
+      const days = Math.max(0, Math.round((end - start) / dayMs));
+      ltSum += days;
+      ltCount += 1;
+      if (periodEnd && end > periodEnd) {
+        lateFilings += 1;
+      } else if (periodEnd) {
+        onTimeFilings += 1;
+      }
+    }
+    if (r.presentedAt && createdAt) {
+      const procDays = Math.max(0, Math.round((r.presentedAt.getTime() - createdAt) / dayMs));
+      processingTimeSum += procDays;
+      processingTimeCount += 1;
+    }
+    if (periodEnd && r.status !== FilingStatus2.PRESENTED) {
+      const diffDays = Math.ceil((periodEnd - now) / dayMs);
+      if (diffDays <= 3) {
+        dueIn3 += 1;
+        urgentCount += 1;
+      }
+      if (diffDays <= 7) dueIn7 += 1;
+      if (diffDays < 0) overdue += 1;
+    }
+  }
+  const total = pending + inProgress + presented;
+  const advancePct = total ? Math.round(presented / total * 1e3) / 10 : 0;
+  const leadTimeAvg = ltCount ? Math.round(ltSum / ltCount * 10) / 10 : 0;
+  const processingTimeAvg = processingTimeCount ? Math.round(processingTimeSum / processingTimeCount * 10) / 10 : 0;
+  const onTimePct = lateFilings + onTimeFilings ? Math.round(onTimeFilings / (lateFilings + onTimeFilings) * 1e3) / 10 : 100;
+  const efficiencyScore = total ? Math.round((presented - lateFilings) / total * 1e3) / 10 : 0;
+  const workload = pending + inProgress;
+  const completionRate = total ? Math.round(presented / total * 1e3) / 10 : 0;
+  return {
+    // Métricas básicas
+    pending,
+    inProgress,
+    presented,
+    total,
+    advancePct,
+    // Tiempos
+    leadTimeAvg,
+    processingTimeAvg,
+    // Alertas
+    dueIn3,
+    dueIn7,
+    overdue,
+    urgentCount,
+    // Cumplimiento
+    lateFilings,
+    onTimeFilings,
+    onTimePct,
+    // Eficiencia
+    efficiencyScore,
+    workload,
+    completionRate
+  };
+}
+async function getSummaryByModel(filters) {
+  const where = buildWhere(filters);
+  const rows = await prisma_client_default.client_tax_filings.findMany({
+    where,
+    select: {
+      status: true,
+      taxModelCode: true,
+      presentedAt: true,
+      fiscal_periods: { select: { starts_at: true, ends_at: true } }
+    }
+  });
+  const map = /* @__PURE__ */ new Map();
+  for (const r of rows) {
+    const key = r.taxModelCode;
+    if (!map.has(key)) {
+      map.set(key, {
+        modelCode: key,
+        total: 0,
+        pending: 0,
+        inProgress: 0,
+        presented: 0,
+        overdue: 0,
+        leadTimeSum: 0,
+        leadTimeCount: 0
       });
-      emitSystemLog({
-        type: "migration",
-        level: "success",
-        message: `Configuraci\xF3n activa cambiada a ${targetConfig.type}`
+    }
+    const m = map.get(key);
+    m.total += 1;
+    if (r.status === FilingStatus2.NOT_STARTED) m.pending += 1;
+    else if (r.status === FilingStatus2.IN_PROGRESS) m.inProgress += 1;
+    else m.presented += 1;
+    const periodStart = r.fiscal_periods?.starts_at?.getTime();
+    const periodEnd = r.fiscal_periods?.ends_at?.getTime();
+    if (periodEnd && r.status !== FilingStatus2.PRESENTED) {
+      const diffDays = Math.ceil((periodEnd - Date.now()) / (1e3 * 60 * 60 * 24));
+      if (diffDays < 0) m.overdue += 1;
+    }
+    if (r.presentedAt && periodStart) {
+      const end = r.presentedAt.getTime();
+      const start = periodStart;
+      const days = Math.max(0, Math.round((end - start) / (1e3 * 60 * 60 * 24)));
+      m.leadTimeSum += days;
+      m.leadTimeCount += 1;
+    }
+  }
+  return Array.from(map.values()).map((m) => ({
+    modelCode: m.modelCode,
+    total: m.total,
+    pending: m.pending,
+    inProgress: m.inProgress,
+    presented: m.presented,
+    advancePct: m.total ? Math.round(m.presented / m.total * 1e3) / 10 : 0,
+    overdue: m.overdue,
+    leadTimeAvg: m.leadTimeCount ? Math.round(m.leadTimeSum / m.leadTimeCount * 10) / 10 : 0
+  })).sort((a, b) => a.modelCode.localeCompare(b.modelCode));
+}
+async function getSummaryByAssignee(filters) {
+  const where = buildWhere(filters);
+  const rows = await prisma_client_default.client_tax_filings.findMany({
+    where,
+    select: {
+      status: true,
+      assigneeId: true,
+      users: { select: { username: true } },
+      fiscal_periods: { select: { ends_at: true } }
+    }
+  });
+  const map = /* @__PURE__ */ new Map();
+  for (const r of rows) {
+    const id = r.assigneeId ?? "sin-gestor";
+    if (!map.has(id)) {
+      map.set(id, {
+        assigneeId: r.assigneeId ?? null,
+        assigneeName: r.users?.username ?? "Sin asignar",
+        assigned: 0,
+        pending: 0,
+        inProgress: 0,
+        presented: 0,
+        overdue: 0
       });
+    }
+    const m = map.get(id);
+    m.assigned += 1;
+    if (r.status === FilingStatus2.NOT_STARTED) m.pending += 1;
+    else if (r.status === FilingStatus2.IN_PROGRESS) m.inProgress += 1;
+    else m.presented += 1;
+    const due = r.fiscal_periods?.ends_at?.getTime();
+    if (due && r.status !== FilingStatus2.PRESENTED && due < Date.now()) {
+      m.overdue += 1;
+    }
+  }
+  return Array.from(map.values()).map((m) => ({
+    ...m,
+    advancePct: m.assigned ? Math.round(m.presented / m.assigned * 1e3) / 10 : 0,
+    onTrack: m.assigned ? (m.assigned - m.overdue) / m.assigned * 100 : 0
+  }));
+}
+async function getSummaryByClient(filters) {
+  const where = buildWhere(filters);
+  const rows = await prisma_client_default.client_tax_filings.findMany({
+    where,
+    select: {
+      status: true,
+      clientId: true,
+      clients: { select: { razonSocial: true } },
+      taxModelCode: true,
+      fiscal_periods: { select: { ends_at: true } }
+    }
+  });
+  const map = /* @__PURE__ */ new Map();
+  for (const r of rows) {
+    const id = r.clientId;
+    if (!map.has(id)) {
+      map.set(id, {
+        clientId: id,
+        clientName: r.clients?.razonSocial ?? "",
+        models: /* @__PURE__ */ new Set(),
+        pending: 0,
+        inProgress: 0,
+        presented: 0,
+        overdue: 0
+      });
+    }
+    const m = map.get(id);
+    m.models.add(r.taxModelCode);
+    if (r.status === FilingStatus2.NOT_STARTED) m.pending += 1;
+    else if (r.status === FilingStatus2.IN_PROGRESS) m.inProgress += 1;
+    else m.presented += 1;
+    const due = r.fiscal_periods?.ends_at?.getTime();
+    if (due && r.status !== FilingStatus2.PRESENTED && due < Date.now()) {
+      m.overdue += 1;
+    }
+  }
+  return Array.from(map.values()).map((m) => ({
+    clientId: m.clientId,
+    clientName: m.clientName,
+    modelsActive: m.models.size,
+    pending: m.pending,
+    inProgress: m.inProgress,
+    presented: m.presented,
+    overdue: m.overdue,
+    advancePct: m.models.size ? Math.round(m.presented / (m.pending + m.inProgress + m.presented || 1) * 1e3) / 10 : 0
+  }));
+}
+async function getTrends(filters) {
+  const where = buildWhere(filters);
+  const rows = await prisma_client_default.client_tax_filings.findMany({
+    where,
+    select: {
+      presentedAt: true,
+      fiscal_periods: { select: { starts_at: true } }
+    }
+  });
+  const fmt = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  const map = /* @__PURE__ */ new Map();
+  for (const r of rows) {
+    if (!r.presentedAt) continue;
+    const key = fmt(r.presentedAt);
+    if (!map.has(key)) map.set(key, { presented: 0, ltSum: 0, ltCount: 0 });
+    const m = map.get(key);
+    m.presented += 1;
+    const start = r.fiscal_periods?.starts_at ? r.fiscal_periods.starts_at.getTime() : void 0;
+    const end = r.presentedAt.getTime();
+    if (!start) continue;
+    m.ltSum += Math.max(0, Math.round((end - start) / (1e3 * 60 * 60 * 24)));
+    m.ltCount += 1;
+  }
+  const series = Array.from(map.entries()).sort((a, b) => a[0] < b[0] ? -1 : 1).map(([x, m]) => ({
+    x,
+    presented: m.presented,
+    leadTimeAvg: m.ltCount ? Math.round(m.ltSum / m.ltCount * 10) / 10 : 0
+  }));
+  return { series };
+}
+async function getExceptions(filters) {
+  const where = buildWhere(filters);
+  const rows = await prisma_client_default.client_tax_filings.findMany({
+    where,
+    select: {
+      clientId: true,
+      taxModelCode: true,
+      periodId: true,
+      status: true,
+      presentedAt: true,
+      fiscal_periods: { select: { ends_at: true, label: true, year: true } },
+      clients: { select: { razonSocial: true } }
+    }
+  });
+  const key = (r) => `${r.clientId}:${r.taxModelCode}:${r.periodId}`;
+  const countMap = /* @__PURE__ */ new Map();
+  const latePresented = [];
+  const overdueFilings = [];
+  for (const r of rows) {
+    const k = key(r);
+    countMap.set(k, (countMap.get(k) || 0) + 1);
+    const dueDate = r.fiscal_periods?.ends_at;
+    if (r.presentedAt && dueDate && r.presentedAt > dueDate) {
+      latePresented.push({
+        clientId: r.clientId,
+        clientName: r.clients?.razonSocial ?? "",
+        taxModelCode: r.taxModelCode,
+        periodId: r.periodId,
+        dueDate,
+        presentedAt: r.presentedAt
+      });
+    } else if (dueDate && r.status !== FilingStatus2.PRESENTED && dueDate < /* @__PURE__ */ new Date()) {
+      overdueFilings.push({
+        clientId: r.clientId,
+        clientName: r.clients?.razonSocial ?? "",
+        taxModelCode: r.taxModelCode,
+        periodId: r.periodId,
+        dueDate
+      });
+    }
+  }
+  const duplicateFilings = [];
+  for (const [k, c] of countMap.entries()) {
+    if (c > 1) duplicateFilings.push({ key: k, count: c });
+  }
+  return { duplicateFilings, latePresented, overdueFilings };
+}
+async function getFilings(filters) {
+  const where = buildWhere(filters);
+  const page = Number(filters.page || 1);
+  const size = Math.min(500, Number(filters.size || 50));
+  const skip = (page - 1) * size;
+  const [total, items] = await Promise.all([
+    prisma_client_default.client_tax_filings.count({ where }),
+    prisma_client_default.client_tax_filings.findMany({
+      where,
+      include: {
+        clients: { select: { razonSocial: true } },
+        fiscal_periods: true,
+        users: { select: { username: true } }
+      },
+      orderBy: [{ fiscal_periods: { starts_at: "desc" } }],
+      skip,
+      take: size
+    })
+  ]);
+  const mapped = items.map((f) => {
+    const dueDate = f.fiscal_periods?.ends_at ?? null;
+    const daysRemaining = dueDate ? Math.ceil((dueDate.getTime() - Date.now()) / (1e3 * 60 * 60 * 24)) : null;
+    const isOverdue = typeof daysRemaining === "number" ? daysRemaining < 0 && f.status !== FilingStatus2.PRESENTED : false;
+    return {
+      id: f.id,
+      modelCode: f.taxModelCode,
+      periodId: f.periodId,
+      periodLabel: f.fiscal_periods ? f.fiscal_periods.quarter ? `${f.fiscal_periods.quarter}T/${f.fiscal_periods.year}` : `${f.fiscal_periods.label ?? ""} ${f.fiscal_periods.year}` : "",
+      gestor: f.users?.username ?? "",
+      cliente: f.clients?.razonSocial ?? "",
+      status: f.status,
+      presentedAt: f.presentedAt,
+      dueDate,
+      daysRemaining,
+      isOverdue,
+      cycleDays: f.presentedAt && f.fiscal_periods?.starts_at ? Math.max(
+        0,
+        Math.round(
+          (f.presentedAt.getTime() - f.fiscal_periods.starts_at.getTime()) / (1e3 * 60 * 60 * 24)
+        )
+      ) : null
+    };
+  });
+  return { items: mapped, total };
+}
+async function getYearComparison(year1, year2, filters) {
+  const [data1, data2] = await Promise.all([
+    getReportsKpis({ ...filters, year: year1 }),
+    getReportsKpis({ ...filters, year: year2 })
+  ]);
+  return {
+    year1: { year: year1, ...data1 },
+    year2: { year: year2, ...data2 },
+    comparison: {
+      totalChange: data2.total - data1.total,
+      totalChangePct: data1.total ? Math.round((data2.total - data1.total) / data1.total * 1e3) / 10 : 0,
+      presentedChange: data2.presented - data1.presented,
+      presentedChangePct: data1.presented ? Math.round((data2.presented - data1.presented) / data1.presented * 1e3) / 10 : 0,
+      efficiencyChange: data2.efficiencyScore - data1.efficiencyScore,
+      leadTimeChange: data2.leadTimeAvg - data1.leadTimeAvg,
+      onTimeChange: data2.onTimePct - data1.onTimePct
+    }
+  };
+}
+async function getProductivityAnalysis(filters) {
+  const where = buildWhere(filters);
+  const rows = await prisma_client_default.client_tax_filings.findMany({
+    where,
+    select: {
+      status: true,
+      assigneeId: true,
+      presentedAt: true,
+      users: { select: { username: true } },
+      fiscal_periods: { select: { starts_at: true, ends_at: true } }
+    }
+  });
+  const gestorMap = /* @__PURE__ */ new Map();
+  const dayMs = 1e3 * 60 * 60 * 24;
+  const now = Date.now();
+  for (const r of rows) {
+    const id = r.assigneeId ?? "sin-asignar";
+    if (!gestorMap.has(id)) {
+      gestorMap.set(id, {
+        gestorId: r.assigneeId,
+        gestorName: r.users?.username ?? "Sin asignar",
+        total: 0,
+        completed: 0,
+        pending: 0,
+        inProgress: 0,
+        overdue: 0,
+        onTime: 0,
+        late: 0,
+        avgProcessingTime: 0,
+        avgLeadTime: 0,
+        procTimeSum: 0,
+        procTimeCount: 0,
+        leadTimeSum: 0,
+        leadTimeCount: 0,
+        workloadScore: 0,
+        efficiencyScore: 0
+      });
+    }
+    const g = gestorMap.get(id);
+    g.total += 1;
+    if (r.status === FilingStatus2.PRESENTED) g.completed += 1;
+    else if (r.status === FilingStatus2.IN_PROGRESS) g.inProgress += 1;
+    else g.pending += 1;
+    const createdAt = r.fiscal_periods?.starts_at?.getTime();
+    if (r.presentedAt && createdAt) {
+      const procDays = Math.round((r.presentedAt.getTime() - createdAt) / dayMs);
+      g.procTimeSum += procDays;
+      g.procTimeCount += 1;
+    }
+    const periodStart = r.fiscal_periods?.starts_at?.getTime();
+    const periodEnd = r.fiscal_periods?.ends_at?.getTime();
+    if (r.presentedAt && periodStart) {
+      const leadDays = Math.round((r.presentedAt.getTime() - periodStart) / dayMs);
+      g.leadTimeSum += leadDays;
+      g.leadTimeCount += 1;
+      if (periodEnd && r.presentedAt.getTime() <= periodEnd) {
+        g.onTime += 1;
+      } else if (periodEnd) {
+        g.late += 1;
+      }
+    }
+    if (periodEnd && r.status !== FilingStatus2.PRESENTED && periodEnd < now) {
+      g.overdue += 1;
+    }
+  }
+  return Array.from(gestorMap.values()).map((g) => {
+    const completionRate = g.total ? g.completed / g.total * 100 : 0;
+    const onTimeRate = g.onTime + g.late ? g.onTime / (g.onTime + g.late) * 100 : 100;
+    g.avgProcessingTime = g.procTimeCount ? Math.round(g.procTimeSum / g.procTimeCount * 10) / 10 : 0;
+    g.avgLeadTime = g.leadTimeCount ? Math.round(g.leadTimeSum / g.leadTimeCount * 10) / 10 : 0;
+    g.efficiencyScore = Math.round((completionRate * 0.4 + onTimeRate * 0.4 + (100 - Math.min(g.avgProcessingTime * 2, 100)) * 0.2) * 10) / 10;
+    g.workloadScore = g.pending + g.inProgress + g.overdue;
+    return {
+      gestorId: g.gestorId,
+      gestorName: g.gestorName,
+      total: g.total,
+      completed: g.completed,
+      pending: g.pending,
+      inProgress: g.inProgress,
+      overdue: g.overdue,
+      onTime: g.onTime,
+      late: g.late,
+      completionRate: Math.round(completionRate * 10) / 10,
+      onTimeRate: Math.round(onTimeRate * 10) / 10,
+      avgProcessingTime: g.avgProcessingTime,
+      avgLeadTime: g.avgLeadTime,
+      efficiencyScore: g.efficiencyScore,
+      workloadScore: g.workloadScore
+    };
+  }).sort((a, b) => b.efficiencyScore - a.efficiencyScore);
+}
+async function getPredictions(filters) {
+  const where = buildWhere(filters);
+  const rows = await prisma_client_default.client_tax_filings.findMany({
+    where: { ...where, status: { not: FilingStatus2.PRESENTED } },
+    select: {
+      status: true,
+      fiscal_periods: { select: { ends_at: true } }
+    }
+  });
+  const dayMs = 1e3 * 60 * 60 * 24;
+  const now = Date.now();
+  let atRiskCount = 0;
+  let criticalCount = 0;
+  const alerts = [];
+  for (const r of rows) {
+    const dueDate = r.fiscal_periods?.ends_at?.getTime();
+    if (!dueDate) continue;
+    const daysRemaining = Math.ceil((dueDate - now) / dayMs);
+    const daysSinceCreated = 0;
+    if (daysRemaining <= 3 && daysRemaining >= 0) {
+      criticalCount += 1;
+      if (r.status === FilingStatus2.NOT_STARTED) {
+        alerts.push({
+          type: "critical",
+          message: `Declaraci\xF3n sin iniciar que vence en ${daysRemaining} d\xEDa(s)`,
+          daysRemaining,
+          status: r.status
+        });
+      }
+    } else if (daysRemaining <= 7 && daysRemaining > 3) {
+      atRiskCount += 1;
+    }
+    if (daysSinceCreated > 7 && r.status === FilingStatus2.IN_PROGRESS && daysRemaining <= 10) {
+      alerts.push({
+        type: "warning",
+        message: `Declaraci\xF3n en progreso por ${daysSinceCreated} d\xEDas, vence en ${daysRemaining} d\xEDas`,
+        daysRemaining,
+        status: r.status
+      });
+    }
+  }
+  return {
+    atRiskCount,
+    criticalCount,
+    alerts: alerts.slice(0, 10),
+    riskLevel: criticalCount > 5 ? "high" : atRiskCount > 10 ? "medium" : "low"
+  };
+}
+async function getTemporalPerformance(filters) {
+  const where = buildWhere(filters);
+  const rows = await prisma_client_default.client_tax_filings.findMany({
+    where,
+    select: {
+      status: true,
+      presentedAt: true,
+      fiscal_periods: { select: { starts_at: true, ends_at: true } }
+    }
+  });
+  const monthlyData = /* @__PURE__ */ new Map();
+  const dayMs = 1e3 * 60 * 60 * 24;
+  for (const r of rows) {
+    if (!r.presentedAt) continue;
+    const date = new Date(r.presentedAt);
+    const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+    if (!monthlyData.has(monthKey)) {
+      monthlyData.set(monthKey, {
+        month: monthKey,
+        presented: 0,
+        onTime: 0,
+        late: 0,
+        avgLeadTime: 0,
+        leadSum: 0,
+        leadCount: 0
+      });
+    }
+    const m = monthlyData.get(monthKey);
+    m.presented += 1;
+    const periodStart = r.fiscal_periods?.starts_at?.getTime();
+    const periodEnd = r.fiscal_periods?.ends_at?.getTime();
+    if (periodStart) {
+      const leadDays = Math.round((r.presentedAt.getTime() - periodStart) / dayMs);
+      m.leadSum += leadDays;
+      m.leadCount += 1;
+    }
+    if (periodEnd && r.presentedAt.getTime() <= periodEnd) {
+      m.onTime += 1;
+    } else if (periodEnd) {
+      m.late += 1;
+    }
+  }
+  const series = Array.from(monthlyData.values()).map((m) => ({
+    ...m,
+    avgLeadTime: m.leadCount ? Math.round(m.leadSum / m.leadCount * 10) / 10 : 0,
+    onTimeRate: m.onTime + m.late ? Math.round(m.onTime / (m.onTime + m.late) * 1e3) / 10 : 100
+  })).sort((a, b) => a.month.localeCompare(b.month));
+  return { series };
+}
+var FilingStatus2;
+var init_reports_service = __esm({
+  "server/services/reports-service.ts"() {
+    init_prisma_client();
+    FilingStatus2 = { NOT_STARTED: "NOT_STARTED", IN_PROGRESS: "IN_PROGRESS", PRESENTED: "PRESENTED" };
+  }
+});
+
+// server/services/reports-export-service.ts
+var reports_export_service_exports = {};
+__export(reports_export_service_exports, {
+  generateAdvancedExcelBuffer: () => generateAdvancedExcelBuffer,
+  generateExcelReport: () => generateExcelReport
+});
+import ExcelJS4 from "exceljs";
+async function generateExcelReport(filters) {
+  const workbook = new ExcelJS4.Workbook();
+  workbook.creator = "Asesor\xEDa La Llave";
+  workbook.created = /* @__PURE__ */ new Date();
+  const [kpis, summaryModel, summaryAssignee, filings] = await Promise.all([
+    getReportsKpis(filters),
+    getSummaryByModel(filters),
+    getSummaryByAssignee(filters),
+    getFilings({ ...filters, page: 1, size: 1e3 })
+  ]);
+  const summarySheet = workbook.addWorksheet("Resumen Ejecutivo", {
+    properties: { tabColor: { argb: "FF4472C4" } }
+  });
+  summarySheet.mergeCells("A1:F1");
+  const titleCell = summarySheet.getCell("A1");
+  titleCell.value = `Reporte de Impuestos - A\xF1o ${filters.year ?? "Todos"}`;
+  titleCell.font = { size: 18, bold: true, color: { argb: "FF4472C4" } };
+  titleCell.alignment = { horizontal: "center", vertical: "middle" };
+  summarySheet.getRow(1).height = 30;
+  summarySheet.mergeCells("A2:F2");
+  const dateCell = summarySheet.getCell("A2");
+  dateCell.value = `Generado el ${(/* @__PURE__ */ new Date()).toLocaleDateString("es-ES")} a las ${(/* @__PURE__ */ new Date()).toLocaleTimeString("es-ES")}`;
+  dateCell.font = { italic: true, color: { argb: "FF7F7F7F" } };
+  dateCell.alignment = { horizontal: "center" };
+  summarySheet.addRow([]);
+  summarySheet.addRow(["M\xC9TRICAS PRINCIPALES"]).font = { bold: true, size: 14 };
+  summarySheet.addRow([]);
+  const kpiData = [
+    ["M\xE9trica", "Valor", "Descripci\xF3n"],
+    ["Total Declaraciones", kpis.total, "Total de declaraciones en el periodo"],
+    ["Presentadas", kpis.presented, "Declaraciones completadas"],
+    ["En Progreso", kpis.inProgress, "Declaraciones calculadas"],
+    ["Pendientes", kpis.pending, "Declaraciones sin iniciar"],
+    ["% Completado", `${kpis.completionRate}%`, "Porcentaje de avance"],
+    ["Score Eficiencia", `${kpis.efficiencyScore}%`, "Calidad y velocidad global"],
+    ["% Cumplimiento", `${kpis.onTimePct}%`, "Declaraciones a tiempo"],
+    ["Lead Time Promedio", `${kpis.leadTimeAvg} d\xEDas`, "Tiempo desde inicio hasta presentaci\xF3n"],
+    ["Tiempo Procesamiento", `${kpis.processingTimeAvg} d\xEDas`, "Tiempo desde creaci\xF3n hasta presentaci\xF3n"],
+    ["Atrasadas", kpis.overdue, "Declaraciones vencidas"],
+    ["Vencen en \u22643 d\xEDas", kpis.dueIn3, "Urgentes"],
+    ["Vencen en \u22647 d\xEDas", kpis.dueIn7, "Requieren atenci\xF3n"]
+  ];
+  const kpiStartRow = summarySheet.rowCount + 1;
+  kpiData.forEach((row, idx) => {
+    const addedRow = summarySheet.addRow(row);
+    if (idx === 0) {
+      addedRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
+      addedRow.fill = {
+        type: "pattern",
+        pattern: "solid",
+        fgColor: { argb: "FF4472C4" }
+      };
     } else {
-      emitSystemLog({
-        type: "migration",
-        level: "warning",
-        message: "Migraci\xF3n fall\xF3, configuraci\xF3n activa sin cambios"
-      });
+      addedRow.fill = {
+        type: "pattern",
+        pattern: "solid",
+        fgColor: { argb: idx % 2 === 0 ? "FFF2F2F2" : "FFFFFFFF" }
+      };
     }
-    return result;
-  } catch (error) {
-    emitSystemLog({
-      type: "migration",
-      level: "warning",
-      message: "Migraci\xF3n cancelada - archivos parciales eliminados, configuraci\xF3n activa sin cambios"
+  });
+  summarySheet.getColumn(1).width = 25;
+  summarySheet.getColumn(2).width = 15;
+  summarySheet.getColumn(3).width = 40;
+  for (let i = kpiStartRow; i <= summarySheet.rowCount; i++) {
+    ["A", "B", "C"].forEach((col) => {
+      const cell = summarySheet.getCell(`${col}${i}`);
+      cell.border = {
+        top: { style: "thin" },
+        left: { style: "thin" },
+        bottom: { style: "thin" },
+        right: { style: "thin" }
+      };
     });
-    emitSystemLog({
-      type: "migration",
-      level: "error",
-      message: `Error en migraci\xF3n: ${error.message}`
-    });
-    throw error;
   }
+  const modelSheet = workbook.addWorksheet("Por Modelo", {
+    properties: { tabColor: { argb: "FF70AD47" } }
+  });
+  modelSheet.addRow(["RESUMEN POR MODELO AEAT"]).font = { bold: true, size: 14 };
+  modelSheet.addRow([]);
+  const modelHeaders = ["Modelo", "Total", "Pendientes", "Calculados", "Presentados", "% Avance", "Atrasados", "Lead Time"];
+  const headerRow = modelSheet.addRow(modelHeaders);
+  headerRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
+  headerRow.fill = {
+    type: "pattern",
+    pattern: "solid",
+    fgColor: { argb: "FF70AD47" }
+  };
+  summaryModel.forEach((model) => {
+    const row = modelSheet.addRow([
+      model.modelCode,
+      model.total,
+      model.pending,
+      model.inProgress,
+      model.presented,
+      `${model.advancePct}%`,
+      model.overdue,
+      `${model.leadTimeAvg}d`
+    ]);
+    const advanceCell = row.getCell(6);
+    if (model.advancePct >= 80) {
+      advanceCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFC6EFCE" } };
+    } else if (model.advancePct >= 50) {
+      advanceCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFEB9C" } };
+    } else {
+      advanceCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFC7CE" } };
+    }
+  });
+  modelSheet.columns.forEach((col) => col.width = 15);
+  modelSheet.getColumn(1).width = 12;
+  const gestorSheet = workbook.addWorksheet("Por Gestor", {
+    properties: { tabColor: { argb: "FFFFC000" } }
+  });
+  gestorSheet.addRow(["AN\xC1LISIS DE PRODUCTIVIDAD POR GESTOR"]).font = { bold: true, size: 14 };
+  gestorSheet.addRow([]);
+  const gestorHeaders = ["Gestor", "Total", "Completadas", "Pendientes", "En Progreso", "% Comp.", "% A Tiempo", "Atrasadas", "Score Efic."];
+  const gestorHeaderRow = gestorSheet.addRow(gestorHeaders);
+  gestorHeaderRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
+  gestorHeaderRow.fill = {
+    type: "pattern",
+    pattern: "solid",
+    fgColor: { argb: "FFFFC000" }
+  };
+  summaryAssignee.forEach((gestor) => {
+    const row = gestorSheet.addRow([
+      gestor.assigneeName,
+      gestor.assigned,
+      gestor.presented,
+      gestor.pending,
+      gestor.inProgress,
+      `${gestor.advancePct}%`,
+      `${gestor.onTrack}%`,
+      gestor.overdue,
+      `${Math.round((gestor.advancePct + gestor.onTrack) / 2)}%`
+    ]);
+    const scoreCell = row.getCell(9);
+    const score = (gestor.advancePct + gestor.onTrack) / 2;
+    if (score >= 80) {
+      scoreCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFC6EFCE" } };
+    } else if (score >= 60) {
+      scoreCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFEB9C" } };
+    } else {
+      scoreCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFC7CE" } };
+    }
+  });
+  gestorSheet.columns.forEach((col) => col.width = 15);
+  gestorSheet.getColumn(1).width = 25;
+  const detailSheet = workbook.addWorksheet("Detalle", {
+    properties: { tabColor: { argb: "FFED7D31" } }
+  });
+  detailSheet.addRow(["DETALLE DE DECLARACIONES"]).font = { bold: true, size: 14 };
+  detailSheet.addRow([]);
+  const detailHeaders = ["Modelo", "Periodo", "Cliente", "Gestor", "Estado", "Presentada", "Vencimiento", "D\xEDas Rest.", "Ciclo"];
+  const detailHeaderRow = detailSheet.addRow(detailHeaders);
+  detailHeaderRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
+  detailHeaderRow.fill = {
+    type: "pattern",
+    pattern: "solid",
+    fgColor: { argb: "FFED7D31" }
+  };
+  filings.items.forEach((filing) => {
+    const row = detailSheet.addRow([
+      filing.modelCode,
+      filing.periodLabel,
+      filing.cliente,
+      filing.gestor,
+      filing.status,
+      filing.presentedAt ? new Date(filing.presentedAt).toLocaleDateString("es-ES") : "",
+      filing.dueDate ? new Date(filing.dueDate).toLocaleDateString("es-ES") : "",
+      filing.daysRemaining ?? "",
+      filing.cycleDays ?? ""
+    ]);
+    const statusCell = row.getCell(5);
+    if (filing.status === "PRESENTED") {
+      statusCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFC6EFCE" } };
+    } else if (filing.status === "IN_PROGRESS") {
+      statusCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFEB9C" } };
+    } else {
+      statusCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFC7CE" } };
+    }
+    if (filing.daysRemaining !== null && filing.status !== "PRESENTED") {
+      const daysCell = row.getCell(8);
+      if (filing.daysRemaining < 0) {
+        daysCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFC7CE" } };
+        daysCell.font = { bold: true, color: { argb: "FF9C0006" } };
+      } else if (filing.daysRemaining <= 3) {
+        daysCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFEB9C" } };
+      }
+    }
+  });
+  detailSheet.columns.forEach((col) => col.width = 15);
+  detailSheet.getColumn(3).width = 30;
+  detailSheet.getColumn(4).width = 20;
+  modelSheet.autoFilter = {
+    from: { row: 3, column: 1 },
+    to: { row: modelSheet.rowCount, column: 8 }
+  };
+  gestorSheet.autoFilter = {
+    from: { row: 3, column: 1 },
+    to: { row: gestorSheet.rowCount, column: 9 }
+  };
+  detailSheet.autoFilter = {
+    from: { row: 3, column: 1 },
+    to: { row: detailSheet.rowCount, column: 9 }
+  };
+  return workbook;
 }
-var prisma17, MigrationService;
-var init_migration_service = __esm({
-  "server/services/migration-service.ts"() {
-    init_storage_factory();
-    init_websocket();
-    prisma17 = new PrismaClient17();
-    MigrationService = class {
-      constructor(sourceProvider, targetProvider) {
-        this.migratedFiles = [];
-        this.sourceProvider = sourceProvider;
-        this.targetProvider = targetProvider;
-        this.progress = {
-          totalFiles: 0,
-          processedFiles: 0,
-          currentFile: "",
-          errors: []
-        };
-      }
-      /**
-       * Lista todos los archivos recursivamente de un directorio
-       */
-      async listAllFiles(provider, basePath = "") {
-        const files = [];
-        try {
-          const items = await provider.list(basePath);
-          for (const item of items) {
-            const fullPath = basePath ? path11.join(basePath, item) : item;
-            try {
-              const subItems = await provider.list(fullPath);
-              if (subItems.length > 0) {
-                const subFiles = await this.listAllFiles(provider, fullPath);
-                files.push(...subFiles);
-              } else {
-                files.push(fullPath);
-              }
-            } catch {
-              files.push(fullPath);
-            }
-          }
-        } catch (error) {
-          emitSystemLog({
-            type: "migration",
-            level: "warning",
-            message: `No se pudo listar ${basePath}: ${error.message}`
-          });
-        }
-        return files;
-      }
-      /**
-       * Copia un archivo del origen al destino
-       */
-      async copyFile(filePath) {
-        try {
-          const fileBuffer = await this.sourceProvider.download(filePath);
-          await this.targetProvider.upload(fileBuffer, filePath);
-          this.migratedFiles.push(filePath);
-          emitSystemLog({
-            type: "migration",
-            level: "success",
-            message: `\u2713 Migrado: ${filePath}`
-          });
-        } catch (error) {
-          const errorMsg = `Error migrando ${filePath}: ${error.message}`;
-          this.progress.errors.push(errorMsg);
-          emitSystemLog({
-            type: "migration",
-            level: "error",
-            message: errorMsg
-          });
-          throw error;
-        }
-      }
-      /**
-       * Revierte la migración eliminando archivos copiados
-       */
-      async rollback() {
-        emitSystemLog({
-          type: "migration",
-          level: "warning",
-          message: "Iniciando rollback de migraci\xF3n..."
-        });
-        for (const filePath of this.migratedFiles) {
-          try {
-            await this.targetProvider.delete(filePath);
-            emitSystemLog({
-              type: "migration",
-              level: "info",
-              message: `Eliminado: ${filePath}`
-            });
-          } catch (error) {
-            emitSystemLog({
-              type: "migration",
-              level: "error",
-              message: `Error eliminando ${filePath}: ${error.message}`
-            });
-          }
-        }
-        emitSystemLog({
-          type: "migration",
-          level: "info",
-          message: `Rollback completado. ${this.migratedFiles.length} archivos eliminados.`
-        });
-      }
-      /**
-       * Ejecuta la migración completa
-       */
-      async migrate() {
-        try {
-          emitSystemLog({
-            type: "migration",
-            level: "info",
-            message: "\u{1F680} Iniciando migraci\xF3n de archivos..."
-          });
-          emitSystemLog({
-            type: "migration",
-            level: "info",
-            message: "Listando archivos del origen..."
-          });
-          const allFiles = await this.listAllFiles(this.sourceProvider);
-          this.progress.totalFiles = allFiles.length;
-          emitSystemLog({
-            type: "migration",
-            level: "info",
-            message: `Encontrados ${allFiles.length} archivos para migrar`
-          });
-          if (allFiles.length === 0) {
-            emitSystemLog({
-              type: "migration",
-              level: "warning",
-              message: "No hay archivos para migrar"
-            });
-            return {
-              success: true,
-              totalFiles: 0,
-              migratedFiles: 0,
-              errors: []
-            };
-          }
-          for (const filePath of allFiles) {
-            this.progress.currentFile = filePath;
-            const progressPercent = Math.round((this.progress.processedFiles + 1) / this.progress.totalFiles * 100);
-            emitSystemLog({
-              type: "migration",
-              level: "info",
-              message: `Migrando [${this.progress.processedFiles + 1}/${this.progress.totalFiles}]: ${filePath}`,
-              progress: progressPercent
-            });
-            await this.copyFile(filePath);
-            this.progress.processedFiles++;
-          }
-          emitSystemLog({
-            type: "migration",
-            level: "success",
-            message: `\u2705 Migraci\xF3n completada exitosamente: ${this.migratedFiles.length} archivos`
-          });
-          return {
-            success: true,
-            totalFiles: this.progress.totalFiles,
-            migratedFiles: this.migratedFiles.length,
-            errors: []
-          };
-        } catch (error) {
-          emitSystemLog({
-            type: "migration",
-            level: "error",
-            message: `\u274C Error en migraci\xF3n: ${error.message}`
-          });
-          if (this.migratedFiles.length > 0) {
-            try {
-              await this.rollback();
-            } catch (rollbackError) {
-              emitSystemLog({
-                type: "migration",
-                level: "error",
-                message: `Error durante rollback: ${rollbackError.message}`
-              });
-            }
-          }
-          throw error;
-        }
-      }
+async function generateAdvancedExcelBuffer(filters) {
+  const workbook = await generateExcelReport(filters);
+  const buffer = await workbook.xlsx.writeBuffer();
+  return Buffer.from(buffer);
+}
+var init_reports_export_service = __esm({
+  "server/services/reports-export-service.ts"() {
+    init_reports_service();
+  }
+});
+
+// server/services/goals-service.ts
+var goals_service_exports = {};
+__export(goals_service_exports, {
+  evaluateGoals: () => evaluateGoals,
+  getGoalTypeLabel: () => getGoalTypeLabel,
+  getGoalTypeUnit: () => getGoalTypeUnit,
+  getGoals: () => getGoals
+});
+function getGoals() {
+  return [
+    {
+      id: "goal-1",
+      type: "efficiency",
+      period: "monthly",
+      targetValue: 85,
+      year: (/* @__PURE__ */ new Date()).getFullYear(),
+      description: "Mantener eficiencia general sobre 85%"
+    },
+    {
+      id: "goal-2",
+      type: "onTime",
+      period: "monthly",
+      targetValue: 95,
+      year: (/* @__PURE__ */ new Date()).getFullYear(),
+      description: "Presentar 95% de declaraciones a tiempo"
+    },
+    {
+      id: "goal-3",
+      type: "leadTime",
+      period: "monthly",
+      targetValue: 15,
+      year: (/* @__PURE__ */ new Date()).getFullYear(),
+      description: "Reducir lead time promedio a 15 d\xEDas"
+    }
+  ];
+}
+function evaluateGoals(currentMetrics, goals) {
+  return goals.map((goal) => {
+    let currentValue = 0;
+    let achieved = false;
+    let progress = 0;
+    switch (goal.type) {
+      case "efficiency":
+        currentValue = currentMetrics.efficiencyScore ?? 0;
+        achieved = currentValue >= goal.targetValue;
+        progress = Math.min(100, currentValue / goal.targetValue * 100);
+        break;
+      case "completion":
+        currentValue = currentMetrics.completionRate ?? 0;
+        achieved = currentValue >= goal.targetValue;
+        progress = Math.min(100, currentValue / goal.targetValue * 100);
+        break;
+      case "onTime":
+        currentValue = currentMetrics.onTimePct ?? 0;
+        achieved = currentValue >= goal.targetValue;
+        progress = Math.min(100, currentValue / goal.targetValue * 100);
+        break;
+      case "leadTime":
+        currentValue = currentMetrics.leadTimeAvg ?? 0;
+        achieved = currentValue <= goal.targetValue;
+        progress = Math.min(100, goal.targetValue / (currentValue || 1) * 100);
+        break;
+      case "volume":
+        currentValue = currentMetrics.presented ?? 0;
+        achieved = currentValue >= goal.targetValue;
+        progress = Math.min(100, currentValue / goal.targetValue * 100);
+        break;
+    }
+    return {
+      ...goal,
+      currentValue: Math.round(currentValue * 10) / 10,
+      achieved,
+      progress: Math.round(progress),
+      status: achieved ? "achieved" : progress >= 80 ? "on-track" : progress >= 50 ? "at-risk" : "off-track"
+    };
+  });
+}
+function getGoalTypeLabel(type) {
+  return goalTypeLabels[type] || type;
+}
+function getGoalTypeUnit(type) {
+  return goalTypeUnits[type] || "";
+}
+var goalTypeLabels, goalTypeUnits;
+var init_goals_service = __esm({
+  "server/services/goals-service.ts"() {
+    goalTypeLabels = {
+      efficiency: "Eficiencia",
+      completion: "Completitud",
+      onTime: "Cumplimiento",
+      leadTime: "Lead Time",
+      volume: "Volumen"
+    };
+    goalTypeUnits = {
+      efficiency: "%",
+      completion: "%",
+      onTime: "%",
+      leadTime: "d\xEDas",
+      volume: "declaraciones"
     };
   }
 });
 
 // server/index.ts
-import express7 from "express";
+import express8 from "express";
 
 // server/routes.ts
 import { createServer } from "http";
@@ -1144,6 +1176,7 @@ var FilingStatus = {
 };
 var TaxPeriodType = {
   QUARTERLY: "QUARTERLY",
+  MONTHLY: "MONTHLY",
   ANNUAL: "ANNUAL",
   SPECIAL: "SPECIAL"
 };
@@ -1173,6 +1206,15 @@ function mapJsonArray(value) {
   if (Array.isArray(value)) {
     return value.map((item) => `${item}`);
   }
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      if (Array.isArray(parsed)) {
+        return parsed.map((item) => `${item}`);
+      }
+    } catch (e) {
+    }
+  }
   return [];
 }
 function mapPrismaTaxModelsConfig(config) {
@@ -1188,6 +1230,7 @@ function mapPrismaTaxModelsConfig(config) {
   };
 }
 function mapPrismaClientTaxAssignment(assignment) {
+  const taxModelConfig = assignment.taxModel || assignment.tax_models_config || null;
   return {
     id: assignment.id,
     clientId: assignment.clientId,
@@ -1200,7 +1243,9 @@ function mapPrismaClientTaxAssignment(assignment) {
     createdAt: assignment.createdAt,
     updatedAt: assignment.updatedAt,
     effectiveActive: !assignment.endDate && Boolean(assignment.activeFlag),
-    tax_models: assignment.taxModel ? mapPrismaTaxModelsConfig(assignment.taxModel) : null
+    // Backwards-compatible: older code expects `tax_models`, newer frontend expects `taxModel` (camelCase)
+    tax_models: taxModelConfig ? mapPrismaTaxModelsConfig(taxModelConfig) : null,
+    taxModel: taxModelConfig ? mapPrismaTaxModelsConfig(taxModelConfig) : null
   };
 }
 function getTaxModelName(code) {
@@ -1231,32 +1276,97 @@ function normalizeStatus(rawStatus, isActive) {
   if (NORMALIZED_TAX_STATUSES.includes(upper)) return upper;
   return upper;
 }
+var MONTH_LABELS = [
+  "Enero",
+  "Febrero",
+  "Marzo",
+  "Abril",
+  "Mayo",
+  "Junio",
+  "Julio",
+  "Agosto",
+  "Septiembre",
+  "Octubre",
+  "Noviembre",
+  "Diciembre"
+];
 function formatPeriodLabel(tax_periods) {
   if (!tax_periods) return null;
+  const year = tax_periods.year ?? "";
+  const rawLabel = (tax_periods.label ?? "").toString();
+  if (tax_periods.kind === TaxPeriodType.MONTHLY || /^M\d{2}$/i.test(rawLabel) || tax_periods.kind === TaxPeriodType.SPECIAL && rawLabel.toUpperCase().startsWith("MES-")) {
+    let monthIndex = null;
+    if (/^M\d{2}$/i.test(rawLabel)) {
+      monthIndex = parseInt(rawLabel.slice(1), 10) - 1;
+    }
+    if (monthIndex === null && tax_periods.starts_at) {
+      try {
+        monthIndex = new Date(tax_periods.starts_at).getMonth();
+      } catch (e) {
+        monthIndex = null;
+      }
+    }
+    let display;
+    if (monthIndex !== null && MONTH_LABELS[monthIndex]) {
+      display = MONTH_LABELS[monthIndex];
+    } else {
+      display = rawLabel.replace(/^MES[-_]?/i, "").trim();
+    }
+    return `${display} ${year}`.trim();
+  }
   if (tax_periods.quarter != null) {
-    return `${tax_periods.quarter}T/${tax_periods.year}`;
+    return `${tax_periods.quarter}T/${year}`;
   }
   if (tax_periods.label) {
-    return `${tax_periods.label} ${tax_periods.year}`;
+    return `${tax_periods.label} ${year}`.trim();
   }
-  return `${tax_periods.year}`;
+  return `${year}`;
 }
 function mapPrismaClient(client) {
+  const taxAssignmentsSource = client.client_tax_assignments || client.taxAssignments || [];
+  const employeesSource = client.client_employees || client.employees || [];
   return {
     id: client.id,
     razonSocial: client.razonSocial,
     nifCif: client.nifCif,
     tipo: (client.tipo || "").toUpperCase(),
-    email: client.email,
-    telefono: client.telefono,
-    direccion: client.direccion,
+    email: client.email ?? null,
+    telefono: client.telefono ?? null,
+    direccion: client.direccion ?? null,
     fechaAlta: client.fechaAlta,
-    fechaBaja: client.fechaBaja,
-    responsableAsignado: client.responsableAsignado,
-    tax_models: client.taxModels || null,
+    fechaBaja: client.fechaBaja ?? null,
+    responsableAsignado: client.responsableAsignado ?? null,
+    taxModels: client.taxModels ?? client.tax_models ?? null,
     isActive: client.isActive ?? true,
     notes: client.notes ?? null,
-    client_tax_assignments: client.client_tax_assignments ? client.client_tax_assignments.map(mapPrismaClientTaxAssignment) : []
+    taxAssignments: Array.isArray(taxAssignmentsSource) ? taxAssignmentsSource.map(mapPrismaClientTaxAssignment) : [],
+    employees: Array.isArray(employeesSource) ? employeesSource.map(mapPrismaClientEmployee) : []
+  };
+}
+function mapPrismaClientTax(record) {
+  return {
+    id: record.id,
+    clientId: record.client_id,
+    taxPeriodId: record.tax_period_id,
+    estado: record.estado,
+    notas: record.notas,
+    displayText: record.display_text,
+    colorTag: record.color_tag,
+    fechaCreacion: record.fecha_creacion,
+    fechaActualizacion: record.fecha_actualizacion
+  };
+}
+function mapPrismaClientEmployee(employee) {
+  const user = employee.users || employee.user || null;
+  return {
+    userId: employee.userId ?? employee.user_id ?? null,
+    isPrimary: employee.is_primary ?? employee.isPrimary ?? false,
+    assignedAt: employee.assigned_at ?? null,
+    user: user ? {
+      id: user.id,
+      username: user.username,
+      email: user.email
+    } : null
   };
 }
 function mapPrismaTask(task) {
@@ -1278,14 +1388,13 @@ function mapPrismaManual(manual) {
   return {
     id: manual.id,
     titulo: manual.titulo,
-    contenidoHtml: manual.contenidoHtml,
-    autorId: manual.autorId,
-    etiquetas: manual.etiquetas ? JSON.parse(manual.etiquetas) : null,
+    contenidoHtml: manual.contenido_html,
+    autorId: manual.autor_id,
+    etiquetas: manual.etiquetas ? JSON.parse(manual.etiquetas) : [],
     categoria: manual.categoria,
     publicado: manual.status === "PUBLISHED",
-    // Convertir status a publicado
-    fechaCreacion: manual.fechaCreacion,
-    fechaActualizacion: manual.fechaActualizacion
+    fechaCreacion: manual.fecha_creacion,
+    fechaActualizacion: manual.fecha_actualizacion
   };
 }
 function mapPrismaManualAttachment(attachment) {
@@ -1293,12 +1402,12 @@ function mapPrismaManualAttachment(attachment) {
     id: attachment.id,
     manualId: attachment.manualId,
     fileName: attachment.fileName,
-    originalName: attachment.originalName,
+    originalName: attachment.original_name,
     filePath: attachment.filePath,
-    fileType: attachment.fileType,
+    fileType: attachment.file_type,
     fileSize: attachment.fileSize,
-    uploadedBy: attachment.uploadedBy,
-    uploadedAt: attachment.uploadedAt
+    uploadedBy: attachment.uploaded_by,
+    uploadedAt: attachment.uploaded_at
   };
 }
 function mapPrismaManualVersion(version) {
@@ -1308,7 +1417,7 @@ function mapPrismaManualVersion(version) {
     versionNumber: version.versionNumber,
     titulo: version.titulo,
     contenidoHtml: version.contenido_html,
-    etiquetas: version.etiquetas ? JSON.parse(version.etiquetas) : null,
+    etiquetas: version.etiquetas ? JSON.parse(version.etiquetas) : [],
     categoria: version.categoria,
     createdBy: version.createdBy,
     createdAt: version.createdAt
@@ -1341,7 +1450,18 @@ var PrismaStorage = class {
   // ==================== USER METHODS ====================
   async getAllUsers() {
     const users = await prisma.users.findMany({
-      include: { roles: true }
+      include: {
+        roles: {
+          select: {
+            id: true,
+            name: true,
+            description: true,
+            is_system: true,
+            createdAt: true,
+            updatedAt: true
+          }
+        }
+      }
     });
     return users.map(mapPrismaUser);
   }
@@ -1360,9 +1480,21 @@ var PrismaStorage = class {
   async getUserWithPermissions(id) {
     const user = await prisma.users.findUnique({
       where: { id },
-      include: {
+      select: {
+        id: true,
+        username: true,
+        email: true,
+        is_owner: true,
+        createdAt: true,
+        roleId: true,
         roles: {
-          include: {
+          select: {
+            id: true,
+            name: true,
+            description: true,
+            is_system: true,
+            createdAt: true,
+            updatedAt: true,
             role_permissions: {
               include: {
                 permissions: true
@@ -1391,7 +1523,18 @@ var PrismaStorage = class {
       const user = await prisma.users.update({
         where: { id },
         data: updateData,
-        include: { roles: true }
+        include: {
+          roles: {
+            select: {
+              id: true,
+              name: true,
+              description: true,
+              is_system: true,
+              createdAt: true,
+              updatedAt: true
+            }
+          }
+        }
       });
       return mapPrismaUser(user);
     } catch {
@@ -1400,9 +1543,17 @@ var PrismaStorage = class {
   }
   async deleteUser(id) {
     try {
+      const existing = await prisma.users.findUnique({ where: { id }, select: { is_owner: true, username: true } });
+      if (!existing) return false;
+      if (existing.is_owner) {
+        const err = new Error(`No se puede eliminar al usuario Owner (${existing.username}).`);
+        err.code = "CANNOT_DELETE_OWNER";
+        throw err;
+      }
       await prisma.users.delete({ where: { id } });
       return true;
-    } catch {
+    } catch (error) {
+      if (error?.code === "CANNOT_DELETE_OWNER") throw error;
       return false;
     }
   }
@@ -1422,14 +1573,13 @@ var PrismaStorage = class {
           }
         },
         client_tax_assignments: {
-          include: {}
+          include: {
+            tax_models_config: true
+          }
         }
       }
     });
-    return clients.map((client) => ({
-      ...mapPrismaClient(client),
-      client_employees: client.employees || []
-    }));
+    return clients.map(mapPrismaClient);
   }
   async getAllClientsSummary() {
     const clients = await prisma.clients.findMany({
@@ -1478,21 +1628,41 @@ var PrismaStorage = class {
           }
         },
         client_tax_assignments: {
-          include: {}
+          include: {
+            tax_models_config: true
+          }
         }
       }
     });
-    return client ? {
-      ...mapPrismaClient(client),
-      client_employees: client.employees || []
-    } : void 0;
+    return client ? mapPrismaClient(client) : void 0;
   }
   async getClientByNif(nifCif) {
-    const client = await prisma.clients.findUnique({ where: { nifCif } });
+    const client = await prisma.clients.findUnique({
+      where: { nifCif },
+      include: {
+        client_employees: {
+          include: {
+            users: {
+              select: {
+                id: true,
+                username: true,
+                email: true
+              }
+            }
+          }
+        },
+        client_tax_assignments: {
+          include: {
+            tax_models_config: true
+          }
+        }
+      }
+    });
     return client ? mapPrismaClient(client) : void 0;
   }
   async createClient(insertClient) {
     const data = {
+      id: randomUUID(),
       razonSocial: insertClient.razonSocial,
       nifCif: insertClient.nifCif,
       tipo: (insertClient.tipo || "").toUpperCase(),
@@ -1513,8 +1683,21 @@ var PrismaStorage = class {
     const client = await prisma.clients.create({
       data,
       include: {
+        client_employees: {
+          include: {
+            users: {
+              select: {
+                id: true,
+                username: true,
+                email: true
+              }
+            }
+          }
+        },
         client_tax_assignments: {
-          include: {}
+          include: {
+            tax_models_config: true
+          }
         }
       }
     });
@@ -1536,8 +1719,21 @@ var PrismaStorage = class {
         where: { id },
         data,
         include: {
+          client_employees: {
+            include: {
+              users: {
+                select: {
+                  id: true,
+                  username: true,
+                  email: true
+                }
+              }
+            }
+          },
           client_tax_assignments: {
-            include: {}
+            include: {
+              tax_models_config: true
+            }
           }
         }
       });
@@ -1604,13 +1800,79 @@ var PrismaStorage = class {
     });
     return config ? mapPrismaTaxModelsConfig(config) : null;
   }
+  // ==================== TAX MODELS MANAGEMENT ====================
+  async getAllTaxModels() {
+    const models = await prisma.tax_models_config.findMany({
+      orderBy: { code: "asc" }
+    });
+    return models.map(mapPrismaTaxModelsConfig);
+  }
+  async getTaxModelByCode(code) {
+    const model = await prisma.tax_models_config.findUnique({
+      where: { code }
+    });
+    return model ? mapPrismaTaxModelsConfig(model) : null;
+  }
+  async createTaxModel(data) {
+    const model = await prisma.tax_models_config.create({
+      data: {
+        code: data.code,
+        name: data.name,
+        allowedTypes: JSON.stringify(data.allowedTypes),
+        allowedPeriods: JSON.stringify(data.allowedPeriods),
+        isActive: true,
+        createdAt: /* @__PURE__ */ new Date(),
+        updatedAt: /* @__PURE__ */ new Date()
+      }
+    });
+    return mapPrismaTaxModelsConfig(model);
+  }
+  async updateTaxModel(code, data) {
+    const updateData = {
+      updatedAt: /* @__PURE__ */ new Date()
+    };
+    if (data.name !== void 0) updateData.name = data.name;
+    if (data.allowedTypes !== void 0) updateData.allowedTypes = JSON.stringify(data.allowedTypes);
+    if (data.allowedPeriods !== void 0) updateData.allowedPeriods = JSON.stringify(data.allowedPeriods);
+    if (data.isActive !== void 0) updateData.isActive = data.isActive;
+    const model = await prisma.tax_models_config.update({
+      where: { code },
+      data: updateData
+    });
+    return mapPrismaTaxModelsConfig(model);
+  }
+  async deleteTaxModel(code) {
+    await prisma.tax_models_config.delete({
+      where: { code }
+    });
+  }
+  async getAssignmentsByTaxModel(taxModelCode) {
+    const assignments = await prisma.client_tax_assignments.findMany({
+      where: {
+        taxModelCode,
+        activeFlag: true
+      },
+      include: {
+        clients: {
+          select: {
+            id: true,
+            razonSocial: true,
+            nifCif: true
+          }
+        }
+      }
+    });
+    return assignments;
+  }
   async findClientTaxAssignmentByCode(clientId, taxModelCode) {
     const assignment = await prisma.client_tax_assignments.findFirst({
       where: {
         clientId,
         taxModelCode
       },
-      include: {}
+      include: {
+        tax_models_config: true
+      }
     });
     return assignment ? mapPrismaClientTaxAssignment(assignment) : null;
   }
@@ -1618,14 +1880,18 @@ var PrismaStorage = class {
     const assignments = await prisma.client_tax_assignments.findMany({
       where: { clientId },
       orderBy: [{ startDate: "desc" }, { taxModelCode: "asc" }],
-      include: {}
+      include: {
+        tax_models_config: true
+      }
     });
     return assignments.map(mapPrismaClientTaxAssignment);
   }
   async getClientTaxAssignment(id) {
     const assignment = await prisma.client_tax_assignments.findUnique({
       where: { id },
-      include: {}
+      include: {
+        tax_models_config: true
+      }
     });
     return assignment ? mapPrismaClientTaxAssignment(assignment) : null;
   }
@@ -1652,7 +1918,9 @@ var PrismaStorage = class {
         notes: data.notes ?? null,
         updatedAt: /* @__PURE__ */ new Date()
       },
-      include: {}
+      include: {
+        tax_models_config: true
+      }
     });
     return mapPrismaClientTaxAssignment(assignment);
   }
@@ -1660,14 +1928,18 @@ var PrismaStorage = class {
     const assignment = await prisma.client_tax_assignments.update({
       where: { id },
       data: this.buildTaxAssignmentUpdateData(data),
-      include: {}
+      include: {
+        tax_models_config: true
+      }
     });
     return mapPrismaClientTaxAssignment(assignment);
   }
   async deleteClientTaxAssignment(id) {
     const assignment = await prisma.client_tax_assignments.delete({
       where: { id },
-      include: {}
+      include: {
+        tax_models_config: true
+      }
     });
     return mapPrismaClientTaxAssignment(assignment);
   }
@@ -1678,7 +1950,9 @@ var PrismaStorage = class {
         endDate,
         activeFlag: false
       },
-      include: {}
+      include: {
+        tax_models_config: true
+      }
     });
     return mapPrismaClientTaxAssignment(assignment);
   }
@@ -1692,7 +1966,7 @@ var PrismaStorage = class {
     return count > 0;
   }
   async bulkRemoveClientTaxAssignments(clientId, options) {
-    const codesFilter = (options?.codes || []).map((c) => c.toUpperCase());
+    const codesFilter = (options?.codes || []).map((c) => String(c).toUpperCase());
     const whereAssignments = {
       clientId,
       ...codesFilter.length > 0 ? { taxModelCode: { in: codesFilter } } : {}
@@ -1702,12 +1976,12 @@ var PrismaStorage = class {
       select: { id: true, taxModelCode: true }
     });
     if (assignments.length === 0) return { deleted: 0, deactivated: 0 };
-    const codes = Array.from(new Set(assignments.map((a) => a.taxModelCode)));
+    const codes = Array.from(new Set(assignments.map((a) => String(a.taxModelCode))));
     const filings = await prisma.client_tax_filings.findMany({
       where: { clientId, taxModelCode: { in: codes } },
       select: { taxModelCode: true }
     });
-    const codesWithHistory = new Set(filings.map((f) => f.taxModelCode));
+    const codesWithHistory = new Set(filings.map((f) => String(f.taxModelCode)));
     const toDeactivate = options?.hard ? [] : codes.filter((c) => codesWithHistory.has(c));
     const toDelete = options?.hard ? codes : codes.filter((c) => !codesWithHistory.has(c));
     let deactivated = 0;
@@ -1745,7 +2019,7 @@ var PrismaStorage = class {
     let deactivated = 0;
     await prisma.$transaction(async (tx) => {
       if (options?.hard) {
-        const codeSet = new Set(assignments.map((a) => a.taxModelCode));
+        const codeSet = new Set(assignments.map((a) => String(a.taxModelCode)));
         await tx.client_tax_filings.deleteMany({ where: { clientId, taxModelCode: { in: Array.from(codeSet) } } });
       }
       for (const a of assignments) {
@@ -1801,6 +2075,32 @@ var PrismaStorage = class {
       } : null
     }));
   }
+  async getAllClientTax() {
+    const records = await prisma.client_tax.findMany();
+    return records.map(mapPrismaClientTax);
+  }
+  async getTaxPeriod(id) {
+    const period = await prisma.tax_periods.findUnique({ where: { id } });
+    if (!period) return void 0;
+    return {
+      id: period.id,
+      modeloId: period.modelo_id,
+      anio: period.anio,
+      trimestre: period.trimestre,
+      mes: period.mes,
+      inicioPresentacion: period.inicio_presentacion,
+      finPresentacion: period.fin_presentacion
+    };
+  }
+  async getTaxModel(id) {
+    const model = await prisma.tax_models.findUnique({ where: { id } });
+    if (!model) return void 0;
+    return {
+      id: model.id,
+      nombre: model.nombre,
+      descripcion: model.descripcion
+    };
+  }
   async getTaxModelConfigMap(client) {
     const configs = await client.tax_models_config.findMany({ where: { isActive: true } });
     const map = /* @__PURE__ */ new Map();
@@ -1811,6 +2111,14 @@ var PrismaStorage = class {
   }
   periodDescriptorsForYear(year) {
     const descriptors = [];
+    for (let month = 0; month < 12; month++) {
+      descriptors.push({
+        label: `M${String(month + 1).padStart(2, "0")}`,
+        kind: TaxPeriodType.MONTHLY,
+        startsAt: new Date(Date.UTC(year, month, 1)),
+        endsAt: new Date(Date.UTC(year, month + 1, 0))
+      });
+    }
     const quarterLastDay = (quarter) => {
       const endMonth = quarter * 3;
       return new Date(Date.UTC(year, endMonth, 0));
@@ -1855,7 +2163,6 @@ var PrismaStorage = class {
     const assignments = await client.client_tax_assignments.findMany({
       where: {
         activeFlag: true,
-        endDate: null,
         clients: { isActive: true }
       },
       include: {
@@ -1893,20 +2200,39 @@ var PrismaStorage = class {
       }
     }
   }
-  periodMatchesAssignment(tax_periods, assignment, configMap) {
-    if (!assignment.activeFlag || assignment.endDate) return false;
-    const code = assignment.taxModelCode;
-    const periodicity = (assignment.periodicidad || "").toUpperCase();
+  periodMatchesAssignment(period, assignment, configMap) {
+    if (!assignment.activeFlag) return false;
+    const code = String(assignment.taxModelCode ?? "").toUpperCase();
+    const periodicity = String(assignment.periodicidad ?? "").toUpperCase();
     const config = configMap.get(code);
-    switch (tax_periods.kind) {
+    const allowedPeriods = config?.allowedPeriods?.map((p) => p.toUpperCase()) ?? [];
+    const matchesPeriodicity = (...targets) => targets.some(
+      (target) => periodicity === target || allowedPeriods.includes(target)
+    );
+    const assignmentStart = assignment.startDate ? new Date(assignment.startDate) : null;
+    const assignmentEnd = assignment.endDate ? new Date(assignment.endDate) : null;
+    const periodStart = period.startsAt ? new Date(period.startsAt) : null;
+    const periodEnd = period.endsAt ? new Date(period.endsAt) : null;
+    if (assignmentStart && periodEnd && assignmentStart > periodEnd) {
+      return false;
+    }
+    if (assignmentEnd && periodStart && assignmentEnd < periodStart) {
+      return false;
+    }
+    switch (period.kind) {
+      case TaxPeriodType.MONTHLY:
+        return matchesPeriodicity("MENSUAL");
       case TaxPeriodType.QUARTERLY:
-        return periodicity === "TRIMESTRAL";
+        return matchesPeriodicity("TRIMESTRAL");
       case TaxPeriodType.ANNUAL:
-        return periodicity === "ANUAL";
+        return matchesPeriodicity("ANUAL");
       case TaxPeriodType.SPECIAL:
         if (code !== "202") return false;
+        if (!matchesPeriodicity("ESPECIAL_FRACCIONADO")) return false;
         if (!config?.labels || config.labels.length === 0) return true;
-        return config.labels.some((label) => label.toLowerCase() === tax_periods.label.toLowerCase());
+        return config.labels.some(
+          (label) => label.toLowerCase() === period.label.toLowerCase()
+        );
       default:
         return false;
     }
@@ -1972,7 +2298,9 @@ var PrismaStorage = class {
           id: period.id,
           kind: period.kind,
           label: period.label,
-          year: period.year
+          year: period.year,
+          startsAt: period.starts_at,
+          endsAt: period.ends_at
         }))
       );
     });
@@ -2003,7 +2331,14 @@ var PrismaStorage = class {
       }
     });
     await this.generateFilingsForPeriods(prisma, [
-      { id: period.id, kind: period.kind, label: period.label, year: period.year }
+      {
+        id: period.id,
+        kind: period.kind,
+        label: period.label,
+        year: period.year,
+        startsAt: period.starts_at,
+        endsAt: period.ends_at
+      }
     ]);
     const summaries = await this.getFiscalPeriodsSummary(data.year);
     return summaries.find((item) => item.id === period.id) ?? summaries[0];
@@ -2015,12 +2350,26 @@ var PrismaStorage = class {
   async ensureClientTaxFilingsForYear(year) {
     const periods = await prisma.fiscal_periods.findMany({
       where: { year },
-      select: { id: true, kind: true, label: true, year: true }
+      select: {
+        id: true,
+        kind: true,
+        label: true,
+        year: true,
+        starts_at: true,
+        ends_at: true
+      }
     });
     if (periods.length === 0) return { year, generated: 0 };
     await this.generateFilingsForPeriods(
       prisma,
-      periods.map((p) => ({ id: p.id, kind: p.kind, label: p.label, year: p.year }))
+      periods.map((p) => ({
+        id: p.id,
+        kind: p.kind,
+        label: p.label,
+        year: p.year,
+        startsAt: p.starts_at,
+        endsAt: p.ends_at
+      }))
     );
     return { year, generated: periods.length };
   }
@@ -2146,7 +2495,7 @@ var PrismaStorage = class {
     if (filters.year) {
       const y = typeof filters.year === "string" ? Number(filters.year) : filters.year;
       if (Number.isFinite(y)) {
-        where.period = { ...where.period, year: y };
+        where.fiscal_periods = { ...where.fiscal_periods, year: y };
       }
     }
     const filings = await prisma.client_tax_filings.findMany({
@@ -2192,6 +2541,42 @@ var PrismaStorage = class {
         byKey.get(key).push(a);
       }
     }
+    const currentYear = filters.year ? typeof filters.year === "string" ? parseInt(filters.year) : filters.year : (/* @__PURE__ */ new Date()).getFullYear();
+    const allCalendarEntries = await prisma.tax_calendar.findMany({
+      where: {
+        year: currentYear
+      },
+      select: {
+        modelCode: true,
+        period: true,
+        status: true
+      }
+    });
+    const openModelPeriods = /* @__PURE__ */ new Map();
+    const calendarStatusMap = /* @__PURE__ */ new Map();
+    for (const entry of allCalendarEntries) {
+      const key = `${entry.modelCode}:${entry.period}`;
+      calendarStatusMap.set(key, entry.status);
+      if (entry.status === "ABIERTO") {
+        if (!openModelPeriods.has(entry.modelCode)) {
+          openModelPeriods.set(entry.modelCode, /* @__PURE__ */ new Set());
+        }
+        openModelPeriods.get(entry.modelCode).add(entry.period);
+      }
+    }
+    const assignmentsWithPeriodicity = await prisma.client_tax_assignments.findMany({
+      where: {
+        clientId: { in: clientIds },
+        taxModelCode: { in: codes },
+        activeFlag: true
+      },
+      select: { clientId: true, taxModelCode: true, periodicidad: true }
+    });
+    const clientModelPeriodicity = /* @__PURE__ */ new Map();
+    for (const a of assignmentsWithPeriodicity) {
+      const key = `${a.clientId}:${a.taxModelCode}`;
+      clientModelPeriodicity.set(key, a.periodicidad);
+    }
     const visible = filings.filter((f) => {
       if (!f.fiscal_periods) return false;
       const key = `${f.clientId}:${f.taxModelCode}`;
@@ -2199,29 +2584,114 @@ var PrismaStorage = class {
       if (!arr || arr.length === 0) return false;
       const ps = f.fiscal_periods.starts_at;
       const pe = f.fiscal_periods.ends_at;
-      return arr.some((a) => {
+      const hasActiveAssignment = arr.some((a) => {
         if (!a.activeFlag) return false;
         const startOk = a.startDate <= pe;
         const endOk = !a.endDate || a.endDate >= ps;
         return startOk && endOk;
       });
+      if (!hasActiveAssignment) return false;
+      const periodicity = clientModelPeriodicity.get(key);
+      if (!periodicity) return false;
+      const openPeriods = openModelPeriods.get(f.taxModelCode);
+      if (!openPeriods || openPeriods.size === 0) return false;
+      const filingPeriodKind = f.fiscal_periods.kind;
+      let requiresPeriodType = null;
+      if (periodicity === "MENSUAL" || periodicity === "MONTHLY") {
+        requiresPeriodType = "MONTHLY";
+      } else if (periodicity === "TRIMESTRAL" || periodicity === "QUARTERLY") {
+        requiresPeriodType = "QUARTERLY";
+      } else if (periodicity === "ANUAL" || periodicity === "ANNUAL") {
+        requiresPeriodType = "ANNUAL";
+      }
+      if (!requiresPeriodType) return false;
+      let periodMatches = false;
+      if (requiresPeriodType === "MONTHLY") {
+        periodMatches = filingPeriodKind === "MONTHLY" || filingPeriodKind === "SPECIAL" && f.fiscal_periods.label.startsWith("MES-");
+      } else if (requiresPeriodType === "QUARTERLY") {
+        periodMatches = filingPeriodKind === "QUARTERLY";
+      } else if (requiresPeriodType === "ANNUAL") {
+        periodMatches = filingPeriodKind === "ANNUAL";
+      }
+      if (!periodMatches) return false;
+      if (requiresPeriodType === "MONTHLY") {
+        let filingMonthCode = null;
+        const rl = (f.fiscal_periods?.label ?? "").toString();
+        const mMatch = rl.match(/^M(\d{2})$/i);
+        if (mMatch) {
+          filingMonthCode = `M${mMatch[1]}`;
+        } else if (f.fiscal_periods?.starts_at) {
+          try {
+            const dt = new Date(f.fiscal_periods.starts_at);
+            const month = dt.getMonth() + 1;
+            filingMonthCode = `M${String(month).padStart(2, "0")}`;
+          } catch (e) {
+            filingMonthCode = null;
+          }
+        }
+        if (filingMonthCode && openPeriods.has(filingMonthCode)) return true;
+        return false;
+      }
+      if (requiresPeriodType === "QUARTERLY") {
+        const q = f.fiscal_periods?.quarter;
+        if (q && openPeriods.has(`${q}T`)) return true;
+        return false;
+      }
+      if (requiresPeriodType === "ANNUAL") {
+        if (openPeriods.has("ANUAL")) return true;
+        return false;
+      }
+      return false;
     });
-    return visible.map((filing) => ({
-      id: filing.id,
-      clientId: filing.clientId,
-      clientName: filing.clients?.razonSocial ?? "",
-      nifCif: filing.clients?.nifCif ?? "",
-      gestorId: filing.clients?.responsableAsignado ?? null,
-      gestorName: filing.clients?.users?.username ?? null,
-      taxModelCode: filing.taxModelCode,
-      periodId: filing.periodId,
-      periodLabel: formatPeriodLabel(filing.fiscal_periods),
-      status: normalizeStatus(filing.status, true),
-      notes: filing.notes ?? null,
-      presentedAt: filing.presentedAt ?? null,
-      assigneeId: filing.users?.id ?? null,
-      assigneeName: filing.users?.username ?? null
-    }));
+    const allFilings = visible.map((filing) => {
+      let periodCode = null;
+      const filingPeriodKind = filing.fiscal_periods?.kind;
+      if (filingPeriodKind === "MONTHLY" || filingPeriodKind === "SPECIAL" && filing.fiscal_periods?.label?.startsWith("MES-")) {
+        const rl = (filing.fiscal_periods?.label ?? "").toString();
+        const mMatch = rl.match(/^M(\d{2})$/i);
+        if (mMatch) {
+          periodCode = `M${mMatch[1]}`;
+        } else if (filing.fiscal_periods?.starts_at) {
+          try {
+            const dt = new Date(filing.fiscal_periods.starts_at);
+            const month = dt.getMonth() + 1;
+            periodCode = `M${String(month).padStart(2, "0")}`;
+          } catch (e) {
+            periodCode = null;
+          }
+        }
+      } else if (filingPeriodKind === "QUARTERLY") {
+        const q = filing.fiscal_periods?.quarter;
+        if (q) periodCode = `${q}T`;
+      } else if (filingPeriodKind === "ANNUAL") {
+        periodCode = "ANUAL";
+      }
+      const calendarKey = periodCode ? `${filing.taxModelCode}:${periodCode}` : null;
+      const calendarStatus = calendarKey ? calendarStatusMap.get(calendarKey) ?? null : null;
+      return {
+        id: filing.id,
+        clientId: filing.clientId,
+        clientName: filing.clients?.razonSocial ?? "",
+        nifCif: filing.clients?.nifCif ?? "",
+        gestorId: filing.clients?.responsableAsignado ?? null,
+        gestorName: filing.clients?.users?.username ?? null,
+        taxModelCode: filing.taxModelCode,
+        periodId: filing.periodId,
+        periodLabel: formatPeriodLabel(filing.fiscal_periods),
+        periodKind: filing.fiscal_periods?.kind ?? null,
+        periodStatus: filing.fiscal_periods?.status ?? null,
+        calendarStatus,
+        status: normalizeStatus(filing.status, true),
+        notes: filing.notes ?? null,
+        presentedAt: filing.presentedAt ?? null,
+        assigneeId: filing.users?.id ?? null,
+        assigneeName: filing.users?.username ?? null
+      };
+    });
+    if (!filters.includeClosedPeriods) {
+      return allFilings.filter((filing) => filing.calendarStatus === "ABIERTO");
+    }
+    return allFilings;
   }
   async updateTaxFiling(id, data, options = {}) {
     const filing = await prisma.client_tax_filings.findUnique({
@@ -2281,6 +2751,8 @@ var PrismaStorage = class {
       taxModelCode: updated.taxModelCode,
       periodId: updated.periodId,
       periodLabel: formatPeriodLabel(updated.fiscal_periods),
+      periodKind: updated.fiscal_periods?.kind ?? null,
+      periodStatus: updated.fiscal_periods?.status ?? null,
       status: normalizeStatus(updated.status, true),
       notes: updated.notes ?? null,
       presentedAt: updated.presentedAt ?? null,
@@ -2639,10 +3111,19 @@ var PrismaStorage = class {
     const derived = calculateDerivedFields(startDate, endDate);
     return await prisma.tax_calendar.create({
       data: {
-        ...data,
+        id: data.id || randomUUID(),
+        modelCode: data.modelCode,
+        period: data.period,
+        year: data.year,
         startDate,
         endDate,
-        ...derived
+        status: derived.status || data.status,
+        days_to_start: derived.daysToStart ?? data.daysToStart ?? null,
+        days_to_end: derived.daysToEnd ?? data.daysToEnd ?? null,
+        active: data.active ?? true,
+        locked: data.locked ?? false,
+        createdAt: data.createdAt || /* @__PURE__ */ new Date(),
+        updatedAt: data.updatedAt || /* @__PURE__ */ new Date()
       }
     });
   }
@@ -2656,14 +3137,21 @@ var PrismaStorage = class {
     const startDate = data.startDate ? new Date(data.startDate) : existing.startDate;
     const endDate = data.endDate ? new Date(data.endDate) : existing.endDate;
     const derived = calculateDerivedFields(startDate, endDate);
+    const updatePayload = {};
+    if (data.modelCode !== void 0) updatePayload.modelCode = data.modelCode;
+    if (data.period !== void 0) updatePayload.period = data.period;
+    if (data.year !== void 0) updatePayload.year = data.year;
+    updatePayload.startDate = startDate;
+    updatePayload.endDate = endDate;
+    updatePayload.status = derived.status ?? data.status ?? existing.status;
+    updatePayload.days_to_start = derived.daysToStart ?? (data.daysToStart ?? data.days_to_start ?? null);
+    updatePayload.days_to_end = derived.daysToEnd ?? (data.daysToEnd ?? data.days_to_end ?? null);
+    if (data.active !== void 0) updatePayload.active = data.active;
+    if (data.locked !== void 0) updatePayload.locked = data.locked;
+    updatePayload.updatedAt = /* @__PURE__ */ new Date();
     return await prisma.tax_calendar.update({
       where: { id },
-      data: {
-        ...data,
-        startDate,
-        endDate,
-        ...derived
-      }
+      data: updatePayload
     });
   }
   async deleteTaxCalendar(id) {
@@ -2722,44 +3210,82 @@ var PrismaStorage = class {
     return created;
   }
   async seedTaxCalendarYear(year, opts) {
-    const modelCodes = [];
-    if (opts?.modelCode) {
-      modelCodes.push(opts.modelCode.toUpperCase());
-    } else {
-      const configs = await prisma.tax_models_config.findMany({ where: { isActive: true }, select: { code: true } });
-      configs.forEach((c) => modelCodes.push(c.code));
+    const targetCode = opts?.modelCode ? opts.modelCode.toUpperCase() : null;
+    const rawConfigs = await prisma.tax_models_config.findMany({
+      where: {
+        isActive: true,
+        ...targetCode ? { code: targetCode } : {}
+      },
+      select: {
+        code: true,
+        allowedPeriods: true
+      }
+    });
+    const configByCode = /* @__PURE__ */ new Map();
+    rawConfigs.forEach((config) => {
+      configByCode.set(config.code.toUpperCase(), {
+        allowedPeriods: mapJsonArray(config.allowedPeriods)
+      });
+    });
+    const modelConfigs = [];
+    const codes = targetCode ? [targetCode] : Array.from(configByCode.keys());
+    if (targetCode && !configByCode.has(targetCode)) {
+      codes.push(targetCode);
+    }
+    for (const code of codes) {
+      const allowed = /* @__PURE__ */ new Set();
+      const stored = configByCode.get(code);
+      stored?.allowedPeriods.forEach((period) => allowed.add(period.toUpperCase()));
+      const rule = TAX_RULES[code];
+      if (rule) {
+        rule.allowedPeriods.forEach((period) => allowed.add(period.toUpperCase()));
+      }
+      if (allowed.size === 0) {
+        allowed.add("TRIMESTRAL");
+        allowed.add("ANUAL");
+      }
+      modelConfigs.push({ code, allowed });
     }
     const makeDate = (y, m, d) => new Date(Date.UTC(y, m, d));
+    const pushRecord = (modelCode, periodLabel, start, end) => {
+      const derived = calculateDerivedFields(start, end);
+      const now = /* @__PURE__ */ new Date();
+      records.push({
+        id: randomUUID(),
+        modelCode,
+        period: periodLabel,
+        year,
+        startDate: start,
+        endDate: end,
+        status: derived.status,
+        days_to_start: derived.daysToStart,
+        days_to_end: derived.daysToEnd,
+        active: true,
+        createdAt: now,
+        updatedAt: now
+      });
+    };
     const records = [];
     const includeMonthly = !opts?.periodicity || opts.periodicity === "all" || opts.periodicity === "monthly";
     const includeQuarterly = !opts?.periodicity || opts.periodicity === "all" || opts.periodicity === "quarterly";
     const includeAnnual = !opts?.periodicity || opts.periodicity === "all" || opts.periodicity === "annual";
     const includeSpecial = !opts?.periodicity || opts.periodicity === "all" || opts.periodicity === "special";
-    for (const code of modelCodes) {
-      if (includeMonthly) {
+    for (const { code, allowed } of modelConfigs) {
+      const supportsMonthly = allowed.has("MENSUAL");
+      const supportsQuarterly = allowed.has("TRIMESTRAL");
+      const supportsAnnual = allowed.has("ANUAL");
+      const supportsSpecial = allowed.has("ESPECIAL_FRACCIONADO") || code === "202";
+      if (includeMonthly && supportsMonthly) {
         for (let m = 1; m <= 12; m++) {
           const period = `M${String(m).padStart(2, "0")}`;
           const nextMonth = m === 12 ? 0 : m;
           const nextYear = m === 12 ? year + 1 : year;
           const start = makeDate(nextYear, nextMonth, 1);
           const end = makeDate(nextYear, nextMonth, 20);
-          const derived = calculateDerivedFields(start, end);
-          records.push({
-            modelCode: code,
-            period,
-            year,
-            startDate: start,
-            endDate: end,
-            status: derived.status,
-            daysToStart: derived.daysToStart,
-            daysToEnd: derived.daysToEnd,
-            active: true,
-            createdAt: /* @__PURE__ */ new Date(),
-            updatedAt: /* @__PURE__ */ new Date()
-          });
+          pushRecord(code, period, start, end);
         }
       }
-      if (includeQuarterly) {
+      if (includeQuarterly && supportsQuarterly) {
         const quarters = [
           { label: "1T", start: makeDate(year, 3, 1), end: makeDate(year, 3, 20) },
           { label: "2T", start: makeDate(year, 6, 1), end: makeDate(year, 6, 20) },
@@ -2767,61 +3293,22 @@ var PrismaStorage = class {
           { label: "4T", start: makeDate(year + 1, 0, 1), end: makeDate(year + 1, 0, 30) }
         ];
         for (const q of quarters) {
-          const derived = calculateDerivedFields(q.start, q.end);
-          records.push({
-            modelCode: code,
-            tax_periods: q.label,
-            year,
-            startDate: q.start,
-            endDate: q.end,
-            status: derived.status,
-            daysToStart: derived.daysToStart,
-            daysToEnd: derived.daysToEnd,
-            active: true,
-            createdAt: /* @__PURE__ */ new Date(),
-            updatedAt: /* @__PURE__ */ new Date()
-          });
+          pushRecord(code, q.label, q.start, q.end);
         }
       }
-      if (includeAnnual) {
+      if (includeAnnual && supportsAnnual) {
         const start = makeDate(year + 1, 0, 1);
         const end = makeDate(year + 1, 0, 30);
-        const derived = calculateDerivedFields(start, end);
-        records.push({
-          modelCode: code,
-          tax_periods: "ANUAL",
-          year,
-          startDate: start,
-          endDate: end,
-          status: derived.status,
-          daysToStart: derived.daysToStart,
-          daysToEnd: derived.daysToEnd,
-          active: true,
-          createdAt: /* @__PURE__ */ new Date(),
-          updatedAt: /* @__PURE__ */ new Date()
-        });
+        pushRecord(code, "ANUAL", start, end);
       }
-      if (includeSpecial && code === "202") {
+      if (includeSpecial && supportsSpecial && code === "202") {
         const months = [4, 10, 12];
         for (const m of months) {
           const nextMonth = m === 12 ? 0 : m;
           const nextYear = m === 12 ? year + 1 : year;
           const start = makeDate(nextYear, nextMonth, 1);
           const end = makeDate(nextYear, nextMonth, 20);
-          const derived = calculateDerivedFields(start, end);
-          records.push({
-            modelCode: code,
-            tax_periods: `M${String(m).padStart(2, "0")}`,
-            year,
-            startDate: start,
-            endDate: end,
-            status: derived.status,
-            daysToStart: derived.daysToStart,
-            daysToEnd: derived.daysToEnd,
-            active: true,
-            createdAt: /* @__PURE__ */ new Date(),
-            updatedAt: /* @__PURE__ */ new Date()
-          });
+          pushRecord(code, `M${String(m).padStart(2, "0")}`, start, end);
         }
       }
     }
@@ -2976,16 +3463,20 @@ var PrismaStorage = class {
     return manual ? mapPrismaManual(manual) : void 0;
   }
   async createManual(insertManual) {
+    const autorId = insertManual.autorId ?? insertManual.autor_id ?? insertManual.authorId;
+    if (!autorId) {
+      throw new Error("Autor del manual no especificado");
+    }
+    const etiquetasValue = Array.isArray(insertManual.etiquetas) && insertManual.etiquetas.length > 0 ? JSON.stringify(insertManual.etiquetas) : null;
     const manual = await prisma.manuals.create({
       data: {
         id: randomUUID(),
-        titulo: insertManual.titulo,
-        contenido_html: insertManual.contenidoHtml,
-        users: { connect: { id: insertManual.autorId } },
-        etiquetas: insertManual.etiquetas ? JSON.stringify(insertManual.etiquetas) : null,
-        categoria: insertManual.categoria,
+        titulo: insertManual.titulo ?? "Sin t\xEDtulo",
+        contenido_html: insertManual.contenidoHtml ?? "",
+        autor_id: autorId,
+        etiquetas: etiquetasValue,
+        categoria: insertManual.categoria ?? null,
         status: insertManual.publicado ? "PUBLISHED" : "DRAFT",
-        // Convertir publicado a status
         fecha_publicacion: insertManual.publicado ? /* @__PURE__ */ new Date() : null,
         fecha_actualizacion: /* @__PURE__ */ new Date()
       }
@@ -2996,17 +3487,19 @@ var PrismaStorage = class {
     try {
       const data = {};
       if (updateData.titulo !== void 0) data.titulo = updateData.titulo;
-      if (updateData.contenidoHtml !== void 0) data.contenidoHtml = updateData.contenidoHtml;
-      if (updateData.categoria !== void 0) data.categoria = updateData.categoria;
+      if (updateData.contenidoHtml !== void 0) data.contenido_html = updateData.contenidoHtml ?? "";
+      if (updateData.categoria !== void 0) data.categoria = updateData.categoria ?? null;
       if (updateData.etiquetas !== void 0) {
-        data.etiquetas = updateData.etiquetas ? JSON.stringify(updateData.etiquetas) : null;
+        data.etiquetas = Array.isArray(updateData.etiquetas) && updateData.etiquetas.length > 0 ? JSON.stringify(updateData.etiquetas) : null;
       }
       if (updateData.publicado !== void 0) {
         data.status = updateData.publicado ? "PUBLISHED" : "DRAFT";
-        if (updateData.publicado) {
-          data.fechaPublicacion = /* @__PURE__ */ new Date();
-        }
+        data.fecha_publicacion = updateData.publicado ? /* @__PURE__ */ new Date() : null;
       }
+      if (updateData.autorId !== void 0 || updateData.autor_id !== void 0) {
+        data.autor_id = updateData.autorId ?? updateData.autor_id;
+      }
+      data.fecha_actualizacion = /* @__PURE__ */ new Date();
       const manual = await prisma.manuals.update({
         where: { id },
         data
@@ -3303,7 +3796,7 @@ var PrismaStorage = class {
     if (!settings) return void 0;
     return {
       id: settings.id,
-      registrationEnabled: settings.registration_enabled,
+      registrationEnabled: settings.registrationEnabled,
       updatedAt: settings.updatedAt
     };
   }
@@ -3323,45 +3816,57 @@ var PrismaStorage = class {
     }
     return {
       id: settings.id,
-      registrationEnabled: settings.registration_enabled,
+      registrationEnabled: settings.registrationEnabled,
       updatedAt: settings.updatedAt
     };
   }
   // ==================== SMTP ACCOUNTS ====================
-  async getSMTPAccount(id) {
-    const account = await prisma.smtp_accounts.findUnique({ where: { id } });
+  mapSMTPAccount(account) {
     if (!account) return null;
     return {
-      ...account,
-      password: decryptPassword(account.password)
+      id: account.id,
+      nombre: account.nombre,
+      host: account.host,
+      port: account.port,
+      user: account.user,
+      password: decryptPassword(account.password),
+      isPredeterminada: account.is_predeterminada,
+      activa: account.activa,
+      creadaPor: account.creada_por,
+      fechaCreacion: account.fecha_creacion
     };
+  }
+  async getSMTPAccount(id) {
+    const account = await prisma.smtp_accounts.findUnique({ where: { id } });
+    return this.mapSMTPAccount(account);
   }
   async getAllSMTPAccounts() {
     const accounts = await prisma.smtp_accounts.findMany({
       orderBy: { fecha_creacion: "desc" }
     });
-    return accounts.map((account) => ({
-      ...account,
-      password: decryptPassword(account.password)
-    }));
+    return accounts.map((account) => this.mapSMTPAccount(account));
   }
   async getDefaultSMTPAccount() {
     const account = await prisma.smtp_accounts.findFirst({
       where: { is_predeterminada: true, activa: true }
     });
-    if (!account) return null;
-    return {
-      ...account,
-      password: decryptPassword(account.password)
-    };
+    return this.mapSMTPAccount(account);
   }
   async createSMTPAccount(account) {
+    const portValue = typeof account.port === "string" ? parseInt(account.port, 10) : account.port;
     const encryptedAccount = {
-      ...account,
-      password: encryptPassword(account.password)
+      id: randomUUID(),
+      nombre: account.nombre,
+      host: account.host,
+      port: portValue,
+      user: account.user,
+      password: encryptPassword(account.password),
+      is_predeterminada: account.isPredeterminada ?? false,
+      activa: account.activa ?? true,
+      creada_por: account.creadaPor ?? null
     };
     const createdAccount = await prisma.$transaction(async (tx) => {
-      if (encryptedAccount.isPredeterminada) {
+      if (encryptedAccount.is_predeterminada) {
         await tx.smtp_accounts.updateMany({
           where: { is_predeterminada: true },
           data: { is_predeterminada: false }
@@ -3369,18 +3874,30 @@ var PrismaStorage = class {
       }
       return await tx.smtp_accounts.create({ data: encryptedAccount });
     });
-    return {
-      ...createdAccount,
-      password: decryptPassword(createdAccount.password)
-    };
+    return this.mapSMTPAccount(createdAccount);
   }
   async updateSMTPAccount(id, account) {
-    const updateData = { ...account };
-    if (updateData.password) {
-      updateData.password = encryptPassword(updateData.password);
+    const updateData = {};
+    if (account.nombre !== void 0) updateData.nombre = account.nombre;
+    if (account.host !== void 0) updateData.host = account.host;
+    if (account.port !== void 0) {
+      updateData.port = typeof account.port === "string" ? parseInt(account.port, 10) : account.port;
+    }
+    if (account.user !== void 0) updateData.user = account.user;
+    if (account.password) {
+      updateData.password = encryptPassword(account.password);
+    }
+    if (account.isPredeterminada !== void 0) {
+      updateData.is_predeterminada = account.isPredeterminada;
+    }
+    if (account.activa !== void 0) {
+      updateData.activa = account.activa;
+    }
+    if (account.creadaPor !== void 0) {
+      updateData.creada_por = account.creadaPor;
     }
     const updatedAccount = await prisma.$transaction(async (tx) => {
-      if (updateData.isPredeterminada) {
+      if (updateData.is_predeterminada) {
         await tx.smtp_accounts.updateMany({
           where: { is_predeterminada: true, id: { not: id } },
           data: { is_predeterminada: false }
@@ -3391,10 +3908,7 @@ var PrismaStorage = class {
         data: updateData
       });
     });
-    return {
-      ...updatedAccount,
-      password: decryptPassword(updatedAccount.password)
-    };
+    return this.mapSMTPAccount(updatedAccount);
   }
   async deleteSMTPAccount(id) {
     await prisma.smtp_accounts.delete({ where: { id } });
@@ -3497,10 +4011,10 @@ var PrismaStorage = class {
 var prismaStorage = new PrismaStorage();
 
 // server/routes.ts
-import { PrismaClient as PrismaClient18 } from "@prisma/client";
+import { PrismaClient as PrismaClient13 } from "@prisma/client";
 import bcrypt from "bcrypt";
 import jwt3 from "jsonwebtoken";
-import { randomUUID as randomUUID4 } from "crypto";
+import { randomUUID as randomUUID8 } from "crypto";
 
 // server/utils/validators.ts
 import { z } from "zod";
@@ -3647,7 +4161,7 @@ function validateZod(schema) {
 }
 
 // server/routes.ts
-import multer2 from "multer";
+import multer3 from "multer";
 import path12 from "path";
 import fs9 from "fs";
 
@@ -3655,7 +4169,7 @@ import fs9 from "fs";
 import nodemailer from "nodemailer";
 var smtpConfig = null;
 function configureSMTP(config) {
-  smtpConfig = config;
+  smtpConfig = config ? { ...config } : null;
 }
 function getSMTPConfig() {
   return smtpConfig;
@@ -3784,8 +4298,89 @@ async function checkAndSendReminders(storage) {
   }
 }
 
-// server/routes.ts
-init_websocket();
+// server/websocket.ts
+var io = null;
+function setSocketIO(socketIO) {
+  io = socketIO;
+}
+function getSocketIO() {
+  return io;
+}
+function getSocketServer() {
+  return getSocketIO();
+}
+function notifyUser(userId, notification) {
+  if (!io) {
+    console.warn("Socket.IO no est\xE1 inicializado");
+    return;
+  }
+  io.to(`user:${userId}`).emit("notification", {
+    ...notification,
+    timestamp: (/* @__PURE__ */ new Date()).toISOString()
+  });
+}
+function notifyRole(role, notification) {
+  if (!io) {
+    console.warn("Socket.IO no est\xE1 inicializado");
+    return;
+  }
+  io.to(`role:${role}`).emit("notification", {
+    ...notification,
+    timestamp: (/* @__PURE__ */ new Date()).toISOString()
+  });
+}
+function notifyAll(notification) {
+  if (!io) {
+    console.warn("Socket.IO no est\xE1 inicializado");
+    return;
+  }
+  io.emit("notification", {
+    ...notification,
+    timestamp: (/* @__PURE__ */ new Date()).toISOString()
+  });
+}
+function notifyTaskChange(action, task, userId) {
+  const notification = {
+    type: "task",
+    action,
+    title: `Tarea ${action === "created" ? "creada" : action === "updated" ? "actualizada" : "eliminada"}`,
+    message: `La tarea "${task.titulo}" ha sido ${action === "created" ? "creada" : action === "updated" ? "actualizada" : "eliminada"}`,
+    data: task
+  };
+  if (userId) {
+    notifyUser(userId, notification);
+  } else if (task.asignadoA) {
+    notifyUser(task.asignadoA, notification);
+  } else {
+    notifyAll(notification);
+  }
+}
+function notifyTaxChange(action, clientTax, userId) {
+  const notification = {
+    type: "tax",
+    action,
+    title: `Impuesto ${action === "created" ? "asignado" : action === "updated" ? "actualizado" : "eliminado"}`,
+    message: `Un impuesto ha sido ${action === "created" ? "asignado" : action === "updated" ? "actualizado" : "eliminado"}`,
+    data: clientTax
+  };
+  if (userId) {
+    notifyUser(userId, notification);
+  } else {
+    notifyRole("ADMIN", notification);
+    notifyRole("GESTOR", notification);
+  }
+}
+function notifyClientChange(action, client) {
+  const notification = {
+    type: "client",
+    action,
+    title: `Cliente ${action === "created" ? "creado" : action === "updated" ? "actualizado" : "eliminado"}`,
+    message: `El cliente "${client.razonSocial}" ha sido ${action === "created" ? "creado" : action === "updated" ? "actualizado" : "eliminado"}`,
+    data: client
+  };
+  notifyRole("ADMIN", notification);
+  notifyRole("GESTOR", notification);
+}
 
 // server/admin-sessions.ts
 import express from "express";
@@ -3828,7 +4423,6 @@ var checkIsAdmin = (req, res, next) => {
 };
 
 // server/admin-sessions.ts
-init_websocket();
 var prisma2 = new PrismaClient2();
 var router = express.Router();
 router.get("/", authenticateToken, checkIsAdmin, async (req, res) => {
@@ -4212,14 +4806,14 @@ router2.patch("/:id", authenticateToken, checkIsAdmin, async (req, res) => {
 var price_catalog_default = router2;
 
 // server/budgets.ts
+init_prisma_client();
 import express3 from "express";
-import { PrismaClient as PrismaClient9 } from "@prisma/client";
 
 // server/utils/budgets-pdf.ts
 import path from "path";
 import fs from "fs";
 import puppeteer from "puppeteer";
-import { PrismaClient as PrismaClient4 } from "@prisma/client";
+import { PrismaClient as PrismaClient5 } from "@prisma/client";
 
 // server/utils/template-variables.ts
 function replaceTemplateVariables(htmlContent, data) {
@@ -4287,7 +4881,7 @@ function prepareBudgetData(budget) {
 }
 
 // server/utils/budgets-pdf.ts
-var prisma4 = new PrismaClient4();
+var prisma5 = new PrismaClient5();
 async function createBudgetPdf(budget) {
   const uploadsDir2 = path.join(process.cwd(), "uploads", "budgets");
   if (!fs.existsSync(uploadsDir2)) fs.mkdirSync(uploadsDir2, { recursive: true });
@@ -4315,7 +4909,7 @@ async function createBudgetPdf(budget) {
   }
 }
 async function renderBudgetHtml(budget) {
-  const template = await prisma4.budget_templates.findFirst({
+  const template = await prisma5.budget_templates.findFirst({
     where: {
       type: budget.type,
       companyBrand: budget.companyBrand || "LA_LLAVE",
@@ -4783,8 +5377,7 @@ import jwt2 from "jsonwebtoken";
 import ExcelJS from "exceljs";
 
 // server/services/budgets/calculatePyme.ts
-import { PrismaClient as PrismaClient5 } from "@prisma/client";
-var prisma5 = new PrismaClient5();
+init_prisma_client();
 var parametersCache = null;
 var cacheTimestamp = 0;
 var CACHE_DURATION = 5 * 60 * 1e3;
@@ -4793,7 +5386,7 @@ async function getParameters() {
   if (parametersCache && now - cacheTimestamp < CACHE_DURATION) {
     return parametersCache;
   }
-  const params = await prisma5.budget_parameters.findMany({
+  const params = await prisma_client_default.budget_parameters.findMany({
     where: {
       budgetType: "PYME",
       isActive: true
@@ -4992,8 +5585,7 @@ function clearParametersCache() {
 }
 
 // server/services/budgets/calculateAutonomo.ts
-import { PrismaClient as PrismaClient6 } from "@prisma/client";
-var prisma6 = new PrismaClient6();
+init_prisma_client();
 var parametersCache2 = null;
 var cacheTimestamp2 = 0;
 var CACHE_DURATION2 = 5 * 60 * 1e3;
@@ -5002,7 +5594,7 @@ async function getParameters2() {
   if (parametersCache2 && now - cacheTimestamp2 < CACHE_DURATION2) {
     return parametersCache2;
   }
-  const params = await prisma6.budget_parameters.findMany({
+  const params = await prisma_client_default.budget_parameters.findMany({
     where: {
       budgetType: "AUTONOMO",
       isActive: true
@@ -5234,8 +5826,7 @@ function clearParametersCache2() {
 }
 
 // server/services/budgets/calculateRenta.ts
-import { PrismaClient as PrismaClient7 } from "@prisma/client";
-var prisma7 = new PrismaClient7();
+init_prisma_client();
 var parametersCache3 = null;
 var cacheTimestamp3 = 0;
 var CACHE_DURATION3 = 5 * 60 * 1e3;
@@ -5244,7 +5835,7 @@ async function getParameters3() {
   if (parametersCache3 && now - cacheTimestamp3 < CACHE_DURATION3) {
     return parametersCache3;
   }
-  const params = await prisma7.budget_parameters.findMany({
+  const params = await prisma_client_default.budget_parameters.findMany({
     where: {
       budgetType: "RENTA",
       isActive: true
@@ -5373,8 +5964,7 @@ function clearParametersCache3() {
 }
 
 // server/services/budgets/calculateHerencias.ts
-import { PrismaClient as PrismaClient8 } from "@prisma/client";
-var prisma8 = new PrismaClient8();
+init_prisma_client();
 var parametersCache4 = null;
 var cacheTimestamp4 = 0;
 var CACHE_DURATION4 = 5 * 60 * 1e3;
@@ -5383,7 +5973,7 @@ async function getParameters4() {
   if (parametersCache4 && now - cacheTimestamp4 < CACHE_DURATION4) {
     return parametersCache4;
   }
-  const params = await prisma8.budget_parameters.findMany({
+  const params = await prisma_client_default.budget_parameters.findMany({
     where: {
       budgetType: "HERENCIAS",
       isActive: true
@@ -5612,8 +6202,77 @@ function clearParametersCache4() {
 }
 
 // server/budgets.ts
-var prisma9 = new PrismaClient9();
+import { randomUUID as randomUUID2 } from "crypto";
 var router3 = express3.Router();
+var toNumber = (value, fallback = 0) => {
+  if (value === null || value === void 0) return fallback;
+  if (typeof value === "string" && value.trim() === "") return fallback;
+  const num = Number(value);
+  return Number.isFinite(num) ? num : fallback;
+};
+var parseJsonMaybe = (value) => {
+  if (value === null || value === void 0 || value === "") return null;
+  if (typeof value !== "string") return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+};
+var normalizeBudgetItem = (item) => {
+  if (!item) return item;
+  const quantity = toNumber(item.quantity, 0) || 1;
+  let unitPriceRaw = item.unitPrice ?? item.unit_price ?? item.price ?? null;
+  if (!unitPriceRaw || toNumber(unitPriceRaw, 0) === 0) {
+    if (item.subtotal !== void 0) {
+      unitPriceRaw = toNumber(item.subtotal, 0) / quantity;
+    }
+  }
+  return {
+    ...item,
+    quantity,
+    unitPrice: toNumber(unitPriceRaw, 0),
+    price: toNumber(unitPriceRaw, 0),
+    vatPct: item.vatPct !== void 0 ? toNumber(item.vatPct, null) : toNumber(item.vat_pct, null),
+    subtotal: toNumber(item.subtotal, 0),
+    total: toNumber(item.total, 0)
+  };
+};
+var normalizeBudget = (budget) => {
+  if (!budget) return null;
+  const {
+    budget_items,
+    budget_email_logs,
+    client_nif,
+    client_email,
+    client_phone,
+    client_address,
+    company_brand,
+    template_snapshot,
+    vat_total,
+    custom_total,
+    manually_edited,
+    ...rest
+  } = budget;
+  const subtotal = toNumber(rest.subtotal, 0);
+  const total = toNumber(rest.total, 0);
+  return {
+    ...rest,
+    subtotal,
+    total,
+    clientNif: client_nif ?? null,
+    clientEmail: client_email ?? null,
+    clientPhone: client_phone ?? null,
+    clientAddress: client_address ?? null,
+    companyBrand: company_brand ?? "LA_LLAVE",
+    templateSnapshot: parseJsonMaybe(template_snapshot),
+    vatTotal: vat_total !== void 0 ? toNumber(vat_total, 0) : null,
+    customTotal: custom_total !== void 0 ? custom_total === null ? null : toNumber(custom_total) : null,
+    manuallyEdited: Boolean(manually_edited),
+    items: Array.isArray(budget_items) ? budget_items.map(normalizeBudgetItem) : void 0,
+    emails: Array.isArray(budget_email_logs) ? budget_email_logs : void 0
+  };
+};
 function ensureRole(req, res, next) {
   const roleName = req.user?.roleName;
   if (roleName === "Administrador" || roleName === "Gestor") return next();
@@ -5636,12 +6295,13 @@ router3.get("/", authenticateToken, ensureRole, async (req, res) => {
         { clientEmail: { contains: q } }
       ];
     }
-    const p = prisma9;
+    const p = prisma_client_default;
     const [items, total] = await Promise.all([
       p.budgets.findMany({ where, orderBy: { date: "desc" }, take: size, skip }),
       p.budgets.count({ where })
     ]);
-    res.json({ items, total, page, size });
+    const normalizedItems = items.map((item) => normalizeBudget(item));
+    res.json({ items: normalizedItems, total, page, size });
   } catch (err) {
     console.error("GET /api/budgets", err);
     res.status(500).json({ error: err.message });
@@ -5651,17 +6311,17 @@ router3.get("/:id", authenticateToken, ensureRole, async (req, res) => {
   try {
     const { id } = req.params;
     console.log("\u{1F50D} GET /api/budgets/:id - ID solicitado:", id);
-    const p = prisma9;
+    const p = prisma_client_default;
     const budget = await p.budgets.findUnique({
       where: { id },
       include: {
-        items: { orderBy: { position: "asc" } },
-        emails: { orderBy: { createdAt: "desc" } }
+        budget_items: { orderBy: { position: "asc" } },
+        budget_email_logs: { orderBy: { createdAt: "desc" } }
       }
     });
     console.log("\u{1F4CA} Resultado de la consulta:", budget ? `Encontrado: ${budget.code}` : "No encontrado");
     if (!budget) return res.status(404).json({ error: "Not found" });
-    res.json(budget);
+    res.json(normalizeBudget(budget));
   } catch (err) {
     console.error("\u274C Error en GET /api/budgets/:id", err);
     res.status(500).json({ error: err.message });
@@ -5680,7 +6340,7 @@ router3.get("/:id/pdf", async (req, res) => {
     } catch (err) {
       return res.status(401).json({ error: "Token inv\xE1lido" });
     }
-    const p = prisma9;
+    const p = prisma_client_default;
     const fullUser = await p.users.findUnique({
       where: { id: user.id },
       include: { roles: true }
@@ -5755,7 +6415,7 @@ router3.post("/", authenticateToken, ensureRole, async (req, res) => {
     const now = /* @__PURE__ */ new Date();
     const year = now.getFullYear();
     const series = data.series || "AL";
-    const p = prisma9;
+    const p = prisma_client_default;
     const last = await p.budgets.findFirst({ where: { year, series }, orderBy: { number: "desc" } });
     const number = last ? last.number + 1 : 1;
     const code = `${series}-${year}-${String(number).padStart(4, "0")}`;
@@ -5764,49 +6424,58 @@ router3.post("/", authenticateToken, ensureRole, async (req, res) => {
     const expiresAt = new Date(date);
     expiresAt.setDate(expiresAt.getDate() + Number(validDays));
     const acceptanceHash = generateAcceptanceHash(code, date);
-    const created = await p.budgets.create({ data: {
-      series,
-      number,
-      year,
-      code,
-      date,
-      validDays: Number(validDays),
-      expiresAt,
-      acceptanceHash,
-      // Hash de aceptación generado
-      type: data.type || "PYME",
-      // Nuevo campo
-      companyBrand: data.companyBrand || "LA_LLAVE",
-      // Empresa emisora
-      clientName: data.clientName || "",
-      clientNif: data.clientNif || null,
-      clientEmail: data.clientEmail || null,
-      clientPhone: data.clientPhone || null,
-      clientAddress: data.clientAddress || null,
-      notes: data.notes || null,
-      subtotal: calculatedSubtotal ?? data.subtotal ?? 0,
-      vatTotal: calculatedVatTotal ?? data.vatTotal ?? 0,
-      total: calculatedTotal ?? data.total ?? 0,
-      templateSnapshot: data.templateSnapshot || {},
-      // CRITICAL: Incluir timestamps explícitamente para MariaDB
-      createdAt: now,
-      updatedAt: now
-    } });
+    const budgetId = randomUUID2();
+    const created = await p.budgets.create({
+      data: {
+        id: budgetId,
+        series,
+        number,
+        year,
+        code,
+        date,
+        validDays: Number(validDays),
+        expiresAt,
+        acceptanceHash,
+        type: data.type || "PYME",
+        company_brand: data.companyBrand || "LA_LLAVE",
+        clientName: data.clientName || "",
+        client_nif: data.clientNif || null,
+        client_email: data.clientEmail || null,
+        client_phone: data.clientPhone || null,
+        client_address: data.clientAddress || null,
+        notes: data.notes || null,
+        subtotal: calculatedSubtotal ?? Number(data.subtotal || 0),
+        vat_total: calculatedVatTotal ?? Number(data.vatTotal || 0),
+        total: calculatedTotal ?? Number(data.total || 0),
+        template_snapshot: data.templateSnapshot ? JSON.stringify(data.templateSnapshot) : null,
+        manually_edited: Boolean(data.manuallyEdited ?? false),
+        custom_total: data.customTotal !== void 0 && data.customTotal !== null ? Number(data.customTotal) : null,
+        currency: data.currency || "EUR",
+        createdAt: now,
+        updatedAt: now
+      }
+    });
     const itemsToCreate = calculatedItems || data.items || [];
     if (Array.isArray(itemsToCreate) && itemsToCreate.length > 0) {
       for (let i = 0; i < itemsToCreate.length; i++) {
         const item = itemsToCreate[i];
-        const subtotal = Number(item.subtotal || 0);
-        const vatPct = Number(item.vatPct || 0);
+        const quantity = toNumber(item.quantity, 1);
+        const unitPrice = toNumber(
+          item.unitPrice ?? item.price ?? (item.subtotal !== void 0 ? toNumber(item.subtotal, 0) / (quantity || 1) : 0),
+          0
+        );
+        const vatPct = toNumber(item.vatPct, 0);
+        const subtotal = item.subtotal !== void 0 ? toNumber(item.subtotal, 0) : quantity * unitPrice;
         const total = subtotal * (1 + vatPct / 100);
         await p.budget_items.create({
           data: {
+            id: randomUUID2(),
             budgetId: created.id,
             concept: item.description || item.concept || "",
             category: item.category || null,
-            position: item.position ?? i + 1,
-            quantity: Number(item.quantity || 1),
-            unitPrice: Number(item.unitPrice || 0),
+            position: item.position ?? item.order ?? i + 1,
+            quantity,
+            unitPrice,
             vatPct,
             subtotal,
             total
@@ -5816,9 +6485,12 @@ router3.post("/", authenticateToken, ensureRole, async (req, res) => {
     }
     const budgetWithItems = await p.budgets.findUnique({
       where: { id: created.id },
-      include: { items: { orderBy: { position: "asc" } } }
+      include: {
+        budget_items: { orderBy: { position: "asc" } },
+        budget_email_logs: { orderBy: { createdAt: "desc" } }
+      }
     });
-    res.status(201).json(budgetWithItems);
+    res.status(201).json(normalizeBudget(budgetWithItems));
   } catch (err) {
     console.error("POST /api/budgets", err);
     res.status(500).json({ error: err.message });
@@ -5828,7 +6500,7 @@ router3.put("/:id", authenticateToken, ensureRole, async (req, res) => {
   try {
     const { id } = req.params;
     const data = req.body;
-    const p = prisma9;
+    const p = prisma_client_default;
     const existing = await p.budgets.findUnique({
       where: { id },
       include: { items: true }
@@ -5836,21 +6508,32 @@ router3.put("/:id", authenticateToken, ensureRole, async (req, res) => {
     if (!existing) {
       return res.status(404).json({ error: "Presupuesto no encontrado" });
     }
-    const updateData = {};
+    const updateData = {
+      updatedAt: /* @__PURE__ */ new Date()
+    };
     if (data.clientName !== void 0) updateData.clientName = data.clientName;
-    if (data.clientNif !== void 0) updateData.clientNif = data.clientNif;
-    if (data.clientEmail !== void 0) updateData.clientEmail = data.clientEmail;
-    if (data.clientPhone !== void 0) updateData.clientPhone = data.clientPhone;
-    if (data.clientAddress !== void 0) updateData.clientAddress = data.clientAddress;
-    if (data.validityDays !== void 0) updateData.validityDays = data.validityDays;
-    if (data.paymentTerms !== void 0) updateData.paymentTerms = data.paymentTerms;
+    if (data.clientNif !== void 0) updateData.client_nif = data.clientNif;
+    if (data.clientEmail !== void 0) updateData.client_email = data.clientEmail;
+    if (data.clientPhone !== void 0) updateData.client_phone = data.clientPhone;
+    if (data.clientAddress !== void 0) updateData.client_address = data.clientAddress;
+    if (data.companyBrand !== void 0) updateData.company_brand = data.companyBrand;
+    if (data.validDays !== void 0) updateData.validDays = Number(data.validDays);
+    if (data.validityDays !== void 0) updateData.validDays = Number(data.validityDays);
     if (data.notes !== void 0) updateData.notes = data.notes;
-    if (data.customTotal !== void 0 && data.customTotal !== null) {
-      updateData.customTotal = Number(data.customTotal);
-      updateData.manuallyEdited = true;
+    if (data.templateSnapshot !== void 0) {
+      updateData.template_snapshot = data.templateSnapshot ? JSON.stringify(data.templateSnapshot) : null;
+    }
+    if (data.customTotal !== void 0) {
+      if (data.customTotal === null) {
+        updateData.custom_total = null;
+        updateData.manually_edited = false;
+      } else {
+        updateData.custom_total = Number(data.customTotal);
+        updateData.manually_edited = true;
+      }
     }
     if (data.subtotal !== void 0) updateData.subtotal = Number(data.subtotal);
-    if (data.vatTotal !== void 0) updateData.vatTotal = Number(data.vatTotal);
+    if (data.vatTotal !== void 0) updateData.vat_total = Number(data.vatTotal);
     if (data.total !== void 0) updateData.total = Number(data.total);
     const updated = await p.budgets.update({
       where: { id },
@@ -5860,17 +6543,21 @@ router3.put("/:id", authenticateToken, ensureRole, async (req, res) => {
       await p.budget_items.deleteMany({ where: { budgetId: id } });
       for (let i = 0; i < data.items.length; i++) {
         const item = data.items[i];
-        const quantity = Number(item.quantity || 1);
-        const unitPrice = Number(item.unitPrice || 0);
-        const vatPct = Number(item.vatPct || 21);
-        const subtotal = quantity * unitPrice;
-        const total = subtotal * (1 + vatPct / 100);
+        const quantity = toNumber(item.quantity, 1);
+        const unitPrice = toNumber(
+          item.unitPrice ?? item.price ?? (item.subtotal !== void 0 ? toNumber(item.subtotal, 0) / (quantity || 1) : 0),
+          0
+        );
+        const vatPct = toNumber(item.vatPct, 21);
+        const subtotal = item.subtotal !== void 0 ? toNumber(item.subtotal, quantity * unitPrice) : quantity * unitPrice;
+        const total = item.total !== void 0 ? toNumber(item.total, subtotal * (1 + vatPct / 100)) : subtotal * (1 + vatPct / 100);
         await p.budget_items.create({
           data: {
+            id: randomUUID2(),
             budgetId: id,
             concept: item.concept || item.description || "",
             category: item.category || null,
-            position: item.position ?? i + 1,
+            position: item.position ?? item.order ?? i + 1,
             quantity,
             unitPrice,
             vatPct,
@@ -5883,10 +6570,13 @@ router3.put("/:id", authenticateToken, ensureRole, async (req, res) => {
     }
     const budgetWithItems = await p.budgets.findUnique({
       where: { id },
-      include: { items: { orderBy: { position: "asc" } } }
+      include: {
+        budget_items: { orderBy: { position: "asc" } },
+        budget_email_logs: { orderBy: { createdAt: "desc" } }
+      }
     });
     console.log(`\u2705 Presupuesto ${updated.code} actualizado por ${req.user?.username}`);
-    res.json(budgetWithItems);
+    res.json(normalizeBudget(budgetWithItems));
   } catch (err) {
     console.error("PUT /api/budgets/:id", err);
     res.status(500).json({ error: err.message });
@@ -5895,7 +6585,7 @@ router3.put("/:id", authenticateToken, ensureRole, async (req, res) => {
 router3.post("/:id/send", authenticateToken, ensureRole, async (req, res) => {
   try {
     const { id } = req.params;
-    const p = prisma9;
+    const p = prisma_client_default;
     const budget = await p.budgets.findUnique({ where: { id } });
     if (!budget) return res.status(404).json({ error: "Not found" });
     const hash = generateAcceptanceHash(budget.code, budget.date);
@@ -5909,7 +6599,7 @@ router3.post("/:id/send", authenticateToken, ensureRole, async (req, res) => {
     }
     let emailLog = null;
     try {
-      if (budget.clientEmail) {
+      if (budget.client_email) {
         const smtp = getSMTPConfig();
         const transporter2 = smtp ? nodemailer2.createTransport({ host: smtp.host, port: smtp.port, secure: smtp.port === 465, auth: { user: smtp.user, pass: smtp.pass } }) : null;
         const acceptUrl = `${process.env.FRONTEND_URL || "https://tu-dominio"}/public/budgets/${encodeURIComponent(budget.code)}/accept?t=${encodeURIComponent(hash)}`;
@@ -5925,13 +6615,13 @@ router3.post("/:id/send", authenticateToken, ensureRole, async (req, res) => {
         let response = null;
         if (transporter2) {
           try {
-            response = await transporter2.sendMail({ from: smtp.user, to: budget.clientEmail, subject, html, attachments: pdfRecord ? [{ filename: pdfRecord.filename, path: path2.join(process.cwd(), "uploads", "budgets", pdfRecord.filename) }] : void 0 });
+            response = await transporter2.sendMail({ from: smtp.user, to: budget.client_email, subject, html, attachments: pdfRecord ? [{ filename: pdfRecord.filename, path: path2.join(process.cwd(), "uploads", "budgets", pdfRecord.filename) }] : void 0 });
             sent = true;
           } catch (mailErr) {
             console.warn("Failed sending budget email", mailErr);
           }
         }
-        emailLog = await p.budget_email_logs.create({ data: { budgetId: id, status: sent ? "SENT" : "FAILED", toEmail: budget.clientEmail, subject, response: response ? response : null } });
+        emailLog = await p.budget_email_logs.create({ data: { budgetId: id, status: sent ? "SENT" : "FAILED", toEmail: budget.client_email, subject, response: response ? response : null } });
       }
     } catch (mailErr) {
       console.warn("Error sending email for budget", id, mailErr);
@@ -5945,10 +6635,10 @@ router3.post("/:id/send", authenticateToken, ensureRole, async (req, res) => {
 router3.post("/:id/remind", authenticateToken, ensureRole, async (req, res) => {
   try {
     const { id } = req.params;
-    const p = prisma9;
+    const p = prisma_client_default;
     const budget = await p.budgets.findUnique({ where: { id } });
     if (!budget) return res.status(404).json({ error: "Not found" });
-    if (!budget.clientEmail) return res.status(400).json({ error: "No client email" });
+    if (!budget.client_email) return res.status(400).json({ error: "No client email" });
     if (budget.status !== "SENT" && budget.status !== "DRAFT") {
       return res.status(400).json({ error: "Can only remind SENT or DRAFT budgets" });
     }
@@ -5971,7 +6661,7 @@ router3.post("/:id/remind", authenticateToken, ensureRole, async (req, res) => {
     let response = null;
     if (transporter2) {
       try {
-        response = await transporter2.sendMail({ from: smtp.user, to: budget.clientEmail, subject, html });
+        response = await transporter2.sendMail({ from: smtp.user, to: budget.client_email, subject, html });
         sent = true;
       } catch (mailErr) {
         console.warn("Failed sending reminder email", mailErr);
@@ -5981,7 +6671,7 @@ router3.post("/:id/remind", authenticateToken, ensureRole, async (req, res) => {
       data: {
         budgetId: id,
         status: sent ? "SENT" : "FAILED",
-        toEmail: budget.clientEmail,
+        toEmail: budget.client_email,
         subject,
         response: response ? response : null
       }
@@ -5997,12 +6687,13 @@ router3.get("/export.csv", authenticateToken, ensureRole, async (req, res) => {
     const where = {};
     if (req.query.status) where.status = String(req.query.status);
     if (req.query.series) where.series = String(req.query.series);
-    const p = prisma9;
+    const p = prisma_client_default;
     const items = await p.budgets.findMany({ where, orderBy: { date: "desc" } });
     res.setHeader("Content-Type", "text/csv");
     res.setHeader("Content-Disposition", `attachment; filename="budgets.csv"`);
     res.write("code,date,clientName,clientEmail,series,status,subtotal,vatTotal,total,expiresAt,acceptedAt\n");
-    for (const b of items) {
+    for (const raw of items) {
+      const b = normalizeBudget(raw);
       res.write(`${b.code},${new Date(b.date).toISOString()},"${(b.clientName || "").replace(/"/g, '""')}",${b.clientEmail || ""},${b.series},${b.status},${b.subtotal},${b.vatTotal},${b.total},${b.expiresAt || ""},${b.acceptedAt || ""}
 `);
     }
@@ -6017,7 +6708,7 @@ router3.get("/export.xlsx", authenticateToken, ensureRole, async (req, res) => {
     const where = {};
     if (req.query.status) where.status = String(req.query.status);
     if (req.query.series) where.series = String(req.query.series);
-    const p = prisma9;
+    const p = prisma_client_default;
     const items = await p.budgets.findMany({ where, orderBy: { date: "desc" } });
     const workbook = new ExcelJS.Workbook();
     const sheet = workbook.addWorksheet("Presupuestos");
@@ -6034,7 +6725,8 @@ router3.get("/export.xlsx", authenticateToken, ensureRole, async (req, res) => {
       { header: "expiresAt", key: "expiresAt", width: 20 },
       { header: "acceptedAt", key: "acceptedAt", width: 20 }
     ];
-    items.forEach((b) => {
+    items.forEach((raw) => {
+      const b = normalizeBudget(raw);
       sheet.addRow({
         code: b.code,
         date: new Date(b.date).toISOString(),
@@ -6061,14 +6753,14 @@ router3.get("/export.xlsx", authenticateToken, ensureRole, async (req, res) => {
 var budgets_default = router3;
 
 // server/public-budgets.ts
+init_prisma_client();
 import express4 from "express";
-import { PrismaClient as PrismaClient10 } from "@prisma/client";
 import nodemailer3 from "nodemailer";
 
 // server/logger.ts
 import pino from "pino";
 import pinoHttp from "pino-http";
-import { randomUUID as randomUUID2 } from "crypto";
+import { randomUUID as randomUUID3 } from "crypto";
 import path3 from "path";
 import fs3 from "fs";
 var logsDir = process.env.LOG_DIR || path3.join(process.cwd(), "logs");
@@ -6107,7 +6799,7 @@ var httpLogger = pinoHttp({
     if (existingId && typeof existingId === "string") {
       return existingId;
     }
-    return randomUUID2();
+    return randomUUID3();
   },
   customLogLevel: (req, res, err) => {
     if (res.statusCode >= 500 || err) return "error";
@@ -6195,13 +6887,12 @@ var logger_default = logger;
 // server/public-budgets.ts
 import path4 from "path";
 import fs4 from "fs";
-var prisma10 = new PrismaClient10();
 var router4 = express4.Router();
 router4.get("/:code/accept", async (req, res) => {
   try {
     const { code } = req.params;
     const { t } = req.query;
-    const p = prisma10;
+    const p = prisma_client_default;
     const budget = await p.budgets.findUnique({
       where: { code },
       include: { items: { orderBy: { position: "asc" } } }
@@ -6222,7 +6913,7 @@ router4.post("/:code/accept", async (req, res) => {
     const { t } = req.query;
     const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
     const agent = String(req.headers["user-agent"] || "");
-    const p = prisma10;
+    const p = prisma_client_default;
     const budget = await p.budgets.findUnique({ where: { code } });
     if (!budget) return res.status(404).json({ error: "Presupuesto no encontrado" });
     if (!t) return res.status(400).json({ error: "Token requerido" });
@@ -6442,7 +7133,7 @@ router4.post("/:code/accept", async (req, res) => {
 router4.get("/:id/pdf", async (req, res) => {
   try {
     const { id } = req.params;
-    const p = prisma10;
+    const p = prisma_client_default;
     const budget = await p.budgets.findUnique({
       where: { id },
       include: {
@@ -6467,24 +7158,2960 @@ router4.get("/:id/pdf", async (req, res) => {
 });
 var public_budgets_default = router4;
 
+// server/routes/gestoria-budgets.ts
+import express5 from "express";
+
+// server/services/gestoria-budget-service.ts
+import { PrismaClient as PrismaClient8 } from "@prisma/client";
+
+// server/services/gestoria-budget-config-service.ts
+import { PrismaClient as PrismaClient6, Prisma as Prisma2 } from "@prisma/client";
+var prisma6 = new PrismaClient6();
+var GestoriaBudgetConfigService = class {
+  /**
+   * Obtener todas las configuraciones
+   */
+  async getAllConfigs(filters) {
+    const where = {};
+    if (filters?.tipo) {
+      where.tipo = filters.tipo;
+    }
+    if (filters?.activo !== void 0) {
+      where.activo = filters.activo;
+    }
+    const configs = await prisma6.gestoria_budget_configurations.findMany({
+      where,
+      orderBy: [
+        { activo: "desc" },
+        { fechaCreacion: "desc" }
+      ]
+    });
+    return configs.map(this.mapPrismaToConfig);
+  }
+  /**
+   * Obtener configuración activa por tipo
+   */
+  async getActiveConfig(tipo) {
+    const config = await prisma6.gestoria_budget_configurations.findFirst({
+      where: {
+        tipo,
+        activo: true
+      },
+      orderBy: {
+        fechaCreacion: "desc"
+      }
+    });
+    return config ? this.mapPrismaToConfig(config) : null;
+  }
+  /**
+   * Obtener configuración por ID
+   */
+  async getConfigById(id) {
+    const config = await prisma6.gestoria_budget_configurations.findUnique({
+      where: { id }
+    });
+    return config ? this.mapPrismaToConfig(config) : null;
+  }
+  /**
+   * Crear nueva configuración
+   */
+  async createConfig(input) {
+    this.validateConfigInput(input);
+    if (input.tipo) {
+      await this.deactivatePreviousConfigs(input.tipo);
+    }
+    const config = await prisma6.gestoria_budget_configurations.create({
+      data: {
+        tipo: input.tipo,
+        nombre: input.nombre,
+        activo: true,
+        precioBasePorFactura: new Prisma2.Decimal(input.precioBasePorFactura),
+        precioBasePorNomina: new Prisma2.Decimal(input.precioBasePorNomina),
+        porcentajeRegimenGeneral: new Prisma2.Decimal(input.porcentajeRegimenGeneral),
+        porcentajeModulos: new Prisma2.Decimal(input.porcentajeModulos),
+        porcentajeEDN: new Prisma2.Decimal(input.porcentajeEDN),
+        recargoPeriodoMensual: new Prisma2.Decimal(input.recargoPeriodoMensual),
+        minimoMensual: new Prisma2.Decimal(input.minimoMensual),
+        precioModelo303: new Prisma2.Decimal(input.precioModelo303),
+        precioModelo111: new Prisma2.Decimal(input.precioModelo111),
+        precioModelo115: new Prisma2.Decimal(input.precioModelo115),
+        precioModelo130: new Prisma2.Decimal(input.precioModelo130),
+        precioModelo100: new Prisma2.Decimal(input.precioModelo100),
+        precioModelo349: new Prisma2.Decimal(input.precioModelo349),
+        precioModelo347: new Prisma2.Decimal(input.precioModelo347),
+        precioCertificados: new Prisma2.Decimal(input.precioCertificados),
+        precioCensos: new Prisma2.Decimal(input.precioCensos),
+        precioNotificaciones: new Prisma2.Decimal(input.precioNotificaciones),
+        precioEstadisticas: new Prisma2.Decimal(input.precioEstadisticas),
+        precioAyudas: new Prisma2.Decimal(input.precioAyudas),
+        nombreEmpresa: input.nombreEmpresa,
+        nifEmpresa: input.nifEmpresa,
+        direccionEmpresa: input.direccionEmpresa,
+        telefonoEmpresa: input.telefonoEmpresa,
+        emailEmpresa: input.emailEmpresa,
+        logoPath: input.logoPath || null,
+        colorPrimario: input.colorPrimario || "#1e40af",
+        colorSecundario: input.colorSecundario || "#3b82f6",
+        creadoPor: input.creadoPor
+      }
+    });
+    return this.mapPrismaToConfig(config);
+  }
+  /**
+   * Actualizar configuración existente
+   */
+  async updateConfig(id, input) {
+    const existing = await prisma6.gestoria_budget_configurations.findUnique({
+      where: { id }
+    });
+    if (!existing) {
+      throw new Error("Configuraci\xF3n no encontrada");
+    }
+    this.validateConfigInput(input, true);
+    if (input.activo === true && existing.tipo) {
+      await this.deactivatePreviousConfigs(existing.tipo, id);
+    }
+    const data = {};
+    if (input.nombre !== void 0) data.nombre = input.nombre;
+    if (input.activo !== void 0) data.activo = input.activo;
+    if (input.precioBasePorFactura !== void 0) data.precioBasePorFactura = new Prisma2.Decimal(input.precioBasePorFactura);
+    if (input.precioBasePorNomina !== void 0) data.precioBasePorNomina = new Prisma2.Decimal(input.precioBasePorNomina);
+    if (input.porcentajeRegimenGeneral !== void 0) data.porcentajeRegimenGeneral = new Prisma2.Decimal(input.porcentajeRegimenGeneral);
+    if (input.porcentajeModulos !== void 0) data.porcentajeModulos = new Prisma2.Decimal(input.porcentajeModulos);
+    if (input.porcentajeEDN !== void 0) data.porcentajeEDN = new Prisma2.Decimal(input.porcentajeEDN);
+    if (input.recargoPeriodoMensual !== void 0) data.recargoPeriodoMensual = new Prisma2.Decimal(input.recargoPeriodoMensual);
+    if (input.minimoMensual !== void 0) data.minimoMensual = new Prisma2.Decimal(input.minimoMensual);
+    if (input.precioModelo303 !== void 0) data.precioModelo303 = new Prisma2.Decimal(input.precioModelo303);
+    if (input.precioModelo111 !== void 0) data.precioModelo111 = new Prisma2.Decimal(input.precioModelo111);
+    if (input.precioModelo115 !== void 0) data.precioModelo115 = new Prisma2.Decimal(input.precioModelo115);
+    if (input.precioModelo130 !== void 0) data.precioModelo130 = new Prisma2.Decimal(input.precioModelo130);
+    if (input.precioModelo100 !== void 0) data.precioModelo100 = new Prisma2.Decimal(input.precioModelo100);
+    if (input.precioModelo349 !== void 0) data.precioModelo349 = new Prisma2.Decimal(input.precioModelo349);
+    if (input.precioModelo347 !== void 0) data.precioModelo347 = new Prisma2.Decimal(input.precioModelo347);
+    if (input.precioCertificados !== void 0) data.precioCertificados = new Prisma2.Decimal(input.precioCertificados);
+    if (input.precioCensos !== void 0) data.precioCensos = new Prisma2.Decimal(input.precioCensos);
+    if (input.precioNotificaciones !== void 0) data.precioNotificaciones = new Prisma2.Decimal(input.precioNotificaciones);
+    if (input.precioEstadisticas !== void 0) data.precioEstadisticas = new Prisma2.Decimal(input.precioEstadisticas);
+    if (input.precioAyudas !== void 0) data.precioAyudas = new Prisma2.Decimal(input.precioAyudas);
+    if (input.nombreEmpresa !== void 0) data.nombreEmpresa = input.nombreEmpresa;
+    if (input.nifEmpresa !== void 0) data.nifEmpresa = input.nifEmpresa;
+    if (input.direccionEmpresa !== void 0) data.direccionEmpresa = input.direccionEmpresa;
+    if (input.telefonoEmpresa !== void 0) data.telefonoEmpresa = input.telefonoEmpresa;
+    if (input.emailEmpresa !== void 0) data.emailEmpresa = input.emailEmpresa;
+    if (input.logoPath !== void 0) data.logoPath = input.logoPath;
+    if (input.colorPrimario !== void 0) data.colorPrimario = input.colorPrimario;
+    if (input.colorSecundario !== void 0) data.colorSecundario = input.colorSecundario;
+    const config = await prisma6.gestoria_budget_configurations.update({
+      where: { id },
+      data
+    });
+    return this.mapPrismaToConfig(config);
+  }
+  /**
+   * Eliminar configuración
+   */
+  async deleteConfig(id) {
+    const budgetsCount = await prisma6.gestoria_budgets.count({
+      where: { configId: id }
+    });
+    if (budgetsCount > 0) {
+      throw new Error(`No se puede eliminar la configuraci\xF3n porque tiene ${budgetsCount} presupuesto(s) asociado(s)`);
+    }
+    await prisma6.gestoria_budget_configurations.delete({
+      where: { id }
+    });
+  }
+  /**
+   * Desactivar configuraciones anteriores del mismo tipo
+   */
+  async deactivatePreviousConfigs(tipo, exceptId) {
+    const where = {
+      tipo,
+      activo: true
+    };
+    if (exceptId) {
+      where.NOT = { id: exceptId };
+    }
+    await prisma6.gestoria_budget_configurations.updateMany({
+      where,
+      data: { activo: false }
+    });
+  }
+  /**
+   * Validar input de configuración
+   */
+  validateConfigInput(input, isPartial = false) {
+    const errors = [];
+    if (!isPartial) {
+      if (!input.tipo) errors.push("Tipo de gestor\xEDa requerido");
+      if (!input.nombre) errors.push("Nombre de configuraci\xF3n requerido");
+      if (!input.nombreEmpresa) errors.push("Nombre de empresa requerido");
+      if (!input.nifEmpresa) errors.push("NIF de empresa requerido");
+      if (!input.direccionEmpresa) errors.push("Direcci\xF3n de empresa requerida");
+      if (!input.telefonoEmpresa) errors.push("Tel\xE9fono de empresa requerido");
+      if (!input.emailEmpresa) errors.push("Email de empresa requerido");
+      if (!input.creadoPor) errors.push("Usuario creador requerido");
+    }
+    if (input.precioBasePorFactura !== void 0 && input.precioBasePorFactura < 0) {
+      errors.push("Precio base por factura debe ser mayor o igual a 0");
+    }
+    if (input.precioBasePorNomina !== void 0 && input.precioBasePorNomina < 0) {
+      errors.push("Precio base por n\xF3mina debe ser mayor o igual a 0");
+    }
+    if (input.porcentajeRegimenGeneral !== void 0 && (input.porcentajeRegimenGeneral < 0 || input.porcentajeRegimenGeneral > 100)) {
+      errors.push("Porcentaje de r\xE9gimen general debe estar entre 0 y 100");
+    }
+    if (input.porcentajeModulos !== void 0 && (input.porcentajeModulos < 0 || input.porcentajeModulos > 100)) {
+      errors.push("Porcentaje de m\xF3dulos debe estar entre 0 y 100");
+    }
+    if (input.porcentajeEDN !== void 0 && (input.porcentajeEDN < 0 || input.porcentajeEDN > 100)) {
+      errors.push("Porcentaje de EDN debe estar entre 0 y 100");
+    }
+    if (input.recargoPeriodoMensual !== void 0 && (input.recargoPeriodoMensual < 0 || input.recargoPeriodoMensual > 100)) {
+      errors.push("Recargo per\xEDodo mensual debe estar entre 0 y 100");
+    }
+    if (input.emailEmpresa && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.emailEmpresa)) {
+      errors.push("Email de empresa no v\xE1lido");
+    }
+    if (input.colorPrimario && !/^#[0-9A-Fa-f]{6}$/.test(input.colorPrimario)) {
+      errors.push("Color primario debe ser un valor hexadecimal v\xE1lido (ej: #1e40af)");
+    }
+    if (input.colorSecundario && !/^#[0-9A-Fa-f]{6}$/.test(input.colorSecundario)) {
+      errors.push("Color secundario debe ser un valor hexadecimal v\xE1lido (ej: #3b82f6)");
+    }
+    if (errors.length > 0) {
+      throw new Error(`Errores de validaci\xF3n:
+- ${errors.join("\n- ")}`);
+    }
+  }
+  /**
+   * Mapear de Prisma a interface pública
+   */
+  mapPrismaToConfig(prismaConfig) {
+    return {
+      id: prismaConfig.id,
+      tipo: prismaConfig.tipo,
+      nombre: prismaConfig.nombre,
+      activo: prismaConfig.activo,
+      precioBasePorFactura: Number(prismaConfig.precioBasePorFactura),
+      precioBasePorNomina: Number(prismaConfig.precioBasePorNomina),
+      porcentajeRegimenGeneral: Number(prismaConfig.porcentajeRegimenGeneral),
+      porcentajeModulos: Number(prismaConfig.porcentajeModulos),
+      porcentajeEDN: Number(prismaConfig.porcentajeEDN),
+      recargoPeriodoMensual: Number(prismaConfig.recargoPeriodoMensual),
+      minimoMensual: Number(prismaConfig.minimoMensual),
+      precioModelo303: Number(prismaConfig.precioModelo303),
+      precioModelo111: Number(prismaConfig.precioModelo111),
+      precioModelo115: Number(prismaConfig.precioModelo115),
+      precioModelo130: Number(prismaConfig.precioModelo130),
+      precioModelo100: Number(prismaConfig.precioModelo100),
+      precioModelo349: Number(prismaConfig.precioModelo349),
+      precioModelo347: Number(prismaConfig.precioModelo347),
+      precioCertificados: Number(prismaConfig.precioCertificados),
+      precioCensos: Number(prismaConfig.precioCensos),
+      precioNotificaciones: Number(prismaConfig.precioNotificaciones),
+      precioEstadisticas: Number(prismaConfig.precioEstadisticas),
+      precioAyudas: Number(prismaConfig.precioAyudas),
+      nombreEmpresa: prismaConfig.nombreEmpresa,
+      nifEmpresa: prismaConfig.nifEmpresa,
+      direccionEmpresa: prismaConfig.direccionEmpresa,
+      telefonoEmpresa: prismaConfig.telefonoEmpresa,
+      emailEmpresa: prismaConfig.emailEmpresa,
+      logoPath: prismaConfig.logoPath,
+      colorPrimario: prismaConfig.colorPrimario,
+      colorSecundario: prismaConfig.colorSecundario,
+      fechaCreacion: prismaConfig.fechaCreacion,
+      fechaModificacion: prismaConfig.fechaModificacion,
+      creadoPor: prismaConfig.creadoPor
+    };
+  }
+};
+var gestoriaBudgetConfigService = new GestoriaBudgetConfigService();
+
+// server/services/gestoria-budget-calculation-service.ts
+import { PrismaClient as PrismaClient7 } from "@prisma/client";
+var GestoriaBudgetCalculationService = class {
+  /**
+   * Calcular presupuesto completo
+   */
+  async calculate(input, tipoGestoria) {
+    const config = await gestoriaBudgetConfigService.getActiveConfig(tipoGestoria);
+    if (!config) {
+      throw new Error(`No hay configuraci\xF3n activa para ${tipoGestoria}`);
+    }
+    const totalContabilidad = this.calculateTotalContabilidad(input, config);
+    const totalLaboral = this.calculateTotalLaboral(input, config);
+    const subtotal = totalContabilidad + totalLaboral;
+    const descuentoCalculado = this.calculateDescuento(subtotal, input);
+    const totalFinal = subtotal - descuentoCalculado;
+    const desglose = this.calculateDesglose(input, config);
+    return {
+      totalContabilidad,
+      totalLaboral,
+      subtotal,
+      descuentoCalculado,
+      totalFinal,
+      desglose
+    };
+  }
+  /**
+   * Calcular total de contabilidad
+   * Replica la lógica de CalcularTotalContabilidad() en ASP.NET
+   */
+  calculateTotalContabilidad(input, config) {
+    let total = 0;
+    const baseFacturas = input.facturasMes * config.precioBasePorFactura;
+    total += baseFacturas;
+    let recargoSistema = 0;
+    const facturacion = input.facturacion;
+    switch (input.sistemaTributacion) {
+      case "R\xE9gimen General":
+        recargoSistema = facturacion * config.porcentajeRegimenGeneral / 100;
+        break;
+      case "M\xF3dulos":
+        recargoSistema = facturacion * config.porcentajeModulos / 100;
+        break;
+      case "EDN":
+      case "Otro":
+        recargoSistema = facturacion * config.porcentajeEDN / 100;
+        break;
+    }
+    total += recargoSistema;
+    if (input.periodoDeclaraciones === "Mensual") {
+      const recargoMensual = total * config.recargoPeriodoMensual / 100;
+      const minimoMensual = config.minimoMensual;
+      total += Math.max(recargoMensual, minimoMensual);
+    }
+    if (input.modelo303) total += config.precioModelo303;
+    if (input.modelo111) total += config.precioModelo111;
+    if (input.modelo115) total += config.precioModelo115;
+    if (input.modelo130) total += config.precioModelo130;
+    if (input.modelo100) total += config.precioModelo100;
+    if (input.modelo349) total += config.precioModelo349;
+    if (input.modelo347) total += config.precioModelo347;
+    if (input.solicitudCertificados) total += config.precioCertificados;
+    if (input.censosAEAT) total += config.precioCensos;
+    if (input.recepcionNotificaciones) total += config.precioNotificaciones;
+    if (input.estadisticasINE) total += config.precioEstadisticas;
+    if (input.solicitudAyudas) total += config.precioAyudas;
+    if (input.serviciosAdicionales) {
+      const serviciosMensuales = input.serviciosAdicionales.filter((s) => s.tipoServicio === "MENSUAL" && s.incluido).reduce((sum, s) => sum + s.precio, 0);
+      total += serviciosMensuales;
+    }
+    return Math.round(total * 100) / 100;
+  }
+  /**
+   * Calcular total laboral
+   * Replica la lógica de CalcularTotalLaboral() en ASP.NET
+   */
+  calculateTotalLaboral(input, config) {
+    if (!input.conLaboralSocial || !input.nominasMes || input.nominasMes === 0) {
+      return 0;
+    }
+    const totalLaboral = input.nominasMes * config.precioBasePorNomina;
+    return Math.round(totalLaboral * 100) / 100;
+  }
+  /**
+   * Calcular descuento
+   * Replica la lógica de AplicarDescuento() en ASP.NET
+   */
+  calculateDescuento(subtotal, input) {
+    if (!input.aplicaDescuento || !input.valorDescuento || input.valorDescuento <= 0) {
+      return 0;
+    }
+    let descuento = 0;
+    if (input.tipoDescuento === "PORCENTAJE") {
+      descuento = subtotal * input.valorDescuento / 100;
+    } else if (input.tipoDescuento === "FIJO") {
+      descuento = input.valorDescuento;
+    }
+    descuento = Math.min(descuento, subtotal);
+    return Math.round(descuento * 100) / 100;
+  }
+  /**
+   * Calcular desglose detallado para mostrar en UI
+   */
+  calculateDesglose(input, config) {
+    const baseFacturas = input.facturasMes * config.precioBasePorFactura;
+    const baseNominas = input.conLaboralSocial && input.nominasMes ? input.nominasMes * config.precioBasePorNomina : 0;
+    let recargoSistemaTributacion = 0;
+    const facturacion = input.facturacion;
+    switch (input.sistemaTributacion) {
+      case "R\xE9gimen General":
+        recargoSistemaTributacion = facturacion * config.porcentajeRegimenGeneral / 100;
+        break;
+      case "M\xF3dulos":
+        recargoSistemaTributacion = facturacion * config.porcentajeModulos / 100;
+        break;
+      case "EDN":
+      case "Otro":
+        recargoSistemaTributacion = facturacion * config.porcentajeEDN / 100;
+        break;
+    }
+    let recargoPeriodo = 0;
+    if (input.periodoDeclaraciones === "Mensual") {
+      const baseParaRecargo = baseFacturas + recargoSistemaTributacion;
+      const recargoCalculado = baseParaRecargo * config.recargoPeriodoMensual / 100;
+      recargoPeriodo = Math.max(recargoCalculado, config.minimoMensual);
+    }
+    let serviciosModelos = 0;
+    if (input.modelo303) serviciosModelos += config.precioModelo303;
+    if (input.modelo111) serviciosModelos += config.precioModelo111;
+    if (input.modelo115) serviciosModelos += config.precioModelo115;
+    if (input.modelo130) serviciosModelos += config.precioModelo130;
+    if (input.modelo100) serviciosModelos += config.precioModelo100;
+    if (input.modelo349) serviciosModelos += config.precioModelo349;
+    if (input.modelo347) serviciosModelos += config.precioModelo347;
+    let serviciosAdicionales = 0;
+    if (input.solicitudCertificados) serviciosAdicionales += config.precioCertificados;
+    if (input.censosAEAT) serviciosAdicionales += config.precioCensos;
+    if (input.recepcionNotificaciones) serviciosAdicionales += config.precioNotificaciones;
+    if (input.estadisticasINE) serviciosAdicionales += config.precioEstadisticas;
+    if (input.solicitudAyudas) serviciosAdicionales += config.precioAyudas;
+    let serviciosAdicionalesMensuales = 0;
+    let serviciosAdicionalesPuntuales = 0;
+    if (input.serviciosAdicionales) {
+      serviciosAdicionalesMensuales = input.serviciosAdicionales.filter((s) => s.tipoServicio === "MENSUAL" && s.incluido).reduce((sum, s) => sum + s.precio, 0);
+      serviciosAdicionalesPuntuales = input.serviciosAdicionales.filter((s) => s.tipoServicio === "PUNTUAL" && s.incluido).reduce((sum, s) => sum + s.precio, 0);
+    }
+    return {
+      baseFacturas: Math.round(baseFacturas * 100) / 100,
+      baseNominas: Math.round(baseNominas * 100) / 100,
+      recargoSistemaTributacion: Math.round(recargoSistemaTributacion * 100) / 100,
+      recargoPeriodo: Math.round(recargoPeriodo * 100) / 100,
+      serviciosModelos: Math.round(serviciosModelos * 100) / 100,
+      serviciosAdicionales: Math.round(serviciosAdicionales * 100) / 100,
+      serviciosAdicionalesMensuales: Math.round(serviciosAdicionalesMensuales * 100) / 100,
+      serviciosAdicionalesPuntuales: Math.round(serviciosAdicionalesPuntuales * 100) / 100
+    };
+  }
+  /**
+   * Generar número de presupuesto automático
+   * Formato: PRE-2025-001
+   */
+  async generateBudgetNumber(year) {
+    const currentYear = year || (/* @__PURE__ */ new Date()).getFullYear();
+    const lastBudget = await prisma7.gestoria_budgets.findFirst({
+      where: {
+        numero: {
+          startsWith: `PRE-${currentYear}-`
+        }
+      },
+      orderBy: {
+        numero: "desc"
+      }
+    });
+    let nextNumber = 1;
+    if (lastBudget) {
+      const match = lastBudget.numero.match(/PRE-\d{4}-(\d+)/);
+      if (match) {
+        nextNumber = parseInt(match[1], 10) + 1;
+      }
+    }
+    const paddedNumber = String(nextNumber).padStart(3, "0");
+    return `PRE-${currentYear}-${paddedNumber}`;
+  }
+};
+var gestoriaBudgetCalculationService = new GestoriaBudgetCalculationService();
+var prisma7 = new PrismaClient7();
+
+// server/services/gestoria-budget-service.ts
+var prisma8 = new PrismaClient8();
+var GestoriaBudgetService = class {
+  /**
+   * Crear nuevo presupuesto
+   */
+  async createBudget(input) {
+    this.validateBudgetInput(input);
+    const numero = await gestoriaBudgetCalculationService.generateBudgetNumber();
+    const calculationInput = {
+      facturasMes: input.facturasMes,
+      nominasMes: input.nominasMes,
+      facturacion: input.facturacion,
+      sistemaTributacion: input.sistemaTributacion,
+      periodoDeclaraciones: input.periodoDeclaraciones,
+      modelo303: input.modelo303,
+      modelo111: input.modelo111,
+      modelo115: input.modelo115,
+      modelo130: input.modelo130,
+      modelo100: input.modelo100,
+      modelo349: input.modelo349,
+      modelo347: input.modelo347,
+      solicitudCertificados: input.solicitudCertificados,
+      censosAEAT: input.censosAEAT,
+      recepcionNotificaciones: input.recepcionNotificaciones,
+      estadisticasINE: input.estadisticasINE,
+      solicitudAyudas: input.solicitudAyudas,
+      conLaboralSocial: input.conLaboralSocial,
+      aplicaDescuento: input.aplicaDescuento,
+      tipoDescuento: input.tipoDescuento,
+      valorDescuento: input.valorDescuento,
+      serviciosAdicionales: input.serviciosAdicionales
+    };
+    const calculation = await gestoriaBudgetCalculationService.calculate(
+      calculationInput,
+      input.tipoGestoria
+    );
+    const budget = await prisma8.gestoria_budgets.create({
+      data: {
+        numero,
+        tipoGestoria: input.tipoGestoria,
+        estado: "BORRADOR",
+        // Cambiado de PENDIENTE
+        // Cliente
+        nombreCliente: input.nombreCliente,
+        nifCif: input.nifCif || null,
+        email: input.email,
+        telefono: input.telefono || null,
+        direccion: input.direccion || null,
+        personaContacto: input.personaContacto || null,
+        // Negocio
+        facturacion: input.facturacion,
+        facturasMes: input.facturasMes,
+        nominasMes: input.nominasMes || null,
+        sistemaTributacion: input.sistemaTributacion,
+        periodoDeclaraciones: input.periodoDeclaraciones,
+        // Modelos
+        modelo303: input.modelo303 || false,
+        modelo111: input.modelo111 || false,
+        modelo115: input.modelo115 || false,
+        modelo130: input.modelo130 || false,
+        modelo100: input.modelo100 || false,
+        modelo349: input.modelo349 || false,
+        modelo347: input.modelo347 || false,
+        // Servicios adicionales fijos
+        solicitudCertificados: input.solicitudCertificados || false,
+        censosAEAT: input.censosAEAT || false,
+        recepcionNotificaciones: input.recepcionNotificaciones || false,
+        estadisticasINE: input.estadisticasINE || false,
+        solicitudAyudas: input.solicitudAyudas || false,
+        // Laborales
+        conLaboralSocial: input.conLaboralSocial || false,
+        // Descuentos
+        aplicaDescuento: input.aplicaDescuento || false,
+        tipoDescuento: input.tipoDescuento || null,
+        valorDescuento: input.valorDescuento || null,
+        // Totales
+        totalContabilidad: calculation.totalContabilidad,
+        totalLaboral: calculation.totalLaboral,
+        descuentoCalculado: calculation.descuentoCalculado,
+        totalFinal: calculation.totalFinal,
+        // Metadata
+        creadoPor: input.creadoPor,
+        configId: input.configId,
+        fechaCreacion: /* @__PURE__ */ new Date()
+      }
+    });
+    if (input.serviciosAdicionales && input.serviciosAdicionales.length > 0) {
+      await prisma8.gestoria_budget_additional_services.createMany({
+        data: input.serviciosAdicionales.map((servicio) => ({
+          budgetId: budget.id,
+          nombre: servicio.nombre,
+          precio: servicio.precio,
+          tipoServicio: servicio.tipoServicio,
+          incluido: servicio.incluido
+        }))
+      });
+    }
+    await this.logStatisticsEvent("CREATED", budget.id, budget.tipoGestoria);
+    return budget;
+  }
+  /**
+   * Obtener presupuesto por ID
+   */
+  async getBudgetById(id) {
+    const budget = await prisma8.gestoria_budgets.findUnique({
+      where: { id },
+      include: {
+        serviciosAdicionales: true,
+        configuracion: true
+      }
+    });
+    if (!budget) {
+      throw new Error(`Presupuesto con ID ${id} no encontrado`);
+    }
+    return budget;
+  }
+  /**
+   * Listar presupuestos con filtros
+   */
+  async listBudgets(filters = {}) {
+    const where = {};
+    if (filters.tipoGestoria) {
+      where.tipoGestoria = filters.tipoGestoria;
+    }
+    if (filters.estado) {
+      where.estado = filters.estado;
+    }
+    if (filters.nombreCliente) {
+      where.nombreCliente = {
+        contains: filters.nombreCliente
+      };
+    }
+    if (filters.nifCif) {
+      where.nifCif = {
+        contains: filters.nifCif
+      };
+    }
+    if (filters.email) {
+      where.email = {
+        contains: filters.email
+      };
+    }
+    if (filters.fechaDesde || filters.fechaHasta) {
+      where.fechaCreacion = {};
+      if (filters.fechaDesde) {
+        where.fechaCreacion.gte = filters.fechaDesde;
+      }
+      if (filters.fechaHasta) {
+        where.fechaCreacion.lte = filters.fechaHasta;
+      }
+    }
+    const budgets = await prisma8.gestoria_budgets.findMany({
+      where,
+      include: {
+        serviciosAdicionales: true
+      },
+      orderBy: {
+        fechaCreacion: "desc"
+      }
+    });
+    return budgets;
+  }
+  /**
+   * Actualizar presupuesto
+   */
+  async updateBudget(id, input) {
+    const existing = await this.getBudgetById(id);
+    if (existing.estado === "ACEPTADO" && existing.clienteId) {
+      throw new Error("No se puede editar un presupuesto que ya fue aceptado y convertido a cliente");
+    }
+    const needsRecalculation = this.checkIfNeedsRecalculation(input);
+    let updatedTotals = {};
+    if (needsRecalculation) {
+      const calculationInput = {
+        facturasMes: input.facturasMes ?? existing.facturasMes,
+        nominasMes: input.nominasMes ?? existing.nominasMes ?? void 0,
+        facturacion: input.facturacion ?? Number(existing.facturacion),
+        sistemaTributacion: input.sistemaTributacion ?? existing.sistemaTributacion,
+        periodoDeclaraciones: input.periodoDeclaraciones ?? existing.periodoDeclaraciones,
+        modelo303: input.modelo303 ?? existing.modelo303,
+        modelo111: input.modelo111 ?? existing.modelo111,
+        modelo115: input.modelo115 ?? existing.modelo115,
+        modelo130: input.modelo130 ?? existing.modelo130,
+        modelo100: input.modelo100 ?? existing.modelo100,
+        modelo349: input.modelo349 ?? existing.modelo349,
+        modelo347: input.modelo347 ?? existing.modelo347,
+        solicitudCertificados: input.solicitudCertificados ?? existing.solicitudCertificados,
+        censosAEAT: input.censosAEAT ?? existing.censosAEAT,
+        recepcionNotificaciones: input.recepcionNotificaciones ?? existing.recepcionNotificaciones,
+        estadisticasINE: input.estadisticasINE ?? existing.estadisticasINE,
+        solicitudAyudas: input.solicitudAyudas ?? existing.solicitudAyudas,
+        conLaboralSocial: input.conLaboralSocial ?? existing.conLaboralSocial,
+        aplicaDescuento: input.aplicaDescuento ?? existing.aplicaDescuento,
+        tipoDescuento: input.tipoDescuento ?? existing.tipoDescuento ?? void 0,
+        valorDescuento: input.valorDescuento ?? (existing.valorDescuento ? Number(existing.valorDescuento) : void 0)
+      };
+      const calculation = await gestoriaBudgetCalculationService.calculate(
+        calculationInput,
+        existing.tipoGestoria
+      );
+      updatedTotals = {
+        totalContabilidad: calculation.totalContabilidad,
+        totalLaboral: calculation.totalLaboral,
+        subtotal: calculation.subtotal,
+        descuentoCalculado: calculation.descuentoCalculado,
+        totalFinal: calculation.totalFinal
+      };
+    }
+    const updated = await prisma8.gestoria_budgets.update({
+      where: { id },
+      data: {
+        ...this.buildUpdateData(input),
+        ...updatedTotals,
+        fechaModificacion: /* @__PURE__ */ new Date()
+      },
+      include: {
+        serviciosAdicionales: true
+      }
+    });
+    if (input.serviciosAdicionales) {
+      await prisma8.gestoria_budget_additional_services.deleteMany({
+        where: { budgetId: id }
+      });
+      if (input.serviciosAdicionales.length > 0) {
+        await prisma8.gestoria_budget_additional_services.createMany({
+          data: input.serviciosAdicionales.map((servicio) => ({
+            budgetId: id,
+            nombre: servicio.nombre,
+            precio: servicio.precio,
+            tipoServicio: servicio.tipoServicio
+          }))
+        });
+      }
+    }
+    return updated;
+  }
+  /**
+   * Marcar presupuesto como aceptado
+   */
+  async acceptBudget(id) {
+    const budget = await this.getBudgetById(id);
+    if (budget.estado !== "BORRADOR") {
+      throw new Error(`El presupuesto debe estar en estado PENDIENTE para ser aceptado`);
+    }
+    const updated = await prisma8.gestoria_budgets.update({
+      where: { id },
+      data: {
+        estado: "ACEPTADO",
+        fechaAceptacion: /* @__PURE__ */ new Date()
+      }
+    });
+    await this.logStatisticsEvent("ACCEPTED", id, budget.tipoGestoria);
+    return updated;
+  }
+  /**
+   * Marcar presupuesto como rechazado
+   */
+  async rejectBudget(id, motivoRechazo) {
+    const budget = await this.getBudgetById(id);
+    if (budget.estado !== "BORRADOR") {
+      throw new Error(`El presupuesto debe estar en estado PENDIENTE para ser rechazado`);
+    }
+    const updated = await prisma8.gestoria_budgets.update({
+      where: { id },
+      data: {
+        estado: "RECHAZADO",
+        fechaRechazo: /* @__PURE__ */ new Date(),
+        motivoRechazo: motivoRechazo || null
+      }
+    });
+    await this.logStatisticsEvent("REJECTED", id, budget.tipoGestoria);
+    return updated;
+  }
+  /**
+   * Eliminar presupuesto
+   */
+  async deleteBudget(id) {
+    const budget = await this.getBudgetById(id);
+    if (budget.estado === "ACEPTADO" && budget.clienteId) {
+      throw new Error("No se puede eliminar un presupuesto que ya fue convertido a cliente");
+    }
+    await prisma8.gestoria_budget_additional_services.deleteMany({
+      where: { budgetId: id }
+    });
+    await prisma8.gestoria_budget_statistics_events.deleteMany({
+      where: { budgetId: id }
+    });
+    await prisma8.gestoria_budgets.delete({
+      where: { id }
+    });
+  }
+  /**
+   * Obtener estadísticas de presupuestos
+   */
+  async getStatistics(tipo, fechaDesde, fechaHasta) {
+    const where = {};
+    if (tipo) {
+      where.tipoGestoria = tipo;
+    }
+    if (fechaDesde || fechaHasta) {
+      where.fechaCreacion = {};
+      if (fechaDesde) where.fechaCreacion.gte = fechaDesde;
+      if (fechaHasta) where.fechaCreacion.lte = fechaHasta;
+    }
+    const total = await prisma8.gestoria_budgets.count({ where });
+    const porEstado = await prisma8.gestoria_budgets.groupBy({
+      by: ["estado"],
+      where,
+      _count: true
+    });
+    const aggregates = await prisma8.gestoria_budgets.aggregate({
+      where,
+      _sum: {
+        totalFinal: true
+      },
+      _avg: {
+        totalFinal: true
+      }
+    });
+    const pendientes = porEstado.find((e) => e.estado === "BORRADOR")?._count || 0;
+    const aceptados = porEstado.find((e) => e.estado === "ACEPTADO")?._count || 0;
+    const rechazados = porEstado.find((e) => e.estado === "RECHAZADO")?._count || 0;
+    const tasaConversion = total > 0 ? aceptados / total * 100 : 0;
+    return {
+      total,
+      pendientes,
+      aceptados,
+      rechazados,
+      tasaConversion: Math.round(tasaConversion * 100) / 100,
+      valorTotal: aggregates._sum.totalFinal || 0,
+      valorPromedio: aggregates._avg.totalFinal || 0,
+      porEstado: porEstado.map((e) => ({
+        estado: e.estado,
+        cantidad: e._count
+      }))
+    };
+  }
+  // ===== MÉTODOS PRIVADOS =====
+  validateBudgetInput(input) {
+    if (!input.nombreCliente || input.nombreCliente.trim().length === 0) {
+      throw new Error("El nombre completo es obligatorio");
+    }
+    if (input.facturacion < 0) {
+      throw new Error("La facturaci\xF3n no puede ser negativa");
+    }
+    if (input.facturasMes < 0) {
+      throw new Error("El n\xFAmero de facturas no puede ser negativo");
+    }
+    if (input.nominasMes && input.nominasMes < 0) {
+      throw new Error("El n\xFAmero de n\xF3minas no puede ser negativo");
+    }
+    if (input.email && !this.isValidEmail(input.email)) {
+      throw new Error("El formato del email no es v\xE1lido");
+    }
+  }
+  isValidEmail(email) {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return emailRegex.test(email);
+  }
+  calculateValidityDate() {
+    const date = /* @__PURE__ */ new Date();
+    date.setDate(date.getDate() + 30);
+    return date;
+  }
+  checkIfNeedsRecalculation(input) {
+    const calculationFields = [
+      "facturasMes",
+      "nominasMes",
+      "facturacion",
+      "sistemaTributacion",
+      "periodoDeclaraciones",
+      "modelo303",
+      "modelo111",
+      "modelo115",
+      "modelo130",
+      "modelo100",
+      "modelo349",
+      "modelo347",
+      "solicitudCertificados",
+      "censosAEAT",
+      "recepcionNotificaciones",
+      "estadisticasINE",
+      "solicitudAyudas",
+      "conLaboralSocial",
+      "aplicaDescuento",
+      "tipoDescuento",
+      "valorDescuento",
+      "serviciosAdicionales"
+    ];
+    return calculationFields.some((field) => field in input);
+  }
+  buildUpdateData(input) {
+    const data = {};
+    const simpleFields = [
+      "nombreCompleto",
+      "cifNif",
+      "email",
+      "telefono",
+      "direccion",
+      "codigoPostal",
+      "ciudad",
+      "provincia",
+      "actividadEmpresarial",
+      "facturacion",
+      "facturasMes",
+      "nominasMes",
+      "sistemaTributacion",
+      "periodoDeclaraciones",
+      "modelo303",
+      "modelo111",
+      "modelo115",
+      "modelo130",
+      "modelo100",
+      "modelo349",
+      "modelo347",
+      "solicitudCertificados",
+      "censosAEAT",
+      "recepcionNotificaciones",
+      "estadisticasINE",
+      "solicitudAyudas",
+      "conLaboralSocial",
+      "aplicaDescuento",
+      "tipoDescuento",
+      "valorDescuento",
+      "motivoDescuento",
+      "observaciones",
+      "estado",
+      "motivoRechazo"
+    ];
+    for (const field of simpleFields) {
+      if (field in input) {
+        data[field] = input[field];
+      }
+    }
+    return data;
+  }
+  async logStatisticsEvent(evento, budgetId, tipoGestoria, userId) {
+    await prisma8.gestoria_budget_statistics_events.create({
+      data: {
+        budgetId,
+        tipoGestoria,
+        evento,
+        fecha: /* @__PURE__ */ new Date()
+      }
+    });
+  }
+};
+var gestoriaBudgetService = new GestoriaBudgetService();
+
+// server/services/gestoria-budget-email-service.ts
+import nodemailer4 from "nodemailer";
+import { PrismaClient as PrismaClient9 } from "@prisma/client";
+
+// server/services/gestoria-budget-pdf-service.ts
+import puppeteer2 from "puppeteer";
+var GestoriaBudgetPDFService = class {
+  /**
+   * Generar PDF del presupuesto
+   */
+  async generatePDF(data) {
+    const config = await gestoriaBudgetConfigService.getActiveConfig(data.tipo);
+    if (!config) {
+      throw new Error(`No hay configuraci\xF3n activa para ${data.tipo}`);
+    }
+    const html = this.generateHTML(data, config);
+    const browser = await puppeteer2.launch({
+      headless: true,
+      args: ["--no-sandbox", "--disable-setuid-sandbox"]
+    });
+    try {
+      const page = await browser.newPage();
+      await page.setContent(html, {
+        waitUntil: "networkidle0"
+      });
+      const pdf = await page.pdf({
+        format: "A4",
+        printBackground: true,
+        margin: {
+          top: "0px",
+          right: "0px",
+          bottom: "0px",
+          left: "0px"
+        }
+      });
+      return Buffer.from(pdf);
+    } finally {
+      await browser.close();
+    }
+  }
+  /**
+   * Generar HTML completo del PDF
+   */
+  generateHTML(data, config) {
+    return `
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Presupuesto ${data.numero}</title>
+  <style>
+    ${this.getStyles(config)}
+  </style>
+</head>
+<body>
+  ${this.generateCoverPage(data, config)}
+  ${this.generateServicesPage(data, config)}
+  ${this.generateSummaryPage(data, config)}
+</body>
+</html>
+    `;
+  }
+  /**
+   * Estilos CSS del PDF
+   */
+  getStyles(config) {
+    const primaryColor = config.colorPrimario || "#2563eb";
+    const secondaryColor = config.colorSecundario || "#1e40af";
+    return `
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      
+      body {
+        font-family: 'Arial', 'Helvetica', sans-serif;
+        font-size: 10pt;
+        line-height: 1.6;
+        color: #333;
+      }
+      
+      .page {
+        width: 210mm;
+        min-height: 297mm;
+        padding: 20mm;
+        background: white;
+        page-break-after: always;
+        position: relative;
+      }
+      
+      .page:last-child {
+        page-break-after: auto;
+      }
+      
+      /* PORTADA */
+      .cover-page {
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        background: linear-gradient(135deg, ${primaryColor} 0%, ${secondaryColor} 100%);
+        color: white;
+      }
+      
+      .cover-header {
+        text-align: center;
+        padding-top: 40mm;
+      }
+      
+      .cover-logo {
+        font-size: 48pt;
+        font-weight: bold;
+        margin-bottom: 10mm;
+        text-transform: uppercase;
+        letter-spacing: 3px;
+      }
+      
+      .cover-title {
+        font-size: 36pt;
+        font-weight: bold;
+        margin-bottom: 5mm;
+      }
+      
+      .cover-subtitle {
+        font-size: 18pt;
+        opacity: 0.9;
+        margin-bottom: 20mm;
+      }
+      
+      .cover-info {
+        background: rgba(255, 255, 255, 0.1);
+        padding: 15mm;
+        border-radius: 5px;
+        backdrop-filter: blur(10px);
+      }
+      
+      .cover-info-row {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 8px;
+        font-size: 12pt;
+      }
+      
+      .cover-info-label {
+        font-weight: bold;
+      }
+      
+      .cover-footer {
+        text-align: center;
+        padding-bottom: 10mm;
+        opacity: 0.8;
+      }
+      
+      /* CABECERA DE P\xC1GINAS */
+      .page-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding-bottom: 10mm;
+        margin-bottom: 10mm;
+        border-bottom: 3px solid ${primaryColor};
+      }
+      
+      .header-left {
+        flex: 1;
+      }
+      
+      .header-company {
+        font-size: 20pt;
+        font-weight: bold;
+        color: ${primaryColor};
+        margin-bottom: 2mm;
+      }
+      
+      .header-contact {
+        font-size: 9pt;
+        color: #666;
+      }
+      
+      .header-right {
+        text-align: right;
+      }
+      
+      .header-budget-number {
+        font-size: 14pt;
+        font-weight: bold;
+        color: ${primaryColor};
+      }
+      
+      .header-date {
+        font-size: 9pt;
+        color: #666;
+      }
+      
+      /* CLIENTE */
+      .client-info {
+        background: #f8f9fa;
+        padding: 10mm;
+        border-radius: 5px;
+        margin-bottom: 10mm;
+      }
+      
+      .client-title {
+        font-size: 14pt;
+        font-weight: bold;
+        color: ${primaryColor};
+        margin-bottom: 5mm;
+      }
+      
+      .client-row {
+        display: flex;
+        margin-bottom: 3mm;
+      }
+      
+      .client-label {
+        font-weight: bold;
+        width: 40mm;
+        color: #666;
+      }
+      
+      .client-value {
+        flex: 1;
+      }
+      
+      /* TABLA DE SERVICIOS */
+      .services-section {
+        margin-bottom: 10mm;
+      }
+      
+      .section-title {
+        font-size: 14pt;
+        font-weight: bold;
+        color: ${primaryColor};
+        margin-bottom: 5mm;
+        padding-bottom: 2mm;
+        border-bottom: 2px solid ${primaryColor};
+      }
+      
+      .services-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-bottom: 5mm;
+      }
+      
+      .services-table th {
+        background: ${primaryColor};
+        color: white;
+        padding: 3mm;
+        text-align: left;
+        font-weight: bold;
+      }
+      
+      .services-table td {
+        padding: 2.5mm 3mm;
+        border-bottom: 1px solid #e5e7eb;
+      }
+      
+      .services-table tr:hover {
+        background: #f8f9fa;
+      }
+      
+      .text-right {
+        text-align: right;
+      }
+      
+      .text-center {
+        text-align: center;
+      }
+      
+      .subtotal-row {
+        background: #f8f9fa;
+        font-weight: bold;
+      }
+      
+      /* TOTALES */
+      .totals-section {
+        margin-top: 10mm;
+        display: flex;
+        justify-content: flex-end;
+      }
+      
+      .totals-box {
+        width: 70mm;
+        background: #f8f9fa;
+        padding: 5mm;
+        border-radius: 5px;
+      }
+      
+      .total-row {
+        display: flex;
+        justify-content: space-between;
+        padding: 2mm 0;
+      }
+      
+      .total-label {
+        font-weight: bold;
+        color: #666;
+      }
+      
+      .total-value {
+        font-weight: bold;
+      }
+      
+      .total-discount {
+        color: #dc2626;
+      }
+      
+      .total-final-row {
+        border-top: 2px solid ${primaryColor};
+        margin-top: 2mm;
+        padding-top: 3mm;
+        font-size: 14pt;
+      }
+      
+      .total-final-value {
+        color: ${primaryColor};
+        font-size: 18pt;
+      }
+      
+      /* OBSERVACIONES */
+      .observations-section {
+        margin-top: 10mm;
+        padding: 5mm;
+        background: #fffbeb;
+        border-left: 4px solid #f59e0b;
+        border-radius: 3px;
+      }
+      
+      .observations-title {
+        font-weight: bold;
+        color: #f59e0b;
+        margin-bottom: 2mm;
+      }
+      
+      /* T\xC9RMINOS Y CONDICIONES */
+      .terms-section {
+        margin-top: 10mm;
+        padding: 5mm;
+        background: #f8f9fa;
+        border-radius: 5px;
+        font-size: 9pt;
+      }
+      
+      .terms-title {
+        font-size: 12pt;
+        font-weight: bold;
+        color: ${primaryColor};
+        margin-bottom: 3mm;
+      }
+      
+      .terms-list {
+        list-style-position: inside;
+        line-height: 1.8;
+      }
+      
+      .terms-list li {
+        margin-bottom: 2mm;
+      }
+      
+      /* PIE DE P\xC1GINA */
+      .page-footer {
+        position: absolute;
+        bottom: 10mm;
+        left: 20mm;
+        right: 20mm;
+        text-align: center;
+        font-size: 8pt;
+        color: #666;
+        padding-top: 5mm;
+        border-top: 1px solid #e5e7eb;
+      }
+      
+      .badge {
+        display: inline-block;
+        padding: 2mm 4mm;
+        background: ${primaryColor};
+        color: white;
+        border-radius: 3px;
+        font-size: 9pt;
+        font-weight: bold;
+      }
+      
+      .highlight {
+        background: #fef3c7;
+        padding: 1mm 2mm;
+        border-radius: 2px;
+      }
+    `;
+  }
+  /**
+   * Generar página de portada
+   */
+  generateCoverPage(data, config) {
+    const companyName = data.tipo === "OFICIAL" ? config.nombreEmpresaOficial : config.nombreEmpresaOnline;
+    return `
+    <div class="page cover-page">
+      <div class="cover-header">
+        <div class="cover-logo">${companyName}</div>
+        <div class="cover-title">PRESUPUESTO</div>
+        <div class="cover-subtitle">N\xBA ${data.numero}</div>
+      </div>
+      
+      <div class="cover-info">
+        <div class="cover-info-row">
+          <span class="cover-info-label">Cliente:</span>
+          <span>${data.nombreCompleto}</span>
+        </div>
+        ${data.cifNif ? `
+        <div class="cover-info-row">
+          <span class="cover-info-label">CIF/NIF:</span>
+          <span>${data.cifNif}</span>
+        </div>
+        ` : ""}
+        <div class="cover-info-row">
+          <span class="cover-info-label">Fecha:</span>
+          <span>${this.formatDate(data.fecha)}</span>
+        </div>
+        <div class="cover-info-row">
+          <span class="cover-info-label">V\xE1lido hasta:</span>
+          <span>${this.formatDate(data.fechaValidez)}</span>
+        </div>
+        <div class="cover-info-row" style="margin-top: 5mm; font-size: 16pt;">
+          <span class="cover-info-label">Importe Total:</span>
+          <span style="font-weight: bold;">${this.formatCurrency(data.totalFinal)}</span>
+        </div>
+      </div>
+      
+      <div class="cover-footer">
+        <p>${config.direccionEmpresa || ""}</p>
+        <p>${config.emailEmpresa || ""} \u2022 ${config.telefonoEmpresa || ""}</p>
+      </div>
+    </div>
+    `;
+  }
+  /**
+   * Generar página de servicios
+   */
+  generateServicesPage(data, config) {
+    const companyName = data.tipo === "OFICIAL" ? config.nombreEmpresaOficial : config.nombreEmpresaOnline;
+    return `
+    <div class="page">
+      ${this.generatePageHeader(data, config, companyName)}
+      
+      ${this.generateClientInfo(data)}
+      
+      <!-- SERVICIOS DE CONTABILIDAD -->
+      ${data.serviciosContabilidad.length > 0 ? `
+      <div class="services-section">
+        <h2 class="section-title">\u{1F4CA} Servicios de Contabilidad</h2>
+        <table class="services-table">
+          <thead>
+            <tr>
+              <th style="width: 50%;">Concepto</th>
+              <th style="width: 15%;" class="text-center">Cantidad</th>
+              <th style="width: 17.5%;" class="text-right">Precio Unit.</th>
+              <th style="width: 17.5%;" class="text-right">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${data.serviciosContabilidad.map((s) => `
+              <tr>
+                <td>${s.concepto}</td>
+                <td class="text-center">${s.cantidad || "-"}</td>
+                <td class="text-right">${this.formatCurrency(s.precio)}</td>
+                <td class="text-right">${this.formatCurrency(s.total)}</td>
+              </tr>
+            `).join("")}
+            <tr class="subtotal-row">
+              <td colspan="3" class="text-right">Subtotal Contabilidad:</td>
+              <td class="text-right">${this.formatCurrency(data.totalContabilidad)}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      ` : ""}
+      
+      <!-- SERVICIOS LABORALES -->
+      ${data.serviciosLaborales.length > 0 ? `
+      <div class="services-section">
+        <h2 class="section-title">\u{1F465} Servicios Laborales</h2>
+        <table class="services-table">
+          <thead>
+            <tr>
+              <th style="width: 50%;">Concepto</th>
+              <th style="width: 15%;" class="text-center">Cantidad</th>
+              <th style="width: 17.5%;" class="text-right">Precio Unit.</th>
+              <th style="width: 17.5%;" class="text-right">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${data.serviciosLaborales.map((s) => `
+              <tr>
+                <td>${s.concepto}</td>
+                <td class="text-center">${s.cantidad || "-"}</td>
+                <td class="text-right">${this.formatCurrency(s.precio)}</td>
+                <td class="text-right">${this.formatCurrency(s.total)}</td>
+              </tr>
+            `).join("")}
+            <tr class="subtotal-row">
+              <td colspan="3" class="text-right">Subtotal Laboral:</td>
+              <td class="text-right">${this.formatCurrency(data.totalLaboral)}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      ` : ""}
+      
+      <!-- SERVICIOS ADICIONALES -->
+      ${data.serviciosAdicionales.length > 0 ? `
+      <div class="services-section">
+        <h2 class="section-title">\u2B50 Servicios Adicionales</h2>
+        <table class="services-table">
+          <thead>
+            <tr>
+              <th style="width: 60%;">Concepto</th>
+              <th style="width: 20%;" class="text-center">Tipo</th>
+              <th style="width: 20%;" class="text-right">Precio</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${data.serviciosAdicionales.map((s) => `
+              <tr>
+                <td>${s.nombre}</td>
+                <td class="text-center">
+                  <span class="badge">${s.tipoServicio === "MENSUAL" ? "Mensual" : "Puntual"}</span>
+                </td>
+                <td class="text-right">${this.formatCurrency(s.precio)}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+      ` : ""}
+      
+      ${this.generatePageFooter(config)}
+    </div>
+    `;
+  }
+  /**
+   * Generar página de resumen y términos
+   */
+  generateSummaryPage(data, config) {
+    const companyName = data.tipo === "OFICIAL" ? config.nombreEmpresaOficial : config.nombreEmpresaOnline;
+    return `
+    <div class="page">
+      ${this.generatePageHeader(data, config, companyName)}
+      
+      <!-- TOTALES -->
+      <div class="totals-section">
+        <div class="totals-box">
+          ${data.totalContabilidad > 0 ? `
+          <div class="total-row">
+            <span class="total-label">Contabilidad:</span>
+            <span class="total-value">${this.formatCurrency(data.totalContabilidad)}</span>
+          </div>
+          ` : ""}
+          
+          ${data.totalLaboral > 0 ? `
+          <div class="total-row">
+            <span class="total-label">Laboral:</span>
+            <span class="total-value">${this.formatCurrency(data.totalLaboral)}</span>
+          </div>
+          ` : ""}
+          
+          <div class="total-row">
+            <span class="total-label">Subtotal:</span>
+            <span class="total-value">${this.formatCurrency(data.subtotal)}</span>
+          </div>
+          
+          ${data.aplicaDescuento && data.descuentoCalculado > 0 ? `
+          <div class="total-row">
+            <span class="total-label">Descuento ${data.tipoDescuento === "PORCENTAJE" ? `(${data.valorDescuento}%)` : ""}:</span>
+            <span class="total-value total-discount">-${this.formatCurrency(data.descuentoCalculado)}</span>
+          </div>
+          ` : ""}
+          
+          <div class="total-row total-final-row">
+            <span class="total-label">TOTAL:</span>
+            <span class="total-value total-final-value">${this.formatCurrency(data.totalFinal)}</span>
+          </div>
+        </div>
+      </div>
+      
+      ${data.motivoDescuento ? `
+      <div class="observations-section">
+        <div class="observations-title">\u{1F4A1} Descuento Aplicado:</div>
+        <div>${data.motivoDescuento}</div>
+      </div>
+      ` : ""}
+      
+      ${data.observaciones ? `
+      <div class="observations-section" style="margin-top: 5mm;">
+        <div class="observations-title">\u{1F4DD} Observaciones:</div>
+        <div>${data.observaciones}</div>
+      </div>
+      ` : ""}
+      
+      <!-- T\xC9RMINOS Y CONDICIONES -->
+      <div class="terms-section">
+        <h2 class="terms-title">T\xE9rminos y Condiciones</h2>
+        <ol class="terms-list">
+          <li><strong>Validez del presupuesto:</strong> Este presupuesto tiene validez hasta el ${this.formatDate(data.fechaValidez)}.</li>
+          <li><strong>Servicios mensuales:</strong> Los servicios mensuales se facturar\xE1n de forma recurrente cada mes.</li>
+          <li><strong>Servicios puntuales:</strong> Los servicios puntuales se facturar\xE1n \xFAnicamente cuando se realicen.</li>
+          <li><strong>Forma de pago:</strong> El pago se realizar\xE1 mediante domiciliaci\xF3n bancaria o transferencia seg\xFAn se acuerde.</li>
+          <li><strong>Modificaci\xF3n de servicios:</strong> Cualquier modificaci\xF3n de los servicios contratados deber\xE1 ser comunicada con un m\xEDnimo de 15 d\xEDas de antelaci\xF3n.</li>
+          <li><strong>Documentaci\xF3n:</strong> El cliente se compromete a facilitar toda la documentaci\xF3n necesaria en los plazos establecidos.</li>
+          <li><strong>IVA:</strong> Los precios mostrados no incluyen IVA (21% seg\xFAn legislaci\xF3n vigente).</li>
+          <li><strong>Aceptaci\xF3n:</strong> La aceptaci\xF3n de este presupuesto implica la aceptaci\xF3n de estos t\xE9rminos y condiciones.</li>
+        </ol>
+      </div>
+      
+      ${this.generatePageFooter(config)}
+    </div>
+    `;
+  }
+  /**
+   * Generar cabecera de página (excepto portada)
+   */
+  generatePageHeader(data, config, companyName) {
+    return `
+    <div class="page-header">
+      <div class="header-left">
+        <div class="header-company">${companyName}</div>
+        <div class="header-contact">
+          ${config.emailEmpresa || ""} \u2022 ${config.telefonoEmpresa || ""}
+        </div>
+      </div>
+      <div class="header-right">
+        <div class="header-budget-number">Presupuesto ${data.numero}</div>
+        <div class="header-date">${this.formatDate(data.fecha)}</div>
+      </div>
+    </div>
+    `;
+  }
+  /**
+   * Generar información del cliente
+   */
+  generateClientInfo(data) {
+    return `
+    <div class="client-info">
+      <h2 class="client-title">Datos del Cliente</h2>
+      <div class="client-row">
+        <span class="client-label">Nombre/Raz\xF3n Social:</span>
+        <span class="client-value">${data.nombreCompleto}</span>
+      </div>
+      ${data.cifNif ? `
+      <div class="client-row">
+        <span class="client-label">CIF/NIF:</span>
+        <span class="client-value">${data.cifNif}</span>
+      </div>
+      ` : ""}
+      ${data.email ? `
+      <div class="client-row">
+        <span class="client-label">Email:</span>
+        <span class="client-value">${data.email}</span>
+      </div>
+      ` : ""}
+      ${data.telefono ? `
+      <div class="client-row">
+        <span class="client-label">Tel\xE9fono:</span>
+        <span class="client-value">${data.telefono}</span>
+      </div>
+      ` : ""}
+      ${data.direccion ? `
+      <div class="client-row">
+        <span class="client-label">Direcci\xF3n:</span>
+        <span class="client-value">${data.direccion}${data.codigoPostal ? `, ${data.codigoPostal}` : ""}${data.ciudad ? `, ${data.ciudad}` : ""}${data.provincia ? ` (${data.provincia})` : ""}</span>
+      </div>
+      ` : ""}
+      ${data.actividadEmpresarial ? `
+      <div class="client-row">
+        <span class="client-label">Actividad:</span>
+        <span class="client-value">${data.actividadEmpresarial}</span>
+      </div>
+      ` : ""}
+    </div>
+    `;
+  }
+  /**
+   * Generar pie de página
+   */
+  generatePageFooter(config) {
+    return `
+    <div class="page-footer">
+      <p>${config.direccionEmpresa || ""}</p>
+      <p>${config.emailEmpresa || ""} \u2022 ${config.telefonoEmpresa || ""}</p>
+      <p style="margin-top: 2mm; font-size: 7pt;">
+        Este presupuesto ha sido generado de forma autom\xE1tica. Para cualquier consulta, contacte con nosotros.
+      </p>
+    </div>
+    `;
+  }
+  // ===== UTILIDADES =====
+  formatDate(date) {
+    return new Date(date).toLocaleDateString("es-ES", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric"
+    });
+  }
+  formatCurrency(amount) {
+    return new Intl.NumberFormat("es-ES", {
+      style: "currency",
+      currency: "EUR"
+    }).format(amount);
+  }
+};
+var gestoriaBudgetPDFService = new GestoriaBudgetPDFService();
+
+// server/services/gestoria-budget-email-service.ts
+var prisma9 = new PrismaClient9();
+var GestoriaBudgetEmailService = class {
+  constructor() {
+    this.transporter = null;
+  }
+  /**
+   * Inicializar transporter de nodemailer
+   */
+  async getTransporter() {
+    if (this.transporter) {
+      return this.transporter;
+    }
+    this.transporter = nodemailer4.createTransport({
+      host: process.env.SMTP_HOST || "smtp.gmail.com",
+      port: parseInt(process.env.SMTP_PORT || "587"),
+      secure: process.env.SMTP_SECURE === "true",
+      auth: {
+        user: process.env.SMTP_USER,
+        pass: process.env.SMTP_PASS
+      }
+    });
+    return this.transporter;
+  }
+  /**
+   * Enviar presupuesto por email
+   */
+  async sendBudgetEmail(budgetId, options = {}) {
+    const budget = await prisma9.gestoria_budgets.findUnique({
+      where: { id: budgetId },
+      include: {
+        serviciosAdicionales: true
+      }
+    });
+    if (!budget) {
+      throw new Error(`Presupuesto con ID ${budgetId} no encontrado`);
+    }
+    const config = await gestoriaBudgetConfigService.getActiveConfig(budget.tipoGestoria);
+    if (!config) {
+      throw new Error(`No hay configuraci\xF3n activa para ${budget.tipoGestoria}`);
+    }
+    const pdfData = {
+      numero: budget.numero,
+      fecha: budget.fechaCreacion,
+      fechaValidez: new Date(budget.fechaCreacion.getTime() + 30 * 24 * 60 * 60 * 1e3),
+      tipo: budget.tipoGestoria,
+      nombreCompleto: budget.nombreCliente,
+      cifNif: budget.nifCif || void 0,
+      email: budget.email || void 0,
+      telefono: budget.telefono || void 0,
+      direccion: budget.direccion || void 0,
+      codigoPostal: budget.personaContacto || void 0,
+      ciudad: budget.direccion || void 0,
+      provincia: budget.direccion || void 0,
+      actividadEmpresarial: budget.sistemaTributacion || void 0,
+      facturacion: Number(budget.facturacion),
+      facturasMes: budget.facturasMes,
+      nominasMes: budget.nominasMes || void 0,
+      sistemaTributacion: budget.sistemaTributacion,
+      periodoDeclaraciones: budget.periodoDeclaraciones,
+      serviciosContabilidad: this.buildServicesForPDF(budget, config, "contabilidad"),
+      serviciosLaborales: this.buildServicesForPDF(budget, config, "laboral"),
+      serviciosAdicionales: budget.serviciosAdicionales?.map((s) => ({
+        nombre: s.nombre,
+        precio: Number(s.precio),
+        tipoServicio: s.tipoServicio
+      })) || [],
+      totalContabilidad: Number(budget.totalContabilidad),
+      totalLaboral: Number(budget.totalLaboral),
+      subtotal: Number(budget.totalContabilidad) + Number(budget.totalLaboral),
+      descuentoCalculado: Number(budget.descuentoCalculado),
+      totalFinal: Number(budget.totalFinal),
+      aplicaDescuento: budget.aplicaDescuento,
+      tipoDescuento: budget.tipoDescuento || void 0,
+      valorDescuento: Number(budget.valorDescuento) || void 0,
+      motivoDescuento: budget.tipoDescuento || void 0,
+      observaciones: budget.direccion || void 0
+    };
+    const pdfBuffer = await gestoriaBudgetPDFService.generatePDF(pdfData);
+    const companyName = budget.tipoGestoria === "OFICIAL" ? config.nombreEmpresa : config.nombreEmpresa;
+    const subject = options.subject || `Presupuesto ${budget.numero} - ${companyName}`;
+    const htmlBody = this.buildEmailHTML(budget, config, options.customMessage);
+    const transporter2 = await this.getTransporter();
+    const mailOptions = {
+      from: `${companyName} <${process.env.SMTP_USER}>`,
+      to: options.to,
+      cc: options.cc,
+      subject,
+      html: htmlBody,
+      attachments: [
+        {
+          filename: `Presupuesto_${budget.numero}.pdf`,
+          content: pdfBuffer,
+          contentType: "application/pdf"
+        }
+      ]
+    };
+    await transporter2.sendMail(mailOptions);
+    await this.logEmailSend(budgetId, options.to, options.cc);
+    await prisma9.gestoria_budgets.update({
+      where: { id: budgetId },
+      data: {
+        fechaEnvio: /* @__PURE__ */ new Date()
+      }
+    });
+    await prisma9.gestoria_budget_statistics_events.create({
+      data: {
+        budgetId,
+        tipoGestoria: budget.tipoGestoria,
+        evento: "SENT",
+        fecha: /* @__PURE__ */ new Date()
+      }
+    });
+  }
+  /**
+   * Construir servicios para el PDF
+   */
+  buildServicesForPDF(budget, config, tipo) {
+    const servicios = [];
+    if (tipo === "contabilidad") {
+      if (budget.facturasMes > 0) {
+        const total = budget.facturasMes * config.precioBasePorFactura;
+        servicios.push({
+          concepto: "Gesti\xF3n de facturas",
+          cantidad: budget.facturasMes,
+          precio: config.precioBasePorFactura,
+          total
+        });
+      }
+      if (Number(budget.facturacion) > 0) {
+        let porcentaje = 0;
+        switch (budget.sistemaTributacion) {
+          case "R\xE9gimen General":
+            porcentaje = config.porcentajeRegimenGeneral;
+            break;
+          case "M\xF3dulos":
+            porcentaje = config.porcentajeModulos;
+            break;
+          case "EDN":
+            porcentaje = config.porcentajeEDN;
+            break;
+        }
+        if (porcentaje > 0) {
+          const total = Number(budget.facturacion) * porcentaje / 100;
+          servicios.push({
+            concepto: `Recargo ${budget.sistemaTributacion} (${porcentaje}% sobre ${this.formatCurrency(Number(budget.facturacion))})`,
+            precio: total,
+            total
+          });
+        }
+      }
+      if (budget.periodoDeclaraciones === "Mensual") {
+        const baseParaRecargo = servicios.reduce((sum, s) => sum + s.total, 0);
+        const recargoCalculado = baseParaRecargo * config.recargoPeriodoMensual / 100;
+        const recargo = Math.max(recargoCalculado, config.minimoMensual);
+        servicios.push({
+          concepto: `Recargo per\xEDodo mensual (${config.recargoPeriodoMensual}%, m\xEDn. ${this.formatCurrency(config.minimoMensual)})`,
+          precio: recargo,
+          total: recargo
+        });
+      }
+      if (budget.modelo303) {
+        servicios.push({
+          concepto: "Modelo 303 (IVA)",
+          precio: config.precioModelo303,
+          total: config.precioModelo303
+        });
+      }
+      if (budget.modelo111) {
+        servicios.push({
+          concepto: "Modelo 111 (Retenciones IRPF)",
+          precio: config.precioModelo111,
+          total: config.precioModelo111
+        });
+      }
+      if (budget.modelo115) {
+        servicios.push({
+          concepto: "Modelo 115 (Retenciones alquileres)",
+          precio: config.precioModelo115,
+          total: config.precioModelo115
+        });
+      }
+      if (budget.modelo130) {
+        servicios.push({
+          concepto: "Modelo 130 (IRPF aut\xF3nomos)",
+          precio: config.precioModelo130,
+          total: config.precioModelo130
+        });
+      }
+      if (budget.modelo100) {
+        servicios.push({
+          concepto: "Modelo 100 (Renta)",
+          precio: config.precioModelo100,
+          total: config.precioModelo100
+        });
+      }
+      if (budget.modelo349) {
+        servicios.push({
+          concepto: "Modelo 349 (Operaciones intracomunitarias)",
+          precio: config.precioModelo349,
+          total: config.precioModelo349
+        });
+      }
+      if (budget.modelo347) {
+        servicios.push({
+          concepto: "Modelo 347 (Operaciones con terceros)",
+          precio: config.precioModelo347,
+          total: config.precioModelo347
+        });
+      }
+      if (budget.solicitudCertificados) {
+        servicios.push({
+          concepto: "Solicitud de certificados",
+          precio: config.precioCertificados,
+          total: config.precioCertificados
+        });
+      }
+      if (budget.censosAEAT) {
+        servicios.push({
+          concepto: "Gesti\xF3n censos AEAT",
+          precio: config.precioCensos,
+          total: config.precioCensos
+        });
+      }
+      if (budget.recepcionNotificaciones) {
+        servicios.push({
+          concepto: "Recepci\xF3n notificaciones",
+          precio: config.precioNotificaciones,
+          total: config.precioNotificaciones
+        });
+      }
+      if (budget.estadisticasINE) {
+        servicios.push({
+          concepto: "Estad\xEDsticas INE",
+          precio: config.precioEstadisticas,
+          total: config.precioEstadisticas
+        });
+      }
+      if (budget.solicitudAyudas) {
+        servicios.push({
+          concepto: "Solicitud ayudas y subvenciones",
+          precio: config.precioAyudas,
+          total: config.precioAyudas
+        });
+      }
+    }
+    if (tipo === "laboral" && budget.conLaboralSocial && budget.nominasMes > 0) {
+      servicios.push({
+        concepto: "Gesti\xF3n de n\xF3minas",
+        cantidad: budget.nominasMes,
+        precio: config.precioBasePorNomina,
+        total: budget.nominasMes * config.precioBasePorNomina
+      });
+    }
+    return servicios;
+  }
+  /**
+   * Construir HTML del email
+   */
+  buildEmailHTML(budget, config, customMessage) {
+    const companyName = budget.tipoGestoria === "OFICIAL" ? config.nombreEmpresa : config.nombreEmpresa;
+    const primaryColor = config.colorPrimario || "#2563eb";
+    return `
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Presupuesto ${budget.numero}</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f3f4f6;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f3f4f6; padding: 40px 20px;">
+    <tr>
+      <td align="center">
+        <table width="600" cellpadding="0" cellspacing="0" style="background-color: white; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+          
+          <!-- Cabecera -->
+          <tr>
+            <td style="background: linear-gradient(135deg, ${primaryColor} 0%, ${config.colorSecundario || "#1e40af"} 100%); padding: 40px; text-align: center;">
+              <h1 style="margin: 0; color: white; font-size: 32px; font-weight: bold;">${companyName}</h1>
+              <p style="margin: 10px 0 0 0; color: rgba(255,255,255,0.9); font-size: 16px;">Tu gestor\xEDa de confianza</p>
+            </td>
+          </tr>
+          
+          <!-- Contenido -->
+          <tr>
+            <td style="padding: 40px;">
+              <h2 style="margin: 0 0 20px 0; color: ${primaryColor}; font-size: 24px;">\xA1Hola ${budget.nombreCliente}!</h2>
+              
+              <p style="margin: 0 0 15px 0; color: #374151; font-size: 16px; line-height: 1.6;">
+                ${customMessage || "Gracias por tu inter\xE9s en nuestros servicios. Te adjuntamos el presupuesto solicitado con todos los detalles de los servicios que podemos ofrecerte."}
+              </p>
+              
+              <div style="background-color: #eff6ff; border-left: 4px solid ${primaryColor}; padding: 20px; margin: 25px 0; border-radius: 4px;">
+                <p style="margin: 0 0 10px 0; color: #1e40af; font-weight: bold; font-size: 14px;">\u{1F4C4} PRESUPUESTO ${budget.numero}</p>
+                <p style="margin: 0 0 5px 0; color: #374151; font-size: 14px;"><strong>Fecha:</strong> ${this.formatDate(budget.fechaCreacion)}</p>
+                <p style="margin: 0 0 5px 0; color: #374151; font-size: 14px;"><strong>V\xE1lido hasta:</strong> ${this.formatDate(new Date(budget.fechaCreacion.getTime() + 30 * 24 * 60 * 60 * 1e3))}</p>
+                <p style="margin: 0; color: #374151; font-size: 18px; font-weight: bold; margin-top: 10px;"><strong>Importe Total:</strong> ${this.formatCurrency(Number(budget.totalFinal))}</p>
+              </div>
+              
+              <p style="margin: 25px 0 15px 0; color: #374151; font-size: 16px; line-height: 1.6;">
+                En el documento PDF adjunto encontrar\xE1s el desglose completo de todos los servicios incluidos en este presupuesto.
+              </p>
+              
+              <p style="margin: 0 0 15px 0; color: #374151; font-size: 16px; line-height: 1.6;">
+                Si tienes cualquier duda o necesitas m\xE1s informaci\xF3n, no dudes en contactar con nosotros. Estaremos encantados de atenderte.
+              </p>
+              
+              <div style="text-align: center; margin: 30px 0;">
+                <p style="margin: 0 0 5px 0; color: #6b7280; font-size: 14px;">\xBFEst\xE1s listo para empezar?</p>
+                <a href="${config.webEmpresa || "#"}" style="display: inline-block; background-color: ${primaryColor}; color: white; text-decoration: none; padding: 12px 30px; border-radius: 6px; font-weight: bold; font-size: 16px; margin-top: 10px;">Aceptar Presupuesto</a>
+              </div>
+            </td>
+          </tr>
+          
+          <!-- Pie de p\xE1gina -->
+          <tr>
+            <td style="background-color: #f9fafb; padding: 30px; border-top: 1px solid #e5e7eb;">
+              <p style="margin: 0 0 10px 0; color: #374151; font-size: 14px; text-align: center;">
+                <strong>${companyName}</strong>
+              </p>
+              <p style="margin: 0 0 5px 0; color: #6b7280; font-size: 13px; text-align: center;">
+                ${config.direccionEmpresa || ""}
+              </p>
+              <p style="margin: 0 0 5px 0; color: #6b7280; font-size: 13px; text-align: center;">
+                \u{1F4E7} ${config.emailEmpresa || ""} \u2022 \u{1F4DE} ${config.telefonoEmpresa || ""}
+              </p>
+              ${config.webEmpresa ? `
+              <p style="margin: 10px 0 0 0; color: #6b7280; font-size: 13px; text-align: center;">
+                \u{1F310} <a href="${config.webEmpresa}" style="color: ${primaryColor}; text-decoration: none;">${config.webEmpresa}</a>
+              </p>
+              ` : ""}
+            </td>
+          </tr>
+          
+        </table>
+        
+        <!-- Nota legal -->
+        <p style="margin: 20px 0 0 0; color: #9ca3af; font-size: 12px; text-align: center; max-width: 600px;">
+          Este email y cualquier archivo adjunto son confidenciales y est\xE1n destinados exclusivamente al destinatario. Si ha recibido este email por error, por favor notif\xEDquelo inmediatamente y elim\xEDnelo.
+        </p>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+    `;
+  }
+  /**
+   * Registrar envío de email en base de datos
+   */
+  async logEmailSend(budgetId, to, cc) {
+    await prisma9.budget_email_logs.create({
+      data: {
+        budgetId,
+        emailDestino: to,
+        emailCopia: cc ? cc.join(", ") : null,
+        fechaEnvio: /* @__PURE__ */ new Date()
+      }
+    });
+  }
+  // ===== UTILIDADES =====
+  formatDate(date) {
+    return new Date(date).toLocaleDateString("es-ES", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric"
+    });
+  }
+  formatCurrency(amount) {
+    return new Intl.NumberFormat("es-ES", {
+      style: "currency",
+      currency: "EUR"
+    }).format(amount);
+  }
+};
+var gestoriaBudgetEmailService = new GestoriaBudgetEmailService();
+
+// server/services/gestoria-budget-conversion-service.ts
+import { PrismaClient as PrismaClient10 } from "@prisma/client";
+var prisma10 = new PrismaClient10();
+var GestoriaBudgetConversionService = class {
+  /**
+   * Convertir un presupuesto aceptado a cliente
+   */
+  async convertToClient(budgetId, options = {}) {
+    try {
+      const budget = await prisma10.gestoria_budgets.findUnique({
+        where: { id: budgetId },
+        include: {
+          serviciosAdicionales: true
+        }
+      });
+      if (!budget) {
+        throw new Error(`Presupuesto con ID ${budgetId} no encontrado`);
+      }
+      if (budget.estado !== "ACEPTADO") {
+        throw new Error("Solo se pueden convertir presupuestos en estado ACEPTADO");
+      }
+      if (budget.clienteId) {
+        throw new Error("Este presupuesto ya ha sido convertido a cliente");
+      }
+      if (!budget.nifCif) {
+        throw new Error("El presupuesto debe tener CIF/NIF para convertirlo a cliente");
+      }
+      const existingClient = await prisma10.clients.findFirst({
+        where: {
+          nifCif: budget.nifCif
+        }
+      });
+      if (existingClient) {
+        throw new Error(`Ya existe un cliente con CIF/NIF ${budget.nifCif}`);
+      }
+      const client = await prisma10.clients.create({
+        data: {
+          id: `CLI-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          razonSocial: budget.nombreCliente,
+          nifCif: budget.nifCif,
+          tipo: "AUTONOMO",
+          // Por defecto, se puede ajustar según necesidad
+          email: budget.email || null,
+          telefono: budget.telefono || null,
+          direccion: budget.direccion || null,
+          tipoGestoria: budget.tipoGestoria,
+          presupuestoOrigenId: budgetId,
+          isActive: true,
+          fechaAlta: /* @__PURE__ */ new Date()
+        }
+      });
+      await this.createTaxAssignments(client.id, budget);
+      await this.archiveBudgetPDF(budget, client.id);
+      await prisma10.gestoria_budgets.update({
+        where: { id: budgetId },
+        data: {
+          clienteId: client.id
+        }
+      });
+      await prisma10.gestoria_budget_statistics_events.create({
+        data: {
+          budgetId,
+          evento: "CONVERTIDO",
+          fecha: /* @__PURE__ */ new Date()
+        }
+      });
+      return client.id;
+    } catch (error) {
+      console.error("Error converting budget to client:", error);
+      throw error;
+    }
+  }
+  /**
+   * Crear asignaciones de modelos fiscales
+   */
+  async createTaxAssignments(clientId, budget) {
+    const assignments = [];
+    let periodicidad = "TRIMESTRAL";
+    if (budget.periodoDeclaraciones === "Mensual") {
+      periodicidad = "MENSUAL";
+    } else if (budget.periodoDeclaraciones === "Anual") {
+      periodicidad = "ANUAL";
+    }
+    if (budget.modelo303) {
+      assignments.push({
+        id: `${clientId}-303-${Date.now()}`,
+        clientId,
+        taxModelCode: "303",
+        periodicidad,
+        activo: true,
+        fechaAsignacion: /* @__PURE__ */ new Date()
+      });
+    }
+    if (budget.modelo111) {
+      assignments.push({
+        id: `${clientId}-111-${Date.now() + 1}`,
+        clientId,
+        taxModelCode: "111",
+        periodicidad,
+        activo: true,
+        fechaAsignacion: /* @__PURE__ */ new Date()
+      });
+    }
+    if (budget.modelo115) {
+      assignments.push({
+        id: `${clientId}-115-${Date.now() + 2}`,
+        clientId,
+        taxModelCode: "115",
+        periodicidad,
+        activo: true,
+        fechaAsignacion: /* @__PURE__ */ new Date()
+      });
+    }
+    if (budget.modelo130) {
+      assignments.push({
+        id: `${clientId}-130-${Date.now() + 3}`,
+        clientId,
+        taxModelCode: "130",
+        periodicidad: "TRIMESTRAL",
+        activo: true,
+        fechaAsignacion: /* @__PURE__ */ new Date()
+      });
+    }
+    if (budget.modelo100) {
+      assignments.push({
+        id: `${clientId}-100-${Date.now() + 4}`,
+        clientId,
+        taxModelCode: "100",
+        periodicidad: "ANUAL",
+        activo: true,
+        fechaAsignacion: /* @__PURE__ */ new Date()
+      });
+    }
+    if (budget.modelo349) {
+      assignments.push({
+        id: `${clientId}-349-${Date.now() + 5}`,
+        clientId,
+        taxModelCode: "349",
+        periodicidad: "MENSUAL",
+        activo: true,
+        fechaAsignacion: /* @__PURE__ */ new Date()
+      });
+    }
+    if (budget.modelo347) {
+      assignments.push({
+        id: `${clientId}-347-${Date.now() + 6}`,
+        clientId,
+        taxModelCode: "347",
+        periodicidad: "ANUAL",
+        activo: true,
+        fechaAsignacion: /* @__PURE__ */ new Date()
+      });
+    }
+    if (assignments.length > 0) {
+      await prisma10.client_tax_assignments.createMany({
+        data: assignments
+      });
+    }
+  }
+  /**
+   * Archivar PDF del presupuesto como documento del cliente
+   */
+  async archiveBudgetPDF(budget, clientId) {
+    try {
+      await prisma10.documents.create({
+        data: {
+          id: `DOC-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          clientId,
+          name: `Presupuesto ${budget.numero}`,
+          type: "PRESUPUESTO",
+          upload_date: /* @__PURE__ */ new Date(),
+          file_path: budget.pdfPath || null
+        }
+      });
+    } catch (error) {
+      console.error("Error archiving budget PDF:", error);
+    }
+  }
+  /**
+   * Verificar si un presupuesto puede ser convertido a cliente
+   */
+  async canConvertToClient(budgetId) {
+    const budget = await prisma10.gestoria_budgets.findUnique({
+      where: { id: budgetId }
+    });
+    if (!budget) {
+      return { canConvert: false, reason: "Presupuesto no encontrado" };
+    }
+    if (budget.estado !== "ACEPTADO") {
+      return { canConvert: false, reason: "Solo se pueden convertir presupuestos aceptados" };
+    }
+    if (budget.clienteId) {
+      return { canConvert: false, reason: "Este presupuesto ya fue convertido" };
+    }
+    if (!budget.nifCif) {
+      return { canConvert: false, reason: "El presupuesto debe tener CIF/NIF" };
+    }
+    const existingClient = await prisma10.clients.findFirst({
+      where: {
+        nifCif: budget.nifCif
+      }
+    });
+    if (existingClient) {
+      return { canConvert: false, reason: `Ya existe un cliente con CIF/NIF ${budget.nifCif}` };
+    }
+    return { canConvert: true };
+  }
+};
+var gestoriaBudgetConversionService = new GestoriaBudgetConversionService();
+
+// server/routes/gestoria-budgets.ts
+var router5 = express5.Router();
+router5.get("/", async (req, res) => {
+  try {
+    const filters = {
+      tipoGestoria: req.query.tipo,
+      estado: req.query.estado,
+      nombreCliente: req.query.nombreCompleto,
+      nifCif: req.query.cifNif,
+      email: req.query.email,
+      fechaDesde: req.query.fechaDesde ? new Date(req.query.fechaDesde) : void 0,
+      fechaHasta: req.query.fechaHasta ? new Date(req.query.fechaHasta) : void 0
+    };
+    const budgets = await gestoriaBudgetService.listBudgets(filters);
+    res.json({
+      success: true,
+      data: budgets
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+router5.get("/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const budget = await gestoriaBudgetService.getBudgetById(id);
+    res.json({
+      success: true,
+      data: budget
+    });
+  } catch (error) {
+    res.status(404).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+router5.post("/", async (req, res) => {
+  try {
+    const input = req.body;
+    const budget = await gestoriaBudgetService.createBudget(input);
+    res.status(201).json({
+      success: true,
+      data: budget,
+      message: "Presupuesto creado exitosamente"
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+router5.put("/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const input = req.body;
+    const budget = await gestoriaBudgetService.updateBudget(id, input);
+    res.json({
+      success: true,
+      data: budget,
+      message: "Presupuesto actualizado exitosamente"
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+router5.delete("/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    await gestoriaBudgetService.deleteBudget(id);
+    res.json({
+      success: true,
+      message: "Presupuesto eliminado exitosamente"
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+router5.post("/calculate", async (req, res) => {
+  try {
+    const input = req.body.calculation;
+    const tipo = req.body.tipo;
+    const result = await gestoriaBudgetCalculationService.calculate(input, tipo);
+    res.json({
+      success: true,
+      data: result
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+router5.post("/:id/recalculate", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const budget = await gestoriaBudgetService.getBudgetById(id);
+    const calculationInput = {
+      facturasMes: budget.facturasMes,
+      nominasMes: budget.nominasMes || void 0,
+      facturacion: Number(budget.facturacion),
+      sistemaTributacion: budget.sistemaTributacion,
+      periodoDeclaraciones: budget.periodoDeclaraciones,
+      modelo303: budget.modelo303,
+      modelo111: budget.modelo111,
+      modelo115: budget.modelo115,
+      modelo130: budget.modelo130,
+      modelo100: budget.modelo100,
+      modelo349: budget.modelo349,
+      modelo347: budget.modelo347,
+      solicitudCertificados: budget.solicitudCertificados,
+      censosAEAT: budget.censosAEAT,
+      recepcionNotificaciones: budget.recepcionNotificaciones,
+      estadisticasINE: budget.estadisticasINE,
+      solicitudAyudas: budget.solicitudAyudas,
+      conLaboralSocial: budget.conLaboralSocial,
+      aplicaDescuento: budget.aplicaDescuento,
+      tipoDescuento: budget.tipoDescuento,
+      valorDescuento: budget.valorDescuento ? Number(budget.valorDescuento) : void 0,
+      serviciosAdicionales: budget.serviciosAdicionales?.map((s) => ({
+        nombre: s.nombre,
+        precio: Number(s.precio),
+        tipoServicio: s.tipoServicio,
+        incluido: s.incluido
+      }))
+    };
+    const result = await gestoriaBudgetCalculationService.calculate(calculationInput, budget.tipoGestoria);
+    res.json({
+      success: true,
+      data: result
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+router5.post("/:id/send", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const options = req.body;
+    await gestoriaBudgetEmailService.sendBudgetEmail(id, options);
+    res.json({
+      success: true,
+      message: "Presupuesto enviado exitosamente"
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+router5.post("/:id/accept", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const budget = await gestoriaBudgetService.acceptBudget(id);
+    res.json({
+      success: true,
+      data: budget,
+      message: "Presupuesto aceptado exitosamente"
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+router5.post("/:id/reject", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const motivoRechazo = req.body.motivoRechazo;
+    const budget = await gestoriaBudgetService.rejectBudget(id, motivoRechazo);
+    res.json({
+      success: true,
+      data: budget,
+      message: "Presupuesto rechazado"
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+router5.post("/:id/convert", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const options = req.body;
+    const clientId = await gestoriaBudgetConversionService.convertToClient(id, options);
+    res.json({
+      success: true,
+      data: { clientId },
+      message: "Presupuesto convertido a cliente exitosamente"
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+router5.get("/:id/can-convert", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const result = await gestoriaBudgetConversionService.canConvertToClient(id);
+    res.json({
+      success: true,
+      data: result
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+router5.get("/:id/pdf", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const budget = await gestoriaBudgetService.getBudgetById(id);
+    const pdfData = {
+      numero: budget.numero,
+      fecha: budget.fechaCreacion,
+      fechaValidez: new Date(budget.fechaCreacion.getTime() + 30 * 24 * 60 * 60 * 1e3),
+      // 30 días después
+      tipo: budget.tipoGestoria,
+      nombreCompleto: budget.nombreCliente,
+      cifNif: budget.nifCif || void 0,
+      email: budget.email || void 0,
+      telefono: budget.telefono || void 0,
+      direccion: budget.direccion || void 0,
+      codigoPostal: void 0,
+      // No existe en schema
+      ciudad: void 0,
+      // No existe en schema
+      provincia: void 0,
+      // No existe en schema
+      actividadEmpresarial: void 0,
+      // No existe en schema
+      facturacion: Number(budget.facturacion),
+      facturasMes: budget.facturasMes,
+      nominasMes: budget.nominasMes || void 0,
+      sistemaTributacion: budget.sistemaTributacion,
+      periodoDeclaraciones: budget.periodoDeclaraciones,
+      serviciosContabilidad: [],
+      // Se construyen en el servicio
+      serviciosLaborales: [],
+      serviciosAdicionales: budget.serviciosAdicionales.map((s) => ({
+        nombre: s.nombre,
+        precio: Number(s.precio),
+        tipoServicio: s.tipoServicio
+      })),
+      totalContabilidad: Number(budget.totalContabilidad),
+      totalLaboral: Number(budget.totalLaboral),
+      subtotal: Number(budget.totalContabilidad) + Number(budget.totalLaboral),
+      descuentoCalculado: Number(budget.descuentoCalculado),
+      totalFinal: Number(budget.totalFinal),
+      aplicaDescuento: budget.aplicaDescuento,
+      tipoDescuento: budget.tipoDescuento || void 0,
+      valorDescuento: budget.valorDescuento ? Number(budget.valorDescuento) : void 0,
+      motivoDescuento: budget.tipoDescuento || void 0,
+      // Usar tipoDescuento como motivo
+      observaciones: void 0
+      // No existe en schema
+    };
+    const pdfBuffer = await gestoriaBudgetPDFService.generatePDF(pdfData);
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="Presupuesto_${budget.numero}.pdf"`);
+    res.send(pdfBuffer);
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+router5.get("/stats/summary", async (req, res) => {
+  try {
+    const tipo = req.query.tipo;
+    const fechaDesde = req.query.fechaDesde ? new Date(req.query.fechaDesde) : void 0;
+    const fechaHasta = req.query.fechaHasta ? new Date(req.query.fechaHasta) : void 0;
+    const stats = await gestoriaBudgetService.getStatistics(tipo, fechaDesde, fechaHasta);
+    res.json({
+      success: true,
+      data: stats
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+router5.get("/stats/by-month", async (req, res) => {
+  try {
+    const tipo = req.query.tipo;
+    const year = req.query.year ? parseInt(req.query.year) : (/* @__PURE__ */ new Date()).getFullYear();
+    const months = [];
+    for (let month = 1; month <= 12; month++) {
+      const fechaDesde = new Date(year, month - 1, 1);
+      const fechaHasta = new Date(year, month, 0, 23, 59, 59);
+      const stats = await gestoriaBudgetService.getStatistics(tipo, fechaDesde, fechaHasta);
+      months.push({
+        month,
+        year,
+        ...stats
+      });
+    }
+    res.json({
+      success: true,
+      data: months
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+router5.get("/config/list", async (req, res) => {
+  try {
+    const filters = {
+      tipo: req.query.tipo,
+      activo: req.query.activo ? req.query.activo === "true" : void 0
+    };
+    const configs = await gestoriaBudgetConfigService.getAllConfigs(filters);
+    res.json({
+      success: true,
+      data: configs
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+router5.get("/config/active/:tipo", async (req, res) => {
+  try {
+    const tipo = req.params.tipo;
+    const config = await gestoriaBudgetConfigService.getActiveConfig(tipo);
+    if (!config) {
+      return res.status(404).json({
+        success: false,
+        message: `No hay configuraci\xF3n activa para ${tipo}`
+      });
+    }
+    res.json({
+      success: true,
+      data: config
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+router5.post("/config", async (req, res) => {
+  try {
+    const input = req.body;
+    const config = await gestoriaBudgetConfigService.createConfig(input);
+    res.status(201).json({
+      success: true,
+      data: config,
+      message: "Configuraci\xF3n creada exitosamente"
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+router5.put("/config/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const input = req.body;
+    const config = await gestoriaBudgetConfigService.updateConfig(id, input);
+    res.json({
+      success: true,
+      data: config,
+      message: "Configuraci\xF3n actualizada exitosamente"
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+router5.delete("/config/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    await gestoriaBudgetConfigService.deleteConfig(id);
+    res.json({
+      success: true,
+      message: "Configuraci\xF3n eliminada exitosamente"
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+var gestoria_budgets_default = router5;
+
+// server/services/clients-import.ts
+init_prisma_client();
+import ExcelJS2 from "exceljs";
+import { randomUUID as randomUUID4 } from "crypto";
+logger.info("\u2705 [DIAGNOSTICO] M\xF3dulo server/services/clients-import.ts cargado.");
+async function generateClientsTemplate() {
+  const workbook = new ExcelJS2.Workbook();
+  const clientsSheet = workbook.addWorksheet("Clientes");
+  clientsSheet.columns = [
+    { header: "A) NIF/CIF*", key: "nifCif", width: 15 },
+    { header: "B) Raz\xF3n Social*", key: "razonSocial", width: 30 },
+    { header: "C) Tipo*", key: "tipo", width: 15 },
+    { header: "D) Email", key: "email", width: 25 },
+    { header: "E) Tel\xE9fono", key: "telefono", width: 15 },
+    { header: "F) Direcci\xF3n completa", key: "direccion", width: 50 },
+    { header: "G) CP", key: "cp", width: 10 },
+    { header: "H) Ciudad", key: "ciudad", width: 20 },
+    { header: "I) Pa\xEDs", key: "pais", width: 15 },
+    { header: "J) Gestor", key: "gestor", width: 20 },
+    { header: "K) Fecha Alta", key: "fechaAlta", width: 15 },
+    { header: "L) Activo", key: "activo", width: 10 },
+    { header: "M) Notas", key: "notas", width: 30 }
+  ];
+  clientsSheet.getRow(1).font = { bold: true };
+  clientsSheet.getRow(1).fill = {
+    type: "pattern",
+    pattern: "solid",
+    fgColor: { argb: "FF4472C4" }
+  };
+  clientsSheet.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
+  const instructionsSheet = workbook.addWorksheet("Instrucciones");
+  instructionsSheet.columns = [
+    { header: "GU\xCDA DE IMPORTACI\xD3N DE CLIENTES", key: "guide", width: 80 }
+  ];
+  instructionsSheet.getRow(1).font = { bold: true, size: 14 };
+  instructionsSheet.getRow(1).fill = {
+    type: "pattern",
+    pattern: "solid",
+    fgColor: { argb: "FFFFC000" }
+  };
+  const instructions = [
+    "",
+    "\u{1F4CB} INSTRUCCIONES DE IMPORTACI\xD3N DE CLIENTES:",
+    "",
+    "\u{1F3AF} OBJETIVO:",
+    "\u2022 Esta plantilla permite importar los datos b\xE1sicos de m\xFAltiples clientes de forma masiva",
+    "\u2022 Los modelos fiscales se asignan manualmente despu\xE9s, desde la ficha de cada cliente",
+    "",
+    "\u{1F4DD} PASOS:",
+    '1. Complete la hoja "Clientes" con los datos de sus clientes (empiece en la fila 2)',
+    "2. Guarde el archivo",
+    '3. S\xFAbalo a trav\xE9s del bot\xF3n "Importar Clientes"',
+    "4. Los campos marcados con * son OBLIGATORIOS",
+    "",
+    "\u{1F464} CAMPOS DE LA HOJA CLIENTES:",
+    "",
+    "\u2022 NIF/CIF* (Columna A):",
+    "  - Campo obligatorio (cualquier formato)",
+    "  - Ejemplos: 12345678Z (DNI), X1234567L (NIE), A12345678 (CIF)",
+    "  - Puede corregir el formato despu\xE9s en la ficha del cliente",
+    "",
+    "\u2022 Raz\xF3n Social* (Columna B):",
+    "  - Nombre completo del cliente o empresa",
+    '  - Ejemplo: "Juan P\xE9rez Garc\xEDa" o "Empresa Demo SL"',
+    "",
+    "\u2022 Tipo* (Columna C):",
+    "  - Debe ser exactamente uno de estos valores:",
+    "    \u2192 EMPRESA (para sociedades)",
+    "    \u2192 AUTONOMO (para aut\xF3nomos)",
+    "    \u2192 PARTICULAR (para personas f\xEDsicas)",
+    "",
+    "\u2022 Email (Columna D) - Opcional:",
+    "  - Cualquier formato (se puede corregir despu\xE9s)",
+    "  - Ejemplo: ejemplo@dominio.com",
+    "",
+    "\u2022 Tel\xE9fono (Columna E) - Opcional:",
+    "  - N\xFAmero de contacto del cliente",
+    "",
+    "\u2022 Direcci\xF3n (Columnas F, G, H, I) - Opcional:",
+    "  - F: Direcci\xF3n completa (calle, n\xFAmero, piso...)",
+    "  - G: C\xF3digo Postal",
+    "  - H: Ciudad",
+    "  - I: Pa\xEDs",
+    '  - NOTA: Estos campos se combinar\xE1n en un solo campo "Direcci\xF3n"',
+    "",
+    "\u2022 Gestor (Columna J) - Opcional:",
+    "  - Username del usuario responsable en el sistema",
+    "  - Si no existe o est\xE1 vac\xEDo, quedar\xE1 sin asignar",
+    "",
+    "\u2022 Fecha Alta (Columna K) - Opcional:",
+    "  - Formato: YYYY-MM-DD (ejemplo: 2025-01-15)",
+    "  - Si est\xE1 vac\xEDo, se usa la fecha actual",
+    "",
+    "\u2022 Activo (Columna L) - Opcional:",
+    "  - Valores: SI o NO",
+    "  - Si est\xE1 vac\xEDo, se considera SI",
+    "",
+    "\u2022 Notas (Columna M) - Opcional:",
+    "  - Observaciones sobre el cliente",
+    "",
+    "\u2705 EJEMPLOS DE FILAS V\xC1LIDAS:",
+    "",
+    "  Fila 2: A12345678 | Empresa Demo SL | EMPRESA | info@demo.com | 912345678 | ...",
+    "  Fila 3: 12345678Z | Juan P\xE9rez | AUTONOMO | juan@email.com | 600111222 | ...",
+    "  Fila 4: X1234567L | Mar\xEDa Garc\xEDa | PARTICULAR | maria@gmail.com | | ...",
+    "",
+    "\u26A0\uFE0F IMPORTANTE:",
+    "\u2022 Si un cliente con el mismo NIF/CIF ya existe, SE ACTUALIZAR\xC1 con los nuevos datos",
+    "\u2022 Si el gestor no existe en el sistema, se dejar\xE1 sin asignar",
+    "\u2022 Todos los datos se validan ANTES de importar",
+    "\u2022 Si hay errores, se mostrar\xE1n indicando fila y campo problem\xE1tico",
+    "\u2022 NO suba este archivo sin agregar sus datos reales"
+  ];
+  instructions.forEach((text, index) => {
+    const row = instructionsSheet.addRow({ guide: text });
+    if (text.startsWith("\u{1F4CB}") || text.startsWith("\u{1F464}") || text.startsWith("\u{1F4CA}") || text.startsWith("\u{1F522}") || text.startsWith("\u26A0\uFE0F")) {
+      row.font = { bold: true, size: 12 };
+    }
+  });
+  return Buffer.from(await workbook.xlsx.writeBuffer());
+}
+async function processClientsImport(buffer, userId) {
+  const result = {
+    imported: 0,
+    updated: 0,
+    errors: [],
+    success: false
+  };
+  try {
+    if (!Buffer.isBuffer(buffer)) {
+      result.errors.push("El archivo proporcionado no es v\xE1lido");
+      return result;
+    }
+    const workbook = new ExcelJS2.Workbook();
+    await workbook.xlsx.load(buffer);
+    const clientsSheet = workbook.getWorksheet("Clientes");
+    if (!clientsSheet) {
+      result.errors.push('No se encontr\xF3 la hoja "Clientes" en el archivo');
+      return result;
+    }
+    const clients = [];
+    const validationErrors = [];
+    clientsSheet.eachRow((row, rowNumber) => {
+      if (rowNumber === 1) return;
+      const nifCif = String(row.getCell(1).value || "").trim();
+      const razonSocial = String(row.getCell(2).value || "").trim();
+      const tipo = String(row.getCell(3).value || "").trim().toUpperCase();
+      if (!nifCif && !razonSocial) return;
+      const emailCell = row.getCell(4).value;
+      let email = void 0;
+      if (emailCell) {
+        if (typeof emailCell === "string") {
+          email = emailCell.trim();
+        } else if (typeof emailCell === "object" && emailCell !== null && "text" in emailCell) {
+          email = String(emailCell.text || "").trim();
+        } else {
+          email = String(emailCell).trim();
+        }
+        if (email === "" || email === "[object Object]") email = void 0;
+      }
+      clients.push({
+        nifCif,
+        razonSocial,
+        tipo,
+        email,
+        telefono: String(row.getCell(5).value || "").trim() || void 0,
+        direccion: String(row.getCell(6).value || "").trim() || void 0,
+        codigoPostal: String(row.getCell(7).value || "").trim() || void 0,
+        ciudad: String(row.getCell(8).value || "").trim() || void 0,
+        pais: String(row.getCell(9).value || "").trim() || void 0,
+        gestor: String(row.getCell(10).value || "").trim() || void 0,
+        fechaAlta: parseDateCell(row.getCell(11).value),
+        activo: parseActiveCell(row.getCell(12).value),
+        notas: String(row.getCell(13).value || "").trim() || void 0
+      });
+    });
+    const clientsMap = /* @__PURE__ */ new Map();
+    for (let i = 0; i < clients.length; i++) {
+      const client = clients[i];
+      const rowNumber = i + 2;
+      const errors = await validateClientRow(client, rowNumber);
+      validationErrors.push(...errors);
+      if (errors.length === 0) {
+        clientsMap.set(client.nifCif, client);
+      }
+    }
+    if (validationErrors.length > 0) {
+      result.errors = validationErrors.map((e) => `[${e.sheet}] Fila ${e.row}, ${e.field}: ${e.message}`);
+      return result;
+    }
+    const users = await prisma_client_default.users.findMany({
+      select: { id: true, username: true }
+    });
+    const usersMap = new Map(users.map((u) => [u.username.toLowerCase(), u.id]));
+    for (const clientData of clientsMap.values()) {
+      try {
+        const gestorId = clientData.gestor ? usersMap.get(clientData.gestor.toLowerCase()) || null : null;
+        const existing = await prisma_client_default.clients.findFirst({
+          where: { nifCif: clientData.nifCif }
+        });
+        let direccionCompleta = clientData.direccion || "";
+        if (clientData.codigoPostal || clientData.ciudad || clientData.pais) {
+          const partes = [
+            direccionCompleta,
+            clientData.codigoPostal,
+            clientData.ciudad,
+            clientData.pais
+          ].filter((p) => p && p.trim());
+          direccionCompleta = partes.join(", ");
+        }
+        const clientPayload = {
+          razonSocial: clientData.razonSocial,
+          nifCif: clientData.nifCif,
+          tipo: clientData.tipo,
+          email: clientData.email || null,
+          telefono: clientData.telefono || null,
+          direccion: direccionCompleta || null,
+          responsableAsignado: gestorId,
+          fechaAlta: clientData.fechaAlta || /* @__PURE__ */ new Date(),
+          isActive: clientData.activo !== false,
+          notes: clientData.notas || null
+        };
+        let clientId;
+        if (existing) {
+          await prisma_client_default.clients.update({
+            where: { id: existing.id },
+            data: clientPayload
+          });
+          clientId = existing.id;
+          result.updated++;
+        } else {
+          const newClient = await prisma_client_default.clients.create({
+            data: {
+              id: randomUUID4(),
+              ...clientPayload
+            }
+          });
+          clientId = newClient.id;
+          result.imported++;
+        }
+      } catch (error) {
+        result.errors.push(`Error al importar cliente ${clientData.nifCif}: ${error.message}`);
+      }
+    }
+    result.success = result.imported > 0 || result.updated > 0;
+    return result;
+  } catch (error) {
+    result.errors.push(`Error procesando el archivo: ${error.message}`);
+    return result;
+  }
+}
+async function validateClientRow(client, rowNumber) {
+  const errors = [];
+  if (!client.nifCif) {
+    errors.push({
+      row: rowNumber,
+      sheet: "Clientes",
+      field: "NIF/CIF",
+      message: "Campo obligatorio"
+    });
+  }
+  if (!client.razonSocial) {
+    errors.push({
+      row: rowNumber,
+      sheet: "Clientes",
+      field: "Raz\xF3n Social",
+      message: "Campo obligatorio"
+    });
+  }
+  const validTypes = ["EMPRESA", "AUTONOMO", "PARTICULAR"];
+  if (!client.tipo) {
+    errors.push({
+      row: rowNumber,
+      sheet: "Clientes",
+      field: "Tipo",
+      message: "Campo obligatorio"
+    });
+  } else if (!validTypes.includes(client.tipo)) {
+    errors.push({
+      row: rowNumber,
+      sheet: "Clientes",
+      field: "Tipo",
+      message: `Debe ser uno de: ${validTypes.join(", ")}`
+    });
+  }
+  return errors;
+}
+function parseDateCell(value) {
+  if (!value) return void 0;
+  if (value instanceof Date) return value;
+  if (typeof value === "string") {
+    const parsed = new Date(value);
+    if (!isNaN(parsed.getTime())) return parsed;
+  }
+  if (typeof value === "number") {
+    const excelEpoch = new Date(1900, 0, 1);
+    const date = new Date(excelEpoch.getTime() + (value - 2) * 864e5);
+    return date;
+  }
+  return void 0;
+}
+function parseActiveCell(value) {
+  if (typeof value === "boolean") return value;
+  const str = String(value || "").trim().toUpperCase();
+  if (str === "SI" || str === "S\xCD" || str === "YES" || str === "TRUE" || str === "1") return true;
+  if (str === "NO" || str === "FALSE" || str === "0") return false;
+  return true;
+}
+
 // server/budget-parameters.ts
+init_prisma_client();
 import { Router } from "express";
-import { PrismaClient as PrismaClient11 } from "@prisma/client";
-var router5 = Router();
-var prisma11 = new PrismaClient11();
+var router6 = Router();
 function ensureAdmin(req, res, next) {
   const roleName = req.user?.roleName;
   if (roleName === "Administrador") return next();
   return res.status(403).json({ error: "Solo administradores pueden editar par\xE1metros" });
 }
-router5.get("/", authenticateToken, async (req, res) => {
+router6.get("/", authenticateToken, async (req, res) => {
   try {
     const { type } = req.query;
     const where = { isActive: true };
     if (type) {
       where.budgetType = String(type).toUpperCase();
     }
-    const parameters = await prisma11.budget_parameters.findMany({
+    const parameters = await prisma_client_default.budget_parameters.findMany({
       where,
       orderBy: [
         { budgetType: "asc" },
@@ -6516,10 +10143,10 @@ router5.get("/", authenticateToken, async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-router5.get("/:id", authenticateToken, async (req, res) => {
+router6.get("/:id", authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
-    const parameter = await prisma11.budget_parameters.findUnique({
+    const parameter = await prisma_client_default.budget_parameters.findUnique({
       where: { id }
     });
     if (!parameter) {
@@ -6543,7 +10170,7 @@ router5.get("/:id", authenticateToken, async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-router5.put("/:id", authenticateToken, ensureAdmin, async (req, res) => {
+router6.put("/:id", authenticateToken, ensureAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const { value, label, description } = req.body;
@@ -6557,7 +10184,7 @@ router5.put("/:id", authenticateToken, ensureAdmin, async (req, res) => {
     const updateData = { paramValue: numValue };
     if (label !== void 0) updateData.paramLabel = label;
     if (description !== void 0) updateData.description = description;
-    const updated = await prisma11.budget_parameters.update({
+    const updated = await prisma_client_default.budget_parameters.update({
       where: { id },
       data: updateData
     });
@@ -6591,7 +10218,7 @@ router5.put("/:id", authenticateToken, ensureAdmin, async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-router5.put("/bulk/update", authenticateToken, ensureAdmin, async (req, res) => {
+router6.put("/bulk/update", authenticateToken, ensureAdmin, async (req, res) => {
   try {
     const { updates } = req.body;
     if (!Array.isArray(updates) || updates.length === 0) {
@@ -6601,7 +10228,7 @@ router5.put("/bulk/update", authenticateToken, ensureAdmin, async (req, res) => 
       updates.map(async (update) => {
         const { id, value } = update;
         if (!id || value === void 0) return null;
-        return await prisma11.budget_parameters.update({
+        return await prisma_client_default.budget_parameters.update({
           where: { id },
           data: { paramValue: Number(value) }
         });
@@ -6622,7 +10249,7 @@ router5.put("/bulk/update", authenticateToken, ensureAdmin, async (req, res) => 
     res.status(500).json({ error: error.message });
   }
 });
-router5.post("/reset/:type", authenticateToken, ensureAdmin, async (req, res) => {
+router6.post("/reset/:type", authenticateToken, ensureAdmin, async (req, res) => {
   try {
     const { type } = req.params;
     const budgetType = String(type).toUpperCase();
@@ -6639,16 +10266,16 @@ router5.post("/reset/:type", authenticateToken, ensureAdmin, async (req, res) =>
     res.status(500).json({ error: error.message });
   }
 });
-var budget_parameters_default = router5;
+var budget_parameters_default = router6;
 
 // server/budget-templates.ts
-import express5 from "express";
-import { PrismaClient as PrismaClient12 } from "@prisma/client";
-var prisma12 = new PrismaClient12();
-var router6 = express5.Router();
-router6.use(authenticateToken);
-router6.use(checkIsAdmin);
-router6.get("/", async (req, res) => {
+init_prisma_client();
+import express6 from "express";
+import { randomUUID as randomUUID5 } from "crypto";
+var router7 = express6.Router();
+router7.use(authenticateToken);
+router7.use(checkIsAdmin);
+router7.get("/", async (req, res) => {
   try {
     const { type, companyBrand, isActive, isDefault } = req.query;
     const where = {};
@@ -6656,7 +10283,7 @@ router6.get("/", async (req, res) => {
     if (companyBrand) where.companyBrand = companyBrand;
     if (isActive !== void 0) where.isActive = isActive === "true";
     if (isDefault !== void 0) where.isDefault = isDefault === "true";
-    const templates = await prisma12.budget_templates.findMany({
+    const templates = await prisma_client_default.budget_templates.findMany({
       where,
       orderBy: { updatedAt: "desc" }
     });
@@ -6670,10 +10297,10 @@ router6.get("/", async (req, res) => {
     });
   }
 });
-router6.get("/:id", async (req, res) => {
+router7.get("/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    const template = await prisma12.budget_templates.findUnique({
+    const template = await prisma_client_default.budget_templates.findUnique({
       where: { id }
     });
     if (!template) {
@@ -6689,7 +10316,7 @@ router6.get("/:id", async (req, res) => {
     });
   }
 });
-router6.post("/", async (req, res) => {
+router7.post("/", async (req, res) => {
   try {
     const {
       name,
@@ -6708,7 +10335,7 @@ router6.post("/", async (req, res) => {
       });
     }
     if (isDefault) {
-      await prisma12.budget_templates.updateMany({
+      await prisma_client_default.budget_templates.updateMany({
         where: {
           type,
           companyBrand: companyBrand || "LA_LLAVE",
@@ -6717,8 +10344,9 @@ router6.post("/", async (req, res) => {
         data: { isDefault: false }
       });
     }
-    const template = await prisma12.budget_templates.create({
+    const template = await prisma_client_default.budget_templates.create({
       data: {
+        id: randomUUID5(),
         name,
         description,
         type,
@@ -6729,7 +10357,8 @@ router6.post("/", async (req, res) => {
         isDefault: isDefault || false,
         isActive: isActive !== void 0 ? isActive : true,
         createdBy: req.user?.id,
-        updatedBy: req.user?.id
+        updatedBy: req.user?.id,
+        updatedAt: /* @__PURE__ */ new Date()
       }
     });
     res.status(201).json(template);
@@ -6742,7 +10371,7 @@ router6.post("/", async (req, res) => {
     });
   }
 });
-router6.put("/:id", async (req, res) => {
+router7.put("/:id", async (req, res) => {
   try {
     const { id } = req.params;
     const {
@@ -6756,12 +10385,12 @@ router6.put("/:id", async (req, res) => {
       isDefault,
       isActive
     } = req.body;
-    const existing = await prisma12.budget_templates.findUnique({ where: { id } });
+    const existing = await prisma_client_default.budget_templates.findUnique({ where: { id } });
     if (!existing) {
       return res.status(404).json({ message: "Plantilla no encontrada" });
     }
     if (isDefault && !existing.isDefault) {
-      await prisma12.budget_templates.updateMany({
+      await prisma_client_default.budget_templates.updateMany({
         where: {
           type: type || existing.type,
           companyBrand: companyBrand || existing.companyBrand,
@@ -6771,7 +10400,7 @@ router6.put("/:id", async (req, res) => {
         data: { isDefault: false }
       });
     }
-    const template = await prisma12.budget_templates.update({
+    const template = await prisma_client_default.budget_templates.update({
       where: { id },
       data: {
         name,
@@ -6797,10 +10426,10 @@ router6.put("/:id", async (req, res) => {
     });
   }
 });
-router6.delete("/:id", async (req, res) => {
+router7.delete("/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    const existing = await prisma12.budget_templates.findUnique({ where: { id } });
+    const existing = await prisma_client_default.budget_templates.findUnique({ where: { id } });
     if (!existing) {
       return res.status(404).json({ message: "Plantilla no encontrada" });
     }
@@ -6809,7 +10438,7 @@ router6.delete("/:id", async (req, res) => {
         message: "No se puede eliminar una plantilla predeterminada. Primero marca otra como predeterminada."
       });
     }
-    await prisma12.budget_templates.delete({ where: { id } });
+    await prisma_client_default.budget_templates.delete({ where: { id } });
     res.json({ message: "Plantilla eliminada exitosamente" });
     logger_default.info(`Plantilla eliminada: ${existing.name} (${id})`);
   } catch (error) {
@@ -6820,14 +10449,14 @@ router6.delete("/:id", async (req, res) => {
     });
   }
 });
-router6.post("/:id/set-default", async (req, res) => {
+router7.post("/:id/set-default", async (req, res) => {
   try {
     const { id } = req.params;
-    const existing = await prisma12.budget_templates.findUnique({ where: { id } });
+    const existing = await prisma_client_default.budget_templates.findUnique({ where: { id } });
     if (!existing) {
       return res.status(404).json({ message: "Plantilla no encontrada" });
     }
-    await prisma12.budget_templates.updateMany({
+    await prisma_client_default.budget_templates.updateMany({
       where: {
         type: existing.type,
         companyBrand: existing.companyBrand,
@@ -6836,7 +10465,7 @@ router6.post("/:id/set-default", async (req, res) => {
       },
       data: { isDefault: false }
     });
-    const template = await prisma12.budget_templates.update({
+    const template = await prisma_client_default.budget_templates.update({
       where: { id },
       data: {
         isDefault: true,
@@ -6854,17 +10483,799 @@ router6.post("/:id/set-default", async (req, res) => {
     });
   }
 });
-var budget_templates_default = router6;
+var budget_templates_default = router7;
+
+// server/documents.ts
+import { Router as Router2 } from "express";
+
+// server/services/document-service.ts
+init_prisma_client();
+import * as fs5 from "fs";
+import * as path5 from "path";
+import { v4 as uuidv4 } from "uuid";
+import multer from "multer";
+var DocumentService = class {
+  // 50MB
+  constructor(uploadDir = "./uploads/documents") {
+    this.maxFileSize = 50 * 1024 * 1024;
+    this.uploadDir = uploadDir;
+    this.ensureUploadDir();
+  }
+  ensureUploadDir() {
+    if (!fs5.existsSync(this.uploadDir)) {
+      fs5.mkdirSync(this.uploadDir, { recursive: true });
+    }
+  }
+  // ============ DOCUMENTO CRUD ============
+  async createDocument(data) {
+    const id = uuidv4();
+    const document = await prisma_client_default.documents.create({
+      data: {
+        id,
+        type: data.type,
+        name: data.name,
+        description: data.description,
+        template_id: data.templateId,
+        client_id: data.clientId,
+        created_by: data.createdBy,
+        status: "draft",
+        updated_at: /* @__PURE__ */ new Date()
+      }
+    });
+    return document;
+  }
+  async getDocuments(filters) {
+    const where = {};
+    if (filters.clientId) where.client_id = filters.clientId;
+    if (filters.type) where.type = filters.type;
+    if (filters.status) where.status = filters.status;
+    if (filters.createdBy) where.created_by = filters.createdBy;
+    const documents = await prisma_client_default.documents.findMany({
+      where,
+      orderBy: {
+        created_at: "desc"
+      }
+    });
+    return documents;
+  }
+  async getDocumentById(id) {
+    const document = await prisma_client_default.documents.findUnique({
+      where: { id }
+    });
+    return document;
+  }
+  async updateDocument(id, data) {
+    const updateData = {
+      updated_at: /* @__PURE__ */ new Date()
+    };
+    if (data.name) updateData.name = data.name;
+    if (data.description) updateData.description = data.description;
+    if (data.status) updateData.status = data.status;
+    if (data.signatureStatus) updateData.signature_status = data.signatureStatus;
+    if (data.signatureDate) updateData.signature_date = data.signatureDate;
+    if (data.signedBy) updateData.signed_by = data.signedBy;
+    const document = await prisma_client_default.documents.update({
+      where: { id },
+      data: updateData
+    });
+    return document;
+  }
+  async deleteDocument(id) {
+    const document = await prisma_client_default.documents.findUnique({
+      where: { id }
+    });
+    if (!document) {
+      throw new Error("Documento no encontrado");
+    }
+    if (document.file_path) {
+      const fullPath = path5.join(process.cwd(), document.file_path);
+      if (fs5.existsSync(fullPath)) {
+        fs5.unlinkSync(fullPath);
+      }
+    }
+    await prisma_client_default.document_signatures.deleteMany({
+      where: { document_id: id }
+    });
+    await prisma_client_default.document_versions.deleteMany({
+      where: { document_id: id }
+    });
+    await prisma_client_default.documents.delete({
+      where: { id }
+    });
+    return { success: true, id };
+  }
+  // ============ TEMPLATES ============
+  async createTemplate(data) {
+    const id = uuidv4();
+    const template = await prisma_client_default.document_templates.create({
+      data: {
+        id,
+        type: data.type,
+        name: data.name,
+        description: data.description,
+        content: data.content,
+        variables: data.variables ? JSON.stringify(data.variables) : null,
+        is_active: true,
+        updated_at: /* @__PURE__ */ new Date()
+      }
+    });
+    return template;
+  }
+  async getTemplates(type) {
+    const where = {
+      is_active: true
+    };
+    if (type) where.type = type;
+    const templates = await prisma_client_default.document_templates.findMany({
+      where,
+      orderBy: {
+        created_at: "desc"
+      }
+    });
+    return templates;
+  }
+  async getTemplateById(id) {
+    const template = await prisma_client_default.document_templates.findUnique({
+      where: { id }
+    });
+    return template;
+  }
+  // ============ FIRMAS ============
+  async signDocument(documentId, userId, signatureType, ipAddress, userAgent) {
+    const signatureId = uuidv4();
+    const signature = await prisma_client_default.document_signatures.create({
+      data: {
+        id: signatureId,
+        document_id: documentId,
+        signed_by: userId,
+        signature_type: signatureType,
+        ip_address: ipAddress,
+        user_agent: userAgent,
+        signature_date: /* @__PURE__ */ new Date()
+      },
+      include: {
+        users: true
+      }
+    });
+    await prisma_client_default.documents.update({
+      where: { id: documentId },
+      data: {
+        signature_status: "signed",
+        signature_date: /* @__PURE__ */ new Date(),
+        signed_by: userId,
+        status: "signed",
+        updated_at: /* @__PURE__ */ new Date()
+      }
+    });
+    return signature;
+  }
+  async getSignatures(documentId) {
+    const signatures = await prisma_client_default.document_signatures.findMany({
+      where: { document_id: documentId },
+      include: {
+        users: true
+      },
+      orderBy: {
+        signature_date: "desc"
+      }
+    });
+    return signatures;
+  }
+  // ============ VERSIONADO ============
+  async createVersion(documentId, content, createdBy) {
+    const lastVersion = await prisma_client_default.document_versions.findFirst({
+      where: { document_id: documentId },
+      orderBy: { version: "desc" },
+      select: { version: true }
+    });
+    const nextVersion = (lastVersion?.version ?? 0) + 1;
+    const versionId = uuidv4();
+    const version = await prisma_client_default.document_versions.create({
+      data: {
+        id: versionId,
+        document_id: documentId,
+        version: nextVersion,
+        content,
+        created_by: createdBy
+      },
+      include: {
+        users: true
+      }
+    });
+    return version;
+  }
+  async getVersions(documentId) {
+    const versions = await prisma_client_default.document_versions.findMany({
+      where: { document_id: documentId },
+      include: {
+        users: true
+      },
+      orderBy: {
+        version: "desc"
+      }
+    });
+    return versions;
+  }
+  // ============ ARCHIVOS ============
+  async uploadFile(documentId, file) {
+    if (!file) {
+      throw new Error("No file provided");
+    }
+    if (file.size > this.maxFileSize) {
+      throw new Error(`File size exceeds maximum of ${this.maxFileSize / 1024 / 1024}MB`);
+    }
+    const timestamp = Date.now();
+    const fileName = `${documentId}-${timestamp}-${file.originalname}`;
+    const filePath = path5.join(this.uploadDir, fileName);
+    const relativeFilePath = path5.join("uploads/documents", fileName);
+    fs5.writeFileSync(filePath, file.buffer);
+    const document = await prisma_client_default.documents.update({
+      where: { id: documentId },
+      data: {
+        file_path: relativeFilePath,
+        file_name: file.originalname,
+        file_size: file.size,
+        file_type: file.mimetype,
+        updated_at: /* @__PURE__ */ new Date()
+      }
+    });
+    return document;
+  }
+  async downloadFile(documentId) {
+    const document = await prisma_client_default.documents.findUnique({
+      where: { id: documentId }
+    });
+    if (!document || !document.file_path) {
+      return null;
+    }
+    const filePath = path5.join(process.cwd(), document.file_path);
+    if (!fs5.existsSync(filePath)) {
+      return null;
+    }
+    const fileBuffer = fs5.readFileSync(filePath);
+    const fileName = document.file_name || `document-${documentId}`;
+    return {
+      buffer: fileBuffer,
+      fileName,
+      mimeType: document.file_type || "application/octet-stream"
+    };
+  }
+  // ============ UTILIDADES ============
+  async getDocumentStats() {
+    const stats = {
+      totalDocuments: await prisma_client_default.documents.count(),
+      byType: await prisma_client_default.documents.groupBy({
+        by: ["type"],
+        _count: true
+      }),
+      byStatus: await prisma_client_default.documents.groupBy({
+        by: ["status"],
+        _count: true
+      }),
+      totalSignatures: await prisma_client_default.document_signatures.count(),
+      totalVersions: await prisma_client_default.document_versions.count()
+    };
+    return stats;
+  }
+  async getClientDocuments(clientId) {
+    const documents = await prisma_client_default.documents.findMany({
+      where: { client_id: clientId },
+      include: {
+        users: true,
+        signatures: true
+      },
+      orderBy: {
+        created_at: "desc"
+      }
+    });
+    return documents;
+  }
+  async archiveDocument(documentId) {
+    const document = await prisma_client_default.documents.update({
+      where: { id: documentId },
+      data: {
+        status: "archived",
+        updated_at: /* @__PURE__ */ new Date()
+      }
+    });
+    return document;
+  }
+  async searchDocuments(query) {
+    const documents = await prisma_client_default.documents.findMany({
+      where: {
+        OR: [
+          { name: { contains: query } },
+          { description: { contains: query } }
+        ]
+      },
+      include: {
+        users: true,
+        signatures: true
+      },
+      orderBy: {
+        created_at: "desc"
+      }
+    });
+    return documents;
+  }
+};
+var configureMulter = () => {
+  const storage = multer.memoryStorage();
+  const upload3 = multer({
+    storage,
+    limits: {
+      fileSize: 50 * 1024 * 1024
+      // 50MB
+    },
+    fileFilter: (req, file, cb) => {
+      const allowedMimes = [
+        "application/pdf",
+        "image/jpeg",
+        "image/png",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.ms-excel",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "text/plain"
+      ];
+      if (allowedMimes.includes(file.mimetype)) {
+        cb(null, true);
+      } else {
+        cb(new Error("Invalid file type"));
+      }
+    }
+  });
+  return upload3;
+};
+var documentService = new DocumentService();
+
+// server/documents.ts
+var documentsRouter = Router2();
+var upload = configureMulter();
+var normalizeDocument = (doc) => {
+  if (!doc) return null;
+  return {
+    id: doc.id,
+    type: doc.type,
+    name: doc.name,
+    description: doc.description ?? null,
+    template_id: doc.template_id ?? null,
+    client_id: doc.client_id ?? null,
+    created_by: doc.created_by,
+    file_path: doc.file_path ?? null,
+    file_name: doc.file_name ?? null,
+    file_size: doc.file_size ?? null,
+    file_type: doc.file_type ?? null,
+    status: doc.status,
+    signature_status: doc.signature_status ?? "unsigned",
+    signature_date: doc.signature_date ?? null,
+    signed_by: doc.signed_by ?? null,
+    created_at: doc.created_at,
+    updated_at: doc.updated_at
+  };
+};
+var requireAuth = (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({ error: "Usuario no autenticado" });
+  }
+  next();
+};
+var checkPermission = (requiredPermission) => {
+  return (req, res, next) => {
+    if (!req.user) {
+      return res.status(401).json({ error: "Usuario no autenticado" });
+    }
+    if (req.user.roleName === "Administrador") {
+      return next();
+    }
+    if (!req.user.permissions.includes(requiredPermission)) {
+      return res.status(403).json({
+        error: "No tienes permisos para esta acci\xF3n",
+        required: requiredPermission
+      });
+    }
+    next();
+  };
+};
+documentsRouter.use(requireAuth);
+documentsRouter.get(
+  "/stats/all",
+  checkPermission("documents:read"),
+  async (req, res) => {
+    try {
+      const stats = await documentService.getDocumentStats();
+      res.json({
+        success: true,
+        data: stats
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  }
+);
+documentsRouter.get(
+  "/client/:clientId",
+  checkPermission("documents:read"),
+  async (req, res) => {
+    try {
+      const { clientId } = req.params;
+      const documents = await documentService.getClientDocuments(clientId);
+      res.json({
+        success: true,
+        data: documents
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  }
+);
+documentsRouter.get(
+  "/search/:query",
+  checkPermission("documents:read"),
+  async (req, res) => {
+    try {
+      const { query } = req.params;
+      if (!query || query.length < 2) {
+        return res.status(400).json({
+          success: false,
+          error: "Query debe tener al menos 2 caracteres"
+        });
+      }
+      const documents = await documentService.searchDocuments(query);
+      res.json({
+        success: true,
+        data: documents
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  }
+);
+documentsRouter.get("/templates", checkPermission("documents:read"), async (req, res) => {
+  try {
+    const { type } = req.query;
+    const templates = await documentService.getTemplates(type);
+    res.json({
+      success: true,
+      data: templates
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+documentsRouter.post(
+  "/templates",
+  checkPermission("admin:templates"),
+  async (req, res) => {
+    try {
+      const { type, name, description, content, variables } = req.body;
+      if (!type || !name || !content) {
+        return res.status(400).json({
+          success: false,
+          error: "type, name y content son requeridos"
+        });
+      }
+      const template = await documentService.createTemplate({
+        type,
+        name,
+        description,
+        content,
+        variables
+      });
+      res.status(201).json({
+        success: true,
+        data: template
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  }
+);
+documentsRouter.post(
+  "/",
+  checkPermission("documents:create"),
+  async (req, res) => {
+    try {
+      const { type, name, description, templateId, clientId } = req.body;
+      if (!type || !name) {
+        return res.status(400).json({
+          success: false,
+          error: "type y name son requeridos"
+        });
+      }
+      const document = await documentService.createDocument({
+        type,
+        name,
+        description,
+        templateId,
+        clientId,
+        createdBy: req.user.id
+      });
+      res.status(201).json(normalizeDocument(document));
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  }
+);
+documentsRouter.get(
+  "/",
+  checkPermission("documents:read"),
+  async (req, res) => {
+    try {
+      const { type, status, clientId, createdBy } = req.query;
+      const filters = {};
+      if (type) filters.type = type;
+      if (status) filters.status = status;
+      if (clientId) filters.clientId = clientId;
+      if (createdBy) filters.createdBy = createdBy;
+      const documents = await documentService.getDocuments(filters);
+      res.json(documents.map(normalizeDocument));
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  }
+);
+documentsRouter.put(
+  "/:id/archive",
+  checkPermission("documents:update"),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const document = await documentService.archiveDocument(id);
+      res.json({
+        success: true,
+        data: document
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  }
+);
+documentsRouter.get(
+  "/:id",
+  checkPermission("documents:read"),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const document = await documentService.getDocumentById(id);
+      if (!document) {
+        return res.status(404).json({
+          success: false,
+          error: "Documento no encontrado"
+        });
+      }
+      res.json(normalizeDocument(document));
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  }
+);
+documentsRouter.put(
+  "/:id",
+  checkPermission("documents:update"),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const updateData = req.body;
+      const document = await documentService.updateDocument(id, updateData);
+      res.json(normalizeDocument(document));
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  }
+);
+documentsRouter.delete(
+  "/:id",
+  checkPermission("documents:delete"),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const result = await documentService.deleteDocument(id);
+      res.json({
+        success: true,
+        data: result
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  }
+);
+documentsRouter.post(
+  "/:id/sign",
+  checkPermission("documents:sign"),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { signatureType } = req.body;
+      if (!signatureType) {
+        return res.status(400).json({
+          success: false,
+          error: "signatureType es requerido"
+        });
+      }
+      const signature = await documentService.signDocument(
+        id,
+        req.user?.id,
+        signatureType,
+        req.ip,
+        req.get("user-agent")
+      );
+      res.json({
+        success: true,
+        data: signature
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  }
+);
+documentsRouter.get(
+  "/:id/signatures",
+  checkPermission("documents:read"),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const signatures = await documentService.getSignatures(id);
+      res.json({
+        success: true,
+        data: signatures
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  }
+);
+documentsRouter.post(
+  "/:id/versions",
+  checkPermission("documents:update"),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { content } = req.body;
+      if (!content) {
+        return res.status(400).json({
+          success: false,
+          error: "content es requerido"
+        });
+      }
+      const version = await documentService.createVersion(
+        id,
+        content,
+        req.user?.id
+      );
+      res.status(201).json({
+        success: true,
+        data: version
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  }
+);
+documentsRouter.get(
+  "/:id/versions",
+  checkPermission("documents:read"),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const versions = await documentService.getVersions(id);
+      res.json({
+        success: true,
+        data: versions
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  }
+);
+documentsRouter.post(
+  "/:id/upload",
+  checkPermission("documents:update"),
+  upload.single("file"),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      if (!req.file) {
+        return res.status(400).json({
+          success: false,
+          error: "No file provided"
+        });
+      }
+      const document = await documentService.uploadFile(id, req.file);
+      res.json({
+        success: true,
+        data: document
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  }
+);
+documentsRouter.get(
+  "/:id/download",
+  checkPermission("documents:read"),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const fileData = await documentService.downloadFile(id);
+      if (!fileData) {
+        return res.status(404).json({
+          success: false,
+          error: "Archivo no encontrado"
+        });
+      }
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${fileData.fileName}"`
+      );
+      res.setHeader("Content-Type", fileData.mimeType);
+      res.send(fileData.buffer);
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  }
+);
 
 // server/services/version-service.ts
 import { readFile } from "fs/promises";
-import { join, dirname } from "path";
+import { join as join2, dirname } from "path";
 import { fileURLToPath } from "url";
 var __filename = fileURLToPath(import.meta.url);
 var __dirname = dirname(__filename);
 async function getCurrentVersion() {
   try {
-    const packageJsonPath = join(__dirname, "../../package.json");
+    const packageJsonPath = join2(__dirname, "../../package.json");
     const packageJson = await readFile(packageJsonPath, "utf-8");
     const pkg = JSON.parse(packageJson);
     return pkg.version || "1.0.0";
@@ -6930,744 +11341,608 @@ async function checkForUpdates(owner, repo) {
     publishedAt: latestRelease.published_at
   };
 }
-async function performHealthCheck() {
-  const checks = [];
-  let allPassed = true;
-  try {
-    await getCurrentVersion();
-    checks.push({
-      name: "Package.json",
-      status: "pass",
-      message: "Archivo legible y versi\xF3n disponible"
-    });
-  } catch (error) {
-    allPassed = false;
-    checks.push({
-      name: "Package.json",
-      status: "fail",
-      message: `Error: ${error.message}`
-    });
-  }
-  try {
-    const serverUrl = process.env.NODE_ENV === "production" ? "http://localhost:5000" : "http://localhost:5000";
-    const response = await fetch(`${serverUrl}/api/health`, {
-      method: "GET",
-      headers: { "Accept": "application/json" }
-    }).catch(() => null);
-    if (response && response.ok) {
-      checks.push({
-        name: "API Health",
-        status: "pass",
-        message: "Servidor responde correctamente"
-      });
-    } else {
-      checks.push({
-        name: "API Health",
-        status: "fail",
-        message: "Servidor no responde o endpoint de health no disponible"
-      });
-    }
-  } catch (error) {
-    checks.push({
-      name: "API Health",
-      status: "fail",
-      message: `Error al verificar servidor: ${error.message}`
-    });
-  }
-  try {
-    const { PrismaClient: PrismaClient21 } = await import("@prisma/client");
-    const prisma21 = new PrismaClient21();
-    await prisma21.$queryRaw`SELECT 1 as healthcheck`;
-    await prisma21.$disconnect();
-    checks.push({
-      name: "Database",
-      status: "pass",
-      message: "Conexi\xF3n a base de datos exitosa"
-    });
-  } catch (error) {
-    allPassed = false;
-    checks.push({
-      name: "Database",
-      status: "fail",
-      message: `Error de conexi\xF3n: ${error.message}`
-    });
-  }
-  return {
-    success: allPassed,
-    checks,
-    timestamp: /* @__PURE__ */ new Date()
-  };
-}
 
-// server/services/backup-service.ts
-init_websocket();
-import { PrismaClient as PrismaClient13 } from "@prisma/client";
-import archiver from "archiver";
-import { createWriteStream, promises as fs5 } from "fs";
-import { join as join2, dirname as dirname2 } from "path";
-import { fileURLToPath as fileURLToPath2 } from "url";
-import { exec } from "child_process";
-import { promisify } from "util";
-var execAsync = promisify(exec);
-var __filename2 = fileURLToPath2(import.meta.url);
-var __dirname2 = dirname2(__filename2);
-var prisma13 = new PrismaClient13();
-function replacePatternVariables(pattern, version) {
-  const now = /* @__PURE__ */ new Date();
-  function getISOWeekNumber(date) {
-    const d = new Date(date);
-    d.setHours(0, 0, 0, 0);
-    d.setDate(d.getDate() + 4 - (d.getDay() || 7));
-    const yearStart = new Date(d.getFullYear(), 0, 1);
-    const weekNo = Math.ceil(((d.getTime() - yearStart.getTime()) / 864e5 + 1) / 7);
-    return weekNo;
-  }
-  const weekNumber = getISOWeekNumber(now);
-  function getWeekOfMonth(date) {
-    const startOfMonth = new Date(date.getFullYear(), date.getMonth(), 1);
-    const startDay = startOfMonth.getDay();
-    const daysToMonday = startDay === 0 ? 1 : startDay === 1 ? 0 : 8 - startDay;
-    const firstMonday = 1 + daysToMonday;
-    const dayOfMonth = date.getDate();
-    if (dayOfMonth < firstMonday) {
-      return 0;
-    }
-    return Math.floor((dayOfMonth - firstMonday) / 7) + 1;
-  }
-  const weekNumberInMonth = getWeekOfMonth(now);
-  const dayNames = ["Domingo", "Lunes", "Martes", "Mi\xE9rcoles", "Jueves", "Viernes", "S\xE1bado"];
-  const monthNames = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
-  const variables = {
-    // Variables originales
-    "{fecha}": now.toISOString().split("T")[0].replace(/-/g, ""),
-    "{hora}": now.toTimeString().split(" ")[0].replace(/:/g, ""),
-    "{version}": version,
-    "{timestamp}": Date.now().toString(),
-    // Nuevas variables de año
-    "{YEAR_4}": now.getFullYear().toString(),
-    "{YEAR_2}": now.getFullYear().toString().slice(-2),
-    // Variables de mes
-    "{MONTH_NUMBER}": String(now.getMonth() + 1).padStart(2, "0"),
-    "{MONTH_NAME}": monthNames[now.getMonth()],
-    // Variables de día
-    "{MONTH_DAY_NUMBER}": String(now.getDate()).padStart(2, "0"),
-    "{WEEK_DAY_NUMBER}": now.getDay().toString(),
-    "{WEEK_DAY_NAME}": dayNames[now.getDay()],
-    // Variables de tiempo
-    "{HOURS}": String(now.getHours()).padStart(2, "0"),
-    "{MINUTES}": String(now.getMinutes()).padStart(2, "0"),
-    "{SECONDS}": String(now.getSeconds()).padStart(2, "0"),
-    // Variables de semana
-    "{WEEK_NUMBER}": String(weekNumber).padStart(2, "0"),
-    "{WEEK_NUMBER_IN_THE_MONTH}": weekNumberInMonth.toString()
-  };
-  let result = pattern;
-  Object.entries(variables).forEach(([key, value]) => {
-    result = result.replaceAll(key, value);
-  });
-  return result;
-}
-async function createDatabaseBackup(fileName) {
-  const backupDir = join2(__dirname2, "../../backups/db");
-  await fs5.mkdir(backupDir, { recursive: true });
-  const filePath = join2(backupDir, fileName);
-  const dbUrl2 = process.env.DATABASE_URL;
-  if (!dbUrl2) {
-    throw new Error("DATABASE_URL no est\xE1 definida");
-  }
-  try {
-    const match = dbUrl2.match(/mysql:\/\/([^:]+):([^@]+)@([^:]+):(\d+)\/(.+)/);
-    if (!match) {
-      throw new Error("Formato de DATABASE_URL no v\xE1lido");
-    }
-    const [, user, password, host, port, database] = match;
-    const command = `mysqldump -h ${host} -P ${port} -u ${user} -p${password} ${database} > ${filePath}`;
-    try {
-      await execAsync(command);
-      console.log("\u2705 Backup de BD creado con mysqldump");
-    } catch (error) {
-      console.log("\u26A0\uFE0F mysqldump no disponible, usando m\xE9todo alternativo");
-      await createDatabaseBackupFallback(filePath);
-    }
-    const stats = await fs5.stat(filePath);
-    return { path: filePath, size: BigInt(stats.size) };
-  } catch (error) {
-    console.error("Error creando backup de BD:", error);
-    throw error;
-  }
-}
-async function createDatabaseBackupFallback(filePath) {
-  let sqlContent = `-- Backup creado el ${(/* @__PURE__ */ new Date()).toISOString()}
-`;
-  sqlContent += `-- Generado con Prisma (fallback sin mysqldump)
+// server/services/backup-service-wrapper.ts
+var createSystemBackup = async (...args) => {
+  throw new Error("Backup service not implemented yet");
+};
+var listBackups = async (...args) => {
+  return [];
+};
+var restoreFromBackup = async (...args) => {
+  throw new Error("Restore service not implemented yet");
+};
 
-`;
-  try {
-    const tables = [
-      { tableName: "users", model: prisma13.users },
-      { tableName: "roles", model: prisma13.roles },
-      { tableName: "permissions", model: prisma13.permissions },
-      { tableName: "role_permissions", model: prisma13.role_permissions },
-      { tableName: "clients", model: prisma13.clients },
-      { tableName: "client_employees", model: prisma13.clientEmployee },
-      { tableName: "tax_models", model: prisma13.taxModel },
-      { tableName: "tax_periods", model: prisma13.tax_periods },
-      { tableName: "client_tax", model: prisma13.clientTax },
-      { tableName: "tax_files", model: prisma13.taxFile },
-      { tableName: "tasks", model: prisma13.tasks },
-      { tableName: "manuals", model: prisma13.manuals },
-      { tableName: "manual_attachments", model: prisma13.manualAttachment },
-      { tableName: "manual_versions", model: prisma13.manualVersion },
-      { tableName: "activity_logs", model: prisma13.activityLog },
-      { tableName: "audit_trail", model: prisma13.auditTrail },
-      { tableName: "smtp_config", model: prisma13.smtpConfig },
-      { tableName: "client_tax_requirements", model: prisma13.clientTaxRequirement },
-      { tableName: "fiscal_periods", model: prisma13.fiscal_periods },
-      { tableName: "client_tax_filings", model: prisma13.client_tax_filings },
-      { tableName: "job_runs", model: prisma13.jobRun },
-      { tableName: "system_settings", model: prisma13.systemSettings },
-      { tableName: "smtp_accounts", model: prisma13.sMTPAccount },
-      { tableName: "notification_templates", model: prisma13.notificationTemplate },
-      { tableName: "notification_logs", model: prisma13.notificationLog },
-      { tableName: "scheduled_notifications", model: prisma13.scheduledNotification },
-      { tableName: "system_config", model: prisma13.system_config },
-      { tableName: "system_backups", model: prisma13.system_backups },
-      { tableName: "storage_configs", model: prisma13.storageConfig }
-    ];
-    for (const table of tables) {
-      const records = await table.model.findMany();
-      if (records.length > 0) {
-        sqlContent += `-- Tabla ${table.tableName}
-`;
-        for (const record of records) {
-          const columns = Object.keys(record);
-          const values = columns.map((col) => {
-            const val = record[col];
-            if (val === null) return "NULL";
-            if (typeof val === "string") return `'${val.replace(/'/g, "''")}'`;
-            if (val instanceof Date) return `'${val.toISOString()}'`;
-            if (typeof val === "boolean") return val ? "1" : "0";
-            if (typeof val === "bigint") return val.toString();
-            if (typeof val === "object") return `'${JSON.stringify(val).replace(/'/g, "''")}'`;
-            return val;
-          });
-          sqlContent += `INSERT INTO ${table.tableName} (${columns.join(", ")}) VALUES (${values.join(", ")});
-`;
-        }
-        sqlContent += "\n";
-      }
-    }
-    await fs5.writeFile(filePath, sqlContent, "utf-8");
-    console.log("\u2705 Backup de BD creado con Prisma (m\xE9todo alternativo funcional)");
-  } catch (error) {
-    console.error("Error en backup alternativo:", error);
-    throw error;
+// server/services/update-service-wrapper.ts
+var performSystemUpdate = async (...args) => {
+  throw new Error("System update service not implemented yet");
+};
+var verifyGitSetup = async (...args) => {
+  return { isValid: false, message: "Git setup verification not implemented yet" };
+};
+var getUpdateHistory = async (...args) => {
+  return [];
+};
+
+// server/services/storage-factory.ts
+import { PrismaClient as PrismaClient11 } from "@prisma/client";
+
+// server/services/storage-provider.ts
+import fs6 from "fs/promises";
+import path6 from "path";
+var LocalStorageProvider = class {
+  constructor(basePath = path6.join(process.cwd(), "uploads")) {
+    this.basePath = basePath;
   }
-}
-async function createFilesBackup(fileName) {
-  const backupDir = join2(__dirname2, "../../backups/files");
-  await fs5.mkdir(backupDir, { recursive: true });
-  const filePath = join2(backupDir, fileName);
-  return new Promise((resolve, reject) => {
-    const output = createWriteStream(filePath);
-    const archive = archiver("zip", {
-      zlib: { level: 9 }
-      // Máxima compresión
-    });
-    output.on("close", async () => {
-      const stats = await fs5.stat(filePath);
-      resolve({ path: filePath, size: BigInt(stats.size) });
-    });
-    archive.on("error", (err) => {
-      reject(err);
-    });
-    archive.pipe(output);
-    const rootDir = join2(__dirname2, "../..");
-    archive.glob("**/*", {
-      cwd: rootDir,
-      ignore: [
-        "node_modules/**",
-        ".git/**",
-        "backups/**",
-        "dist/**",
-        ".env.local",
-        "*.log"
-      ]
-    });
-    try {
-      archive.file(join2(rootDir, ".env"), { name: ".env" });
-    } catch (error) {
-      console.warn("No se pudo agregar .env al backup");
-    }
-    try {
-      archive.directory(join2(rootDir, "uploads"), "uploads");
-    } catch (error) {
-      console.warn("No se pudo agregar carpeta uploads al backup");
-    }
-    archive.finalize();
-  });
-}
-async function createSystemBackup(userId) {
-  let backupId = null;
-  try {
-    emitSystemLog({ type: "backup", level: "info", message: "Iniciando creaci\xF3n de backup del sistema..." });
-    const packageJsonPath = join2(__dirname2, "../../package.json");
-    const packageJson = await fs5.readFile(packageJsonPath, "utf-8");
-    const pkg = JSON.parse(packageJson);
-    const version = pkg.version || "1.0.0";
-    const dbPatternConfig = await prisma13.system_config.findUnique({
-      where: { key: "backup_db_pattern" }
-    });
-    const filesPatternConfig = await prisma13.system_config.findUnique({
-      where: { key: "backup_files_pattern" }
-    });
-    const dbPattern = dbPatternConfig?.value || "backup_db_{fecha}_{hora}.sql";
-    const filesPattern = filesPatternConfig?.value || "backup_files_{fecha}_{hora}.zip";
-    const dbFileName = replacePatternVariables(dbPattern, version);
-    const filesFileName = replacePatternVariables(filesPattern, version);
-    const backup = await prisma13.system_backups.create({
-      data: {
-        version,
-        dbFile: dbFileName,
-        filesFile: filesFileName,
-        status: "CREATING",
-        createdBy: userId
-      }
-    });
-    backupId = backup.id;
-    emitSystemLog({
-      type: "backup",
-      level: "info",
-      message: "Backup registrado en base de datos",
-      details: `ID: ${backup.id}, Versi\xF3n: ${version}`
-    });
-    emitSystemLog({ type: "backup", level: "info", message: "Creando backup de base de datos...", details: dbFileName });
-    const dbBackup = await createDatabaseBackup(dbFileName);
-    emitSystemLog({ type: "backup", level: "success", message: "Backup de base de datos completado" });
-    emitSystemLog({ type: "backup", level: "info", message: "Creando backup de archivos...", details: filesFileName });
-    const filesBackup = await createFilesBackup(filesFileName);
-    emitSystemLog({ type: "backup", level: "success", message: "Backup de archivos completado" });
-    await prisma13.system_backups.update({
-      where: { id: backup.id },
-      data: {
-        status: "COMPLETED",
-        dbSize: dbBackup.size,
-        filesSize: filesBackup.size,
-        completedAt: /* @__PURE__ */ new Date()
-      }
-    });
-    emitSystemLog({ type: "backup", level: "success", message: "Backup completado exitosamente" });
-    return {
-      id: backup.id,
-      dbFile: dbFileName,
-      filesFile: filesFileName,
-      dbSize: dbBackup.size,
-      filesSize: filesBackup.size,
-      version
-    };
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : "Error desconocido";
-    emitSystemLog({ type: "backup", level: "error", message: "Error al crear backup", details: errorMessage });
-    if (backupId) {
-      await prisma13.system_backups.update({
-        where: { id: backupId },
-        data: {
-          status: "FAILED",
-          errorMessage,
-          completedAt: /* @__PURE__ */ new Date()
-        }
+  async upload(file, relativePath) {
+    const fullPath = path6.join(this.basePath, relativePath);
+    const dir = path6.dirname(fullPath);
+    await fs6.mkdir(dir, { recursive: true });
+    if (Buffer.isBuffer(file)) {
+      await fs6.writeFile(fullPath, file);
+    } else {
+      const writeStream = (await import("fs")).createWriteStream(fullPath);
+      await new Promise((resolve, reject) => {
+        file.pipe(writeStream);
+        file.on("end", resolve);
+        file.on("error", reject);
+        writeStream.on("error", reject);
       });
     }
-    throw error;
+    return relativePath;
   }
-}
-async function listBackups() {
-  return await prisma13.system_backups.findMany({
-    orderBy: { createdAt: "desc" },
-    include: {
-      creator: {
-        select: {
-          id: true,
-          username: true,
-          email: true
-        }
-      }
-    }
-  });
-}
-async function restoreFromBackup(backupId, userId) {
-  let backup;
-  try {
-    emitSystemLog({ type: "restore", level: "info", message: "Iniciando restauraci\xF3n desde backup..." });
-    backup = await prisma13.system_backups.findUnique({
-      where: { id: backupId }
-    });
-    if (!backup) {
-      throw new Error("Backup no encontrado");
-    }
-    if (backup.status !== "COMPLETED") {
-      throw new Error("Solo se pueden restaurar backups completados");
-    }
-    emitSystemLog({
-      type: "restore",
-      level: "info",
-      message: `Restaurando desde backup creado el ${new Date(backup.createdAt).toLocaleString("es-ES")}`,
-      details: `Versi\xF3n: ${backup.version}`
-    });
-    await prisma13.system_backups.update({
-      where: { id: backupId },
-      data: { status: "RESTORING" }
-    });
-    const dbPath = join2(__dirname2, "../../backups/db", backup.dbFile);
-    const filesPath = join2(__dirname2, "../../backups/files", backup.filesFile);
-    await fs5.access(dbPath);
-    await fs5.access(filesPath);
-    emitSystemLog({ type: "restore", level: "info", message: "Descomprimiendo archivos del backup..." });
-    await extractBackupFiles(filesPath);
-    emitSystemLog({ type: "restore", level: "success", message: "Archivos descomprimidos correctamente" });
-    emitSystemLog({ type: "restore", level: "info", message: "Restaurando base de datos..." });
-    await restoreDatabase(dbPath);
-    emitSystemLog({ type: "restore", level: "success", message: "Base de datos restaurada correctamente" });
-    await prisma13.system_backups.update({
-      where: { id: backupId },
-      data: {
-        status: "RESTORED",
-        completedAt: /* @__PURE__ */ new Date()
-      }
-    });
-    emitSystemLog({ type: "restore", level: "success", message: "Restauraci\xF3n completada exitosamente" });
-    emitSystemLog({ type: "restore", level: "warning", message: "IMPORTANTE: Reinicie el servidor para aplicar los cambios" });
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : "Error desconocido";
-    emitSystemLog({ type: "restore", level: "error", message: "Error al restaurar backup", details: errorMessage });
-    if (backup) {
-      await prisma13.system_backups.update({
-        where: { id: backupId },
-        data: {
-          status: "FAILED",
-          errorMessage
-        }
-      });
-    }
-    throw error;
+  async download(relativePath) {
+    const fullPath = path6.join(this.basePath, relativePath);
+    return await fs6.readFile(fullPath);
   }
-}
-async function extractBackupFiles(zipPath) {
-  const rootDir = join2(__dirname2, "../..");
-  try {
-    await execAsync(`unzip -o "${zipPath}" -d "${rootDir}"`);
-    console.log("\u2705 Archivos extra\xEDdos con unzip");
-  } catch (error) {
-    console.log("\u26A0\uFE0F unzip no disponible, usando m\xE9todo alternativo");
-    console.log("\u26A0\uFE0F Extracci\xF3n de archivos requiere unzip en el sistema");
+  async delete(relativePath) {
+    const fullPath = path6.join(this.basePath, relativePath);
+    await fs6.unlink(fullPath);
   }
-}
-async function restoreDatabase(sqlPath) {
-  const dbUrl2 = process.env.DATABASE_URL;
-  if (!dbUrl2) {
-    throw new Error("DATABASE_URL no est\xE1 definida");
-  }
-  const match = dbUrl2.match(/mysql:\/\/([^:]+):([^@]+)@([^:]+):(\d+)\/(.+)/);
-  if (!match) {
-    throw new Error("Formato de DATABASE_URL no v\xE1lido");
-  }
-  const [, user, password, host, port, database] = match;
-  try {
-    const command = `mysql -h ${host} -P ${port} -u ${user} -p${password} ${database} < ${sqlPath}`;
-    await execAsync(command);
-    console.log("\u2705 Base de datos restaurada con mysql");
-  } catch (error) {
-    console.error("\u26A0\uFE0F mysql no disponible para restaurar BD");
-    console.log("\u26A0\uFE0F La restauraci\xF3n de BD requiere mysql client en el sistema");
-    throw new Error("No se pudo restaurar la base de datos: mysql no disponible");
-  }
-}
-
-// server/services/update-service.ts
-import { PrismaClient as PrismaClient14 } from "@prisma/client";
-import { exec as exec2 } from "child_process";
-import { promisify as promisify2 } from "util";
-init_websocket();
-var execAsync2 = promisify2(exec2);
-var prisma14 = new PrismaClient14();
-async function performSystemUpdate(userId, onProgress) {
-  const logs = [];
-  let updateRecord = null;
-  let backupId = null;
-  const log2 = (step, message, level = "info") => {
-    const progress = { step, message, timestamp: /* @__PURE__ */ new Date() };
-    logs.push(progress);
-    console.log(`[${step}] ${message}`);
-    emitSystemLog({
-      type: "update",
-      level,
-      message,
-      details: step
-    });
-    if (onProgress) {
-      onProgress(progress);
-    }
-  };
-  try {
-    const currentVersion = await getCurrentVersion();
-    log2("VERSION_CHECK", `Versi\xF3n actual: ${currentVersion}`);
-    const repoUrlConfig = await prisma14.system_config.findUnique({
-      where: { key: "github_repo_url" }
-    });
-    if (!repoUrlConfig?.value) {
-      throw new Error("URL del repositorio de GitHub no configurada");
-    }
-    const repoUrl = repoUrlConfig.value;
-    let owner = null;
-    let repo = null;
-    if (/^[a-zA-Z0-9_-]+\/[a-zA-Z0-9_.-]+$/.test(repoUrl)) {
-      [owner, repo] = repoUrl.split("/");
-    } else {
-      try {
-        const candidate = repoUrl.startsWith("http://") || repoUrl.startsWith("https://") ? repoUrl : `https://${repoUrl}`;
-        const parsed = new URL(candidate);
-        const hostname = parsed.hostname.toLowerCase();
-        if (!(hostname === "github.com" || hostname.endsWith(".github.com"))) {
-          throw new Error("URL de GitHub no v\xE1lida");
-        }
-        if (parsed.username || parsed.password) {
-          throw new Error("URL de GitHub no v\xE1lida");
-        }
-        const parts = parsed.pathname.split("/").filter(Boolean);
-        if (parts.length < 2) throw new Error("URL de GitHub no v\xE1lida");
-        owner = parts[0];
-        repo = parts[1].replace(/\.git$/, "");
-      } catch (e) {
-        throw new Error("URL de GitHub no v\xE1lida");
-      }
-    }
-    if (!owner || !repo) {
-      throw new Error("URL de GitHub no v\xE1lida");
-    }
-    log2("UPDATE_CHECK", "Verificando actualizaciones disponibles...");
-    const versionInfo = await checkForUpdates(owner, repo.replace(".git", ""));
-    if (!versionInfo.updateAvailable) {
-      log2("NO_UPDATE", "No hay actualizaciones disponibles");
-      return {
-        success: true,
-        fromVersion: currentVersion,
-        toVersion: currentVersion,
-        logs
-      };
-    }
-    log2("UPDATE_AVAILABLE", `Nueva versi\xF3n disponible: ${versionInfo.latest}`);
-    updateRecord = await prisma14.systemUpdate.create({
-      data: {
-        fromVersion: currentVersion,
-        toVersion: versionInfo.latest || "unknown",
-        status: "CHECKING",
-        initiatedBy: userId,
-        logs: JSON.stringify(logs)
-      }
-    });
-    log2("BACKUP_START", "Creando backup de seguridad antes de actualizar...");
-    await prisma14.systemUpdate.update({
-      where: { id: updateRecord.id },
-      data: { status: "BACKING_UP", logs: JSON.stringify(logs) }
-    });
-    const backup = await createSystemBackup(userId);
-    backupId = backup.id;
-    await prisma14.systemUpdate.update({
-      where: { id: updateRecord.id },
-      data: { backupId: backup.id }
-    });
-    log2("BACKUP_COMPLETE", `Backup creado exitosamente: ${backup.id}`, "success");
-    await prisma14.systemUpdate.update({
-      where: { id: updateRecord.id },
-      data: { status: "DOWNLOADING", logs: JSON.stringify(logs) }
-    });
-    log2("GIT_PULL", "Descargando cambios desde GitHub...");
-    const branchConfig = await prisma14.system_config.findUnique({
-      where: { key: "github_branch" }
-    });
-    const branch = branchConfig?.value || "main";
+  async list(relativePath = "", recursive = false) {
+    const fullPath = path6.join(this.basePath, relativePath);
+    const files = [];
     try {
-      const { stdout: pullOutput } = await execAsync2(`git pull origin ${branch}`);
-      log2("GIT_PULL_SUCCESS", `C\xF3digo descargado exitosamente desde rama '${branch}'`, "success");
-      const newVersion = await getCurrentVersion();
-      if (newVersion !== currentVersion) {
-        log2("VERSION_CHANGED", `\u2728 Versi\xF3n actualizada: ${currentVersion} \u2192 ${newVersion}`, "success");
+      const entries = await fs6.readdir(fullPath, { withFileTypes: true });
+      for (const entry of entries) {
+        const entryPath = path6.join(relativePath, entry.name);
+        if (entry.isFile()) {
+          files.push(entryPath);
+        } else if (entry.isDirectory() && recursive) {
+          const subFiles = await this.list(entryPath, true);
+          files.push(...subFiles);
+        }
       }
     } catch (error) {
-      log2("GIT_PULL_ERROR", `Error en git pull: ${error.message}`, "error");
-      throw new Error(`Error al descargar cambios: ${error.message}`);
-    }
-    await prisma14.systemUpdate.update({
-      where: { id: updateRecord.id },
-      data: { status: "INSTALLING", logs: JSON.stringify(logs) }
-    });
-    log2("NPM_INSTALL", "Instalando dependencias...");
-    try {
-      const { stdout: installOutput } = await execAsync2("npm install");
-      log2("NPM_INSTALL_SUCCESS", "Dependencias instaladas correctamente", "success");
-    } catch (error) {
-      log2("NPM_INSTALL_ERROR", `Error en npm install: ${error.message}`, "error");
-      throw new Error(`Error al instalar dependencias: ${error.message}`);
-    }
-    log2("DB_MIGRATE", "Aplicando migraciones de base de datos...");
-    try {
-      await execAsync2("npx prisma db push");
-      log2("DB_MIGRATE_SUCCESS", "Migraciones aplicadas correctamente", "success");
-    } catch (error) {
-      log2("DB_MIGRATE_WARNING", `Advertencia en migraciones: ${error.message}`, "warning");
-    }
-    log2("BUILD", "Compilando aplicaci\xF3n para producci\xF3n...");
-    try {
-      await execAsync2("npm run build");
-      log2("BUILD_SUCCESS", "Aplicaci\xF3n compilada exitosamente", "success");
-    } catch (error) {
-      log2("BUILD_ERROR", `Error en compilaci\xF3n: ${error.message}`, "error");
-      throw new Error(`Error al compilar aplicaci\xF3n: ${error.message}`);
-    }
-    log2("HEALTH_CHECK", "Verificando estado del sistema...", "info");
-    try {
-      const healthResult = await performHealthCheck();
-      if (healthResult.success) {
-        log2("HEALTH_CHECK_SUCCESS", "Todas las verificaciones pasaron correctamente", "success");
-      } else {
-        const failedChecks = healthResult.checks.filter((c) => c.status === "fail").map((c) => c.name).join(", ");
-        log2("HEALTH_CHECK_WARNING", `Algunas verificaciones fallaron: ${failedChecks}`, "warning");
-      }
-      for (const check of healthResult.checks) {
-        const level = check.status === "pass" ? "success" : "warning";
-        log2(`HEALTH_${check.name.toUpperCase()}`, `${check.name}: ${check.message}`, level);
-      }
-    } catch (error) {
-      log2("HEALTH_CHECK_ERROR", `Error en health check: ${error.message}`, "warning");
-    }
-    await prisma14.systemUpdate.update({
-      where: { id: updateRecord.id },
-      data: {
-        status: "COMPLETED",
-        completedAt: /* @__PURE__ */ new Date(),
-        logs: JSON.stringify(logs)
-      }
-    });
-    log2("UPDATE_COMPLETE", `\u2705 Actualizaci\xF3n completada: ${currentVersion} \u2192 ${versionInfo.latest}`, "success");
-    log2("RESTART_REQUIRED", "\u26A0\uFE0F  Reinicie el servidor para aplicar los cambios", "warning");
-    return {
-      success: true,
-      fromVersion: currentVersion,
-      toVersion: versionInfo.latest || "unknown",
-      backupId: backupId || void 0,
-      logs
-    };
-  } catch (error) {
-    log2("ERROR", `Error durante la actualizaci\xF3n: ${error.message}`, "error");
-    if (backupId) {
-      log2("ROLLBACK_START", "Iniciando rollback autom\xE1tico...");
-      try {
-        await restoreFromBackup(backupId, userId);
-        log2("ROLLBACK_SUCCESS", "Rollback completado exitosamente", "success");
-        if (updateRecord) {
-          await prisma14.systemUpdate.update({
-            where: { id: updateRecord.id },
-            data: {
-              status: "ROLLED_BACK",
-              errorMessage: error.message,
-              completedAt: /* @__PURE__ */ new Date(),
-              logs: JSON.stringify(logs)
-            }
-          });
-        }
-      } catch (rollbackError) {
-        log2("ROLLBACK_ERROR", `Error en rollback: ${rollbackError.message}`, "error");
-        if (updateRecord) {
-          await prisma14.systemUpdate.update({
-            where: { id: updateRecord.id },
-            data: {
-              status: "FAILED",
-              errorMessage: `Update failed: ${error.message}. Rollback also failed: ${rollbackError.message}`,
-              completedAt: /* @__PURE__ */ new Date(),
-              logs: JSON.stringify(logs)
-            }
-          });
-        }
-      }
-    } else {
-      if (updateRecord) {
-        await prisma14.systemUpdate.update({
-          where: { id: updateRecord.id },
-          data: {
-            status: "FAILED",
-            errorMessage: error.message,
-            completedAt: /* @__PURE__ */ new Date(),
-            logs: JSON.stringify(logs)
-          }
-        });
+      if (error.code !== "ENOENT") {
+        throw error;
       }
     }
-    return {
-      success: false,
-      fromVersion: await getCurrentVersion(),
-      toVersion: "unknown",
-      backupId: backupId || void 0,
-      logs,
-      error: error.message
-    };
+    return files;
   }
-}
-async function verifyGitSetup() {
-  try {
-    await execAsync2("git --version");
+  async exists(relativePath) {
+    const fullPath = path6.join(this.basePath, relativePath);
     try {
-      const { stdout } = await execAsync2("git remote -v");
-      if (stdout.includes("origin")) {
-        return {
-          installed: true,
-          configured: true,
-          message: "Git est\xE1 instalado y configurado correctamente"
-        };
-      } else {
-        return {
-          installed: true,
-          configured: false,
-          message: "Git est\xE1 instalado pero no hay un repositorio remoto configurado"
-        };
-      }
+      await fs6.access(fullPath);
+      return true;
     } catch {
-      return {
-        installed: true,
-        configured: false,
-        message: "Git est\xE1 instalado pero este no es un repositorio Git"
-      };
+      return false;
     }
-  } catch {
-    return {
-      installed: false,
-      configured: false,
-      message: "Git no est\xE1 instalado en el sistema"
+  }
+  getPublicUrl(relativePath) {
+    return `/uploads/${relativePath}`;
+  }
+};
+
+// server/services/ftp-storage-provider.ts
+import { Client as FTPClient } from "basic-ftp";
+import { Readable } from "stream";
+import path7 from "path";
+var FTPStorageProvider = class {
+  constructor(config) {
+    this.client = null;
+    this.isConnected = false;
+    this.connectionPromise = null;
+    this.config = {
+      ...config,
+      basePath: config.basePath || "/uploads",
+      secure: config.secure || false
     };
   }
-}
-async function getUpdateHistory(limit = 10) {
-  return await prisma14.systemUpdate.findMany({
-    take: limit,
-    orderBy: { createdAt: "desc" },
-    include: {
-      initiator: {
-        select: {
-          id: true,
-          username: true,
-          email: true
+  async ensureConnection() {
+    if (this.isConnected && this.client) {
+      return;
+    }
+    if (this.connectionPromise) {
+      return this.connectionPromise;
+    }
+    this.connectionPromise = (async () => {
+      try {
+        this.client = new FTPClient();
+        this.client.ftp.verbose = false;
+        await this.client.access({
+          host: this.config.host,
+          port: this.config.port,
+          user: this.config.user,
+          password: this.config.password,
+          secure: this.config.secure
+        });
+        this.isConnected = true;
+      } catch (error) {
+        this.client = null;
+        this.isConnected = false;
+        throw new Error(`Error al conectar con FTP: ${error instanceof Error ? error.message : "Error desconocido"}`);
+      } finally {
+        this.connectionPromise = null;
+      }
+    })();
+    return this.connectionPromise;
+  }
+  async upload(file, relativePath) {
+    await this.ensureConnection();
+    if (!this.client) throw new Error("Cliente FTP no conectado");
+    const fullPath = path7.posix.join(this.config.basePath, relativePath);
+    const dir = path7.posix.dirname(fullPath);
+    await this.client.ensureDir(dir);
+    if (Buffer.isBuffer(file)) {
+      try {
+        const stream = Readable.from(file);
+        await this.client.uploadFrom(stream, fullPath);
+      } catch (error) {
+        this.isConnected = false;
+        await this.ensureConnection();
+        const stream = Readable.from(file);
+        await this.client.uploadFrom(stream, fullPath);
+      }
+    } else {
+      await this.client.uploadFrom(file, fullPath);
+    }
+    return relativePath;
+  }
+  async download(relativePath) {
+    await this.ensureConnection();
+    if (!this.client) throw new Error("Cliente FTP no conectado");
+    const fullPath = path7.posix.join(this.config.basePath, relativePath);
+    const chunks = [];
+    try {
+      const writableStream = new (__require("stream")).Writable({
+        write(chunk, encoding, callback) {
+          chunks.push(chunk);
+          callback();
+        }
+      });
+      await this.client.downloadTo(writableStream, fullPath);
+      return Buffer.concat(chunks);
+    } catch (error) {
+      this.isConnected = false;
+      await this.ensureConnection();
+      const writableStream = new (__require("stream")).Writable({
+        write(chunk, encoding, callback) {
+          chunks.push(chunk);
+          callback();
+        }
+      });
+      await this.client.downloadTo(writableStream, fullPath);
+      return Buffer.concat(chunks);
+    }
+  }
+  async delete(relativePath) {
+    await this.ensureConnection();
+    if (!this.client) throw new Error("Cliente FTP no conectado");
+    const fullPath = path7.posix.join(this.config.basePath, relativePath);
+    try {
+      await this.client.remove(fullPath);
+    } catch (error) {
+      this.isConnected = false;
+      await this.ensureConnection();
+      await this.client.remove(fullPath);
+    }
+  }
+  async list(relativePath = "", recursive = false) {
+    await this.ensureConnection();
+    if (!this.client) throw new Error("Cliente FTP no conectado");
+    const fullPath = path7.posix.join(this.config.basePath, relativePath);
+    const files = [];
+    try {
+      if (recursive) {
+        await this.listRecursive(fullPath, relativePath, files);
+      } else {
+        const items = await this.client.list(fullPath);
+        for (const item of items) {
+          if (item.type === 1) {
+            const filePath = path7.posix.join(relativePath, item.name);
+            files.push(filePath);
+          }
         }
       }
+      return files;
+    } catch (error) {
+      if (error.code === 550) {
+        return [];
+      }
+      this.isConnected = false;
+      await this.ensureConnection();
+      return this.list(relativePath, recursive);
     }
-  });
-}
+  }
+  async listRecursive(fullPath, relativePath, files) {
+    if (!this.client) return;
+    const items = await this.client.list(fullPath);
+    for (const item of items) {
+      const itemRelativePath = path7.posix.join(relativePath, item.name);
+      const itemFullPath = path7.posix.join(fullPath, item.name);
+      if (item.type === 1) {
+        files.push(itemRelativePath);
+      } else if (item.type === 2) {
+        await this.listRecursive(itemFullPath, itemRelativePath, files);
+      }
+    }
+  }
+  async exists(relativePath) {
+    await this.ensureConnection();
+    if (!this.client) throw new Error("Cliente FTP no conectado");
+    const fullPath = path7.posix.join(this.config.basePath, relativePath);
+    const dir = path7.posix.dirname(fullPath);
+    const filename = path7.posix.basename(fullPath);
+    try {
+      const items = await this.client.list(dir);
+      return items.some((item) => item.name === filename);
+    } catch (error) {
+      if (error.code === 550) {
+        return false;
+      }
+      this.isConnected = false;
+      await this.ensureConnection();
+      return this.exists(relativePath);
+    }
+  }
+  getPublicUrl(relativePath) {
+    return `/uploads/${relativePath}`;
+  }
+  async disconnect() {
+    if (this.client) {
+      this.client.close();
+      this.client = null;
+      this.isConnected = false;
+    }
+  }
+  // Método de prueba de conexión
+  async testConnection() {
+    try {
+      await this.ensureConnection();
+      return this.isConnected;
+    } catch (error) {
+      return false;
+    }
+  }
+};
 
-// server/routes.ts
-init_storage_factory();
+// server/services/smb-storage-provider.ts
+import SMB2 from "@marsaud/smb2";
+import path8 from "path";
+var SMBStorageProvider = class {
+  constructor(config) {
+    this.client = null;
+    this.config = {
+      ...config,
+      port: config.port || 445,
+      basePath: config.basePath || "/uploads",
+      domain: config.domain || ""
+    };
+    this.initializeClient();
+  }
+  initializeClient() {
+    this.client = new SMB2({
+      share: `\\\\${this.config.host}\\${this.config.share}`,
+      domain: this.config.domain || "",
+      username: this.config.username,
+      password: this.config.password,
+      port: this.config.port
+    });
+  }
+  getSMBPath(relativePath) {
+    const combined = path8.posix.join(this.config.basePath, relativePath);
+    return combined.replace(/\//g, "\\");
+  }
+  async upload(file, relativePath) {
+    const smbPath = this.getSMBPath(relativePath);
+    const dir = path8.dirname(smbPath);
+    return new Promise((resolve, reject) => {
+      this.client.mkdir(dir, (err) => {
+        if (err && err.code !== "STATUS_OBJECT_NAME_COLLISION") {
+        }
+        if (Buffer.isBuffer(file)) {
+          this.client.writeFile(smbPath, file, (writeErr) => {
+            if (writeErr) {
+              reject(new Error(`Error al escribir archivo SMB: ${writeErr.message}`));
+            } else {
+              resolve(relativePath);
+            }
+          });
+        } else {
+          const writeStream = this.client.createWriteStream(smbPath);
+          writeStream.on("error", (streamErr) => {
+            reject(new Error(`Error al escribir stream SMB: ${streamErr.message}`));
+          });
+          writeStream.on("finish", () => {
+            resolve(relativePath);
+          });
+          file.pipe(writeStream);
+        }
+      });
+    });
+  }
+  async download(relativePath) {
+    const smbPath = this.getSMBPath(relativePath);
+    return new Promise((resolve, reject) => {
+      this.client.readFile(smbPath, (err, data) => {
+        if (err) {
+          reject(new Error(`Error al leer archivo SMB: ${err.message}`));
+        } else {
+          resolve(data);
+        }
+      });
+    });
+  }
+  async delete(relativePath) {
+    const smbPath = this.getSMBPath(relativePath);
+    return new Promise((resolve, reject) => {
+      this.client.unlink(smbPath, (err) => {
+        if (err) {
+          reject(new Error(`Error al eliminar archivo SMB: ${err.message}`));
+        } else {
+          resolve();
+        }
+      });
+    });
+  }
+  async list(relativePath = "", recursive = false) {
+    const smbPath = this.getSMBPath(relativePath);
+    const files = [];
+    try {
+      if (recursive) {
+        await this.listRecursive(smbPath, relativePath, files);
+      } else {
+        const items = await this.readdir(smbPath);
+        for (const item of items) {
+          if (item.type === "file") {
+            const filePath = path8.posix.join(relativePath, item.name);
+            files.push(filePath);
+          }
+        }
+      }
+      return files;
+    } catch (error) {
+      return [];
+    }
+  }
+  async readdir(smbPath) {
+    return new Promise((resolve, reject) => {
+      this.client.readdir(smbPath, (err, files) => {
+        if (err) {
+          reject(err);
+        } else {
+          const items = files.map((file) => ({
+            name: file.name,
+            type: file.type === "directory" ? "directory" : "file"
+          }));
+          resolve(items);
+        }
+      });
+    });
+  }
+  async listRecursive(smbPath, relativePath, files) {
+    const items = await this.readdir(smbPath);
+    for (const item of items) {
+      const itemRelativePath = path8.posix.join(relativePath, item.name);
+      const itemSMBPath = path8.join(smbPath, item.name);
+      if (item.type === "file") {
+        files.push(itemRelativePath);
+      } else if (item.type === "directory") {
+        await this.listRecursive(itemSMBPath, itemRelativePath, files);
+      }
+    }
+  }
+  async exists(relativePath) {
+    const smbPath = this.getSMBPath(relativePath);
+    return new Promise((resolve) => {
+      this.client.exists(smbPath, (err, exists) => {
+        if (err) {
+          resolve(false);
+        } else {
+          resolve(exists);
+        }
+      });
+    });
+  }
+  getPublicUrl(relativePath) {
+    return `/uploads/${relativePath}`;
+  }
+  async disconnect() {
+    return new Promise((resolve) => {
+      if (this.client) {
+        this.client.disconnect();
+        this.client = null;
+      }
+      resolve();
+    });
+  }
+  // Método de prueba de conexión
+  async testConnection() {
+    try {
+      const basePath = this.config.basePath.replace(/\//g, "\\");
+      await this.readdir(basePath);
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
+};
+
+// server/services/storage-factory.ts
+import crypto3 from "crypto";
+import path9 from "path";
+var prisma11 = new PrismaClient11();
+var ALGORITHM2 = "aes-256-gcm";
+function getEncryptionKey2() {
+  const envKey = process.env.STORAGE_ENCRYPTION_KEY;
+  if (!envKey || envKey.length < 32) {
+    throw new Error("STORAGE_ENCRYPTION_KEY no configurada o muy corta. Debe tener al menos 32 caracteres.");
+  }
+  return envKey;
+}
+function encryptPassword2(password) {
+  const ENCRYPTION_KEY = getEncryptionKey2();
+  const iv = crypto3.randomBytes(16);
+  const cipher = crypto3.createCipheriv(ALGORITHM2, Buffer.from(ENCRYPTION_KEY.slice(0, 32)), iv);
+  let encrypted = cipher.update(password, "utf8", "hex");
+  encrypted += cipher.final("hex");
+  const authTag = cipher.getAuthTag();
+  return `${iv.toString("hex")}:${authTag.toString("hex")}:${encrypted}`;
+}
+function decryptPassword2(encryptedData) {
+  try {
+    const ENCRYPTION_KEY = getEncryptionKey2();
+    const parts = encryptedData.split(":");
+    if (parts.length !== 3) {
+      throw new Error("Formato de datos cifrados inv\xE1lido");
+    }
+    const iv = Buffer.from(parts[0], "hex");
+    const authTag = Buffer.from(parts[1], "hex");
+    const encrypted = parts[2];
+    const decipher = crypto3.createDecipheriv(ALGORITHM2, Buffer.from(ENCRYPTION_KEY.slice(0, 32)), iv);
+    decipher.setAuthTag(authTag);
+    let decrypted = decipher.update(encrypted, "hex", "utf8");
+    decrypted += decipher.final("utf8");
+    return decrypted;
+  } catch (error) {
+    throw new Error("Error al descifrar contrase\xF1a");
+  }
+}
+var StorageFactory = class {
+  static {
+    this.instance = null;
+  }
+  static {
+    this.currentConfigId = null;
+  }
+  // Obtener el provider de almacenamiento activo
+  static async getActiveProvider() {
+    const activeConfig = await prisma11.storage_configs.findFirst({
+      where: { isActive: true }
+    });
+    if (!activeConfig || this.currentConfigId !== activeConfig.id || !this.instance) {
+      this.instance = await this.createProvider(activeConfig);
+      this.currentConfigId = activeConfig?.id || null;
+    }
+    return this.instance;
+  }
+  // Obtener provider para una configuración específica por ID
+  static async getProviderById(configId) {
+    const config = await prisma11.storage_configs.findUnique({
+      where: { id: configId }
+    });
+    if (!config) {
+      throw new Error(`Configuraci\xF3n de storage no encontrada: ${configId}`);
+    }
+    return this.createProvider(config);
+  }
+  // Crear provider según configuración
+  static async createProvider(config) {
+    if (!config || config.type === "LOCAL") {
+      const basePath = config?.base_path ? path9.join(process.cwd(), config.base_path) : void 0;
+      return new LocalStorageProvider(basePath);
+    }
+    if (config.type === "FTP") {
+      if (!config.host || !config.port || !config.username || !config.encrypted_password) {
+        throw new Error("Configuraci\xF3n FTP incompleta");
+      }
+      const ftpConfig = {
+        host: config.host,
+        port: config.port,
+        user: config.username,
+        password: decryptPassword2(config.encrypted_password),
+        basePath: config.base_path || "/uploads",
+        secure: false
+        // Puede ser configurable
+      };
+      return new FTPStorageProvider(ftpConfig);
+    }
+    if (config.type === "SMB") {
+      if (!config.host || !config.username || !config.encrypted_password) {
+        throw new Error("Configuraci\xF3n SMB incompleta");
+      }
+      const pathParts = (config.base_path || "").split("/").filter((p) => p);
+      const share = pathParts[0] || "uploads";
+      const basePath = "/" + pathParts.slice(1).join("/");
+      const smbConfig = {
+        host: config.host,
+        port: config.port || 445,
+        domain: "",
+        // Puede ser configurable
+        username: config.username,
+        password: decryptPassword2(config.encrypted_password),
+        basePath: basePath || "/",
+        share
+      };
+      return new SMBStorageProvider(smbConfig);
+    }
+    return new LocalStorageProvider("/uploads");
+  }
+  // Probar conexión con una configuración específica guardada
+  static async testConfiguration(configId) {
+    const config = await prisma11.storage_configs.findUnique({
+      where: { id: configId }
+    });
+    if (!config) {
+      throw new Error("Configuraci\xF3n no encontrada");
+    }
+    const provider = await this.createProvider(config);
+    if ("testConnection" in provider && typeof provider.testConnection === "function") {
+      return await provider.testConnection();
+    }
+    return true;
+  }
+  // Probar conexión con una configuración temporal (sin guardar)
+  static async testConfigurationData(config) {
+    try {
+      const provider = await this.createProvider(config);
+      if ("testConnection" in provider && typeof provider.testConnection === "function") {
+        const success = await provider.testConnection();
+        if (success) {
+          return { success: true, message: "Conexi\xF3n exitosa" };
+        } else {
+          return { success: false, message: "Conexi\xF3n fallida" };
+        }
+      }
+      return { success: true, message: "Provider creado correctamente" };
+    } catch (error) {
+      return { success: false, message: error.message || "Error al probar configuraci\xF3n" };
+    }
+  }
+  // Limpiar instancia (útil para pruebas o cambio de configuración)
+  static async clearInstance() {
+    if (this.instance && "disconnect" in this.instance) {
+      await this.instance.disconnect?.();
+    }
+    this.instance = null;
+    this.currentConfigId = null;
+  }
+  // Crear provider para una configuración específica (sin activarla)
+  static async createProviderForConfig(configId) {
+    const config = await prisma11.storage_configs.findUnique({
+      where: { id: configId }
+    });
+    if (!config) {
+      throw new Error("Configuraci\xF3n no encontrada");
+    }
+    return await this.createProvider(config);
+  }
+};
 
 // server/middleware/storage-upload.ts
-init_storage_factory();
 import fs7 from "fs/promises";
-import path9 from "path";
+import path10 from "path";
 async function uploadToStorage(req, res, next) {
   try {
     if (!req.file && !req.files) {
@@ -7697,12 +11972,12 @@ async function uploadToStorage(req, res, next) {
   }
 }
 async function processFile(file, provider) {
-  const uploadsDir2 = path9.join(process.cwd(), "uploads");
-  const relativePath = path9.relative(uploadsDir2, file.path);
+  const uploadsDir2 = path10.join(process.cwd(), "uploads");
+  const relativePath = path10.relative(uploadsDir2, file.path);
   const isLocal = provider.constructor.name === "LocalStorageProvider";
   if (isLocal) {
     file.path = relativePath;
-    file.destination = path9.dirname(relativePath);
+    file.destination = path10.dirname(relativePath);
     return;
   }
   const tempFilePath = file.path;
@@ -7710,7 +11985,7 @@ async function processFile(file, provider) {
   try {
     await provider.upload(readStream, relativePath);
     file.path = relativePath;
-    file.destination = path9.dirname(relativePath);
+    file.destination = path10.dirname(relativePath);
     await fs7.unlink(tempFilePath);
   } catch (error) {
     readStream.destroy();
@@ -7718,9 +11993,352 @@ async function processFile(file, provider) {
   }
 }
 
+// server/services/tax-calendar-import.ts
+import ExcelJS3 from "exceljs";
+import { randomUUID as randomUUID6 } from "crypto";
+init_prisma_client();
+async function processExcelImport(buffer, userId) {
+  const result = {
+    imported: 0,
+    errors: [],
+    duplicates: [],
+    success: false
+  };
+  try {
+    if (!Buffer.isBuffer(buffer)) {
+      result.errors.push("El archivo proporcionado no es v\xE1lido");
+      return result;
+    }
+    const workbook = new ExcelJS3.Workbook();
+    await workbook.xlsx.load(buffer);
+    const worksheet = workbook.getWorksheet("Periodos");
+    if (!worksheet) {
+      result.errors.push('No se encontr\xF3 la hoja "Periodos" en el archivo Excel');
+      return result;
+    }
+    const rows = [];
+    const validationErrors = [];
+    const seenKeys = /* @__PURE__ */ new Set();
+    worksheet.eachRow((row, rowNumber) => {
+      if (rowNumber === 1 || rowNumber === 2) return;
+      try {
+        const rowData = parseRow(row, rowNumber);
+        const errors = validateRow(rowData, rowNumber);
+        if (errors.length > 0) {
+          validationErrors.push(...errors);
+          return;
+        }
+        const key = `${rowData.modelCode}-${rowData.period}-${rowData.year}`;
+        if (seenKeys.has(key)) {
+          result.duplicates.push(
+            `Fila ${rowNumber}: Duplicado en Excel (${rowData.modelCode} - ${rowData.period} - ${rowData.year})`
+          );
+          return;
+        }
+        seenKeys.add(key);
+        rows.push(rowData);
+      } catch (error) {
+        validationErrors.push({
+          row: rowNumber,
+          field: "general",
+          message: error.message
+        });
+      }
+    });
+    if (validationErrors.length > 0) {
+      result.errors.push(
+        ...validationErrors.map(
+          (e) => `Fila ${e.row} [${e.field}]: ${e.message}`
+        )
+      );
+    }
+    for (const rowData of rows) {
+      try {
+        const existing = await prisma_client_default.tax_calendar.findFirst({
+          where: {
+            modelCode: rowData.modelCode,
+            period: rowData.period,
+            year: rowData.year
+          }
+        });
+        if (existing) {
+          result.duplicates.push(
+            `${rowData.modelCode} - ${rowData.period} - ${rowData.year} (ya existe en base de datos)`
+          );
+          continue;
+        }
+        const derived = calculateDerivedFields(rowData.startDate, rowData.endDate);
+        await prisma_client_default.tax_calendar.create({
+          data: {
+            id: randomUUID6(),
+            modelCode: rowData.modelCode,
+            period: rowData.period,
+            year: rowData.year,
+            startDate: rowData.startDate,
+            endDate: rowData.endDate,
+            status: derived.status || "PENDIENTE",
+            days_to_start: derived.daysToStart ?? null,
+            days_to_end: derived.daysToEnd ?? null,
+            active: rowData.active,
+            locked: rowData.locked,
+            createdAt: /* @__PURE__ */ new Date(),
+            updatedAt: /* @__PURE__ */ new Date()
+          }
+        });
+        result.imported++;
+      } catch (error) {
+        result.errors.push(
+          `Error al importar ${rowData.modelCode} - ${rowData.period} - ${rowData.year}: ${error.message}`
+        );
+      }
+    }
+    result.success = result.imported > 0 || result.errors.length === 0 && result.duplicates.length > 0;
+    return result;
+  } catch (error) {
+    result.errors.push(`Error procesando el archivo: ${error.message}`);
+    return result;
+  }
+}
+function parseRow(row, rowNumber) {
+  return {
+    modelCode: String(row.getCell(1).value || "").trim().toUpperCase(),
+    period: String(row.getCell(2).value || "").trim().toUpperCase(),
+    year: parseYear(row.getCell(3).value),
+    startDate: parseDateValue(row.getCell(4).value, rowNumber, "startDate"),
+    endDate: parseDateValue(row.getCell(5).value, rowNumber, "endDate"),
+    active: parseBoolean(row.getCell(6).value ?? "SI"),
+    locked: parseBoolean(row.getCell(7).value ?? "NO")
+  };
+}
+function validateRow(row, rowNumber) {
+  const errors = [];
+  if (!row.modelCode) {
+    errors.push({ row: rowNumber, field: "modelCode", message: "El c\xF3digo del modelo es obligatorio" });
+  }
+  if (!row.period) {
+    errors.push({ row: rowNumber, field: "period", message: "El periodo es obligatorio" });
+  }
+  if (!row.year || row.year < 2e3 || row.year > 2100) {
+    errors.push({ row: rowNumber, field: "year", message: "El a\xF1o debe estar entre 2000 y 2100" });
+  }
+  if (!row.startDate || isNaN(row.startDate.getTime())) {
+    errors.push({ row: rowNumber, field: "startDate", message: "Fecha de inicio inv\xE1lida" });
+  }
+  if (!row.endDate || isNaN(row.endDate.getTime())) {
+    errors.push({ row: rowNumber, field: "endDate", message: "Fecha de fin inv\xE1lida" });
+  }
+  if (row.startDate && row.endDate && row.endDate <= row.startDate) {
+    errors.push({
+      row: rowNumber,
+      field: "endDate",
+      message: "La fecha de fin debe ser posterior a la fecha de inicio"
+    });
+  }
+  return errors;
+}
+function parseDateValue(value, rowNumber, fieldName) {
+  if (!value) {
+    throw new Error(`${fieldName} es obligatorio`);
+  }
+  if (value instanceof Date) {
+    return value;
+  }
+  if (typeof value === "number") {
+    const excelEpoch = new Date(1900, 0, 1);
+    const date = new Date(excelEpoch.getTime() + (value - 2) * 24 * 60 * 60 * 1e3);
+    return date;
+  }
+  if (typeof value === "string") {
+    const formats = [
+      // DD/MM/YYYY
+      /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/,
+      // YYYY-MM-DD
+      /^(\d{4})-(\d{1,2})-(\d{1,2})$/
+    ];
+    for (const format2 of formats) {
+      const match = value.match(format2);
+      if (match) {
+        if (format2.source.startsWith("^(\\d{1,2})")) {
+          const [, day, month, year] = match;
+          const date2 = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+          if (!isNaN(date2.getTime())) return date2;
+        } else {
+          const [, year, month, day] = match;
+          const date2 = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+          if (!isNaN(date2.getTime())) return date2;
+        }
+      }
+    }
+    const date = new Date(value);
+    if (!isNaN(date.getTime())) {
+      return date;
+    }
+  }
+  throw new Error(`${fieldName}: Formato de fecha inv\xE1lido. Use DD/MM/YYYY o YYYY-MM-DD`);
+}
+function parseYear(value) {
+  if (typeof value === "number") {
+    return Math.floor(value);
+  }
+  if (typeof value === "string") {
+    const num = parseInt(value, 10);
+    if (!isNaN(num)) return num;
+  }
+  return NaN;
+}
+function parseBoolean(value) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "number") {
+    return value !== 0;
+  }
+  if (typeof value === "string") {
+    const str = value.toLowerCase().trim();
+    return str === "si" || str === "yes" || str === "true" || str === "1" || str === "s\xED";
+  }
+  return false;
+}
+async function generateTemplate() {
+  const workbook = new ExcelJS3.Workbook();
+  workbook.creator = "Asesor\xEDa La Llave";
+  workbook.created = /* @__PURE__ */ new Date();
+  const instructionsSheet = workbook.addWorksheet("Instrucciones");
+  instructionsSheet.columns = [{ width: 80 }];
+  instructionsSheet.addRow(["PLANTILLA DE IMPORTACI\xD3N - CALENDARIO FISCAL AEAT"]);
+  instructionsSheet.getRow(1).font = { size: 16, bold: true };
+  instructionsSheet.addRow([]);
+  instructionsSheet.addRow(["INSTRUCCIONES:"]);
+  instructionsSheet.getRow(3).font = { bold: true, size: 12 };
+  instructionsSheet.addRow(['1. Complete la hoja "Periodos" con los datos fiscales']);
+  instructionsSheet.addRow(["2. Los campos marcados con * son OBLIGATORIOS"]);
+  instructionsSheet.addRow(["3. No elimine ni renombre las columnas"]);
+  instructionsSheet.addRow(["4. Las fechas deben estar en formato DD/MM/YYYY o YYYY-MM-DD"]);
+  instructionsSheet.addRow(['5. El campo "active" debe ser SI o NO (por defecto: SI)']);
+  instructionsSheet.addRow(['6. El campo "locked" debe ser SI o NO (por defecto: NO)']);
+  instructionsSheet.addRow([]);
+  instructionsSheet.addRow(["EJEMPLOS DE VALORES V\xC1LIDOS:"]);
+  instructionsSheet.getRow(11).font = { bold: true, size: 12 };
+  instructionsSheet.addRow(["\u2022 Modelo: 303, 111, 130, 190, 347, etc."]);
+  instructionsSheet.addRow(["\u2022 Periodo: 1T, 2T, 3T, 4T (trimestral), M01-M12 (mensual), ANUAL"]);
+  instructionsSheet.addRow(["\u2022 A\xF1o: 2025, 2026, etc."]);
+  instructionsSheet.addRow(["\u2022 Fecha Inicio: 01/01/2025 o 2025-01-01"]);
+  instructionsSheet.addRow(["\u2022 Fecha Fin: 20/04/2025 o 2025-04-20"]);
+  instructionsSheet.addRow(["\u2022 Activo: SI o NO"]);
+  instructionsSheet.addRow(["\u2022 Bloqueado: SI o NO"]);
+  instructionsSheet.addRow([]);
+  instructionsSheet.addRow(["NOTA IMPORTANTE:"]);
+  instructionsSheet.getRow(20).font = { bold: true, color: { argb: "FFFF0000" } };
+  instructionsSheet.addRow(['Los campos "status", "days_to_start" y "days_to_end" se calculan autom\xE1ticamente.']);
+  instructionsSheet.addRow(['NO los incluya en la hoja "Periodos".']);
+  const periodosSheet = workbook.addWorksheet("Periodos");
+  periodosSheet.columns = [
+    { header: "A) C\xF3digo Modelo* (modelCode)", key: "modelCode", width: 30 },
+    { header: "B) Periodo* (period)", key: "period", width: 20 },
+    { header: "C) A\xF1o* (year)", key: "year", width: 12 },
+    { header: "D) Fecha Inicio* (startDate)", key: "startDate", width: 22 },
+    { header: "E) Fecha Fin* (endDate)", key: "endDate", width: 22 },
+    { header: "F) Activo (active)", key: "active", width: 15 },
+    { header: "G) Bloqueado (locked)", key: "locked", width: 18 }
+  ];
+  periodosSheet.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
+  periodosSheet.getRow(1).fill = {
+    type: "pattern",
+    pattern: "solid",
+    fgColor: { argb: "FF4472C4" }
+  };
+  periodosSheet.getRow(1).alignment = { horizontal: "center", vertical: "middle" };
+  periodosSheet.addRow({
+    modelCode: "Ej: 303, 111, 130, 190",
+    period: "Ej: 1T, 2T, M01, ANUAL",
+    year: "Ej: 2025",
+    startDate: "DD/MM/YYYY",
+    endDate: "DD/MM/YYYY",
+    active: "SI o NO",
+    locked: "SI o NO"
+  });
+  periodosSheet.getRow(2).font = { italic: true, color: { argb: "FF666666" } };
+  periodosSheet.getRow(2).fill = {
+    type: "pattern",
+    pattern: "solid",
+    fgColor: { argb: "FFFEF2CB" }
+  };
+  periodosSheet.getRow(2).alignment = { horizontal: "left", vertical: "middle" };
+  periodosSheet.addRow({
+    modelCode: "303",
+    period: "1T",
+    year: 2025,
+    startDate: "01/01/2025",
+    endDate: "20/04/2025",
+    active: "SI",
+    locked: "NO"
+  });
+  periodosSheet.addRow({
+    modelCode: "303",
+    period: "2T",
+    year: 2025,
+    startDate: "01/04/2025",
+    endDate: "20/07/2025",
+    active: "SI",
+    locked: "NO"
+  });
+  periodosSheet.addRow({
+    modelCode: "111",
+    period: "M01",
+    year: 2025,
+    startDate: "01/01/2025",
+    endDate: "20/02/2025",
+    active: "SI",
+    locked: "NO"
+  });
+  periodosSheet.addRow({
+    modelCode: "130",
+    period: "1T",
+    year: 2025,
+    startDate: "01/01/2025",
+    endDate: "20/04/2025",
+    active: "SI",
+    locked: "NO"
+  });
+  const modelosSheet = workbook.addWorksheet("Modelos_Referencia");
+  modelosSheet.columns = [
+    { header: "C\xF3digo", key: "code", width: 10 },
+    { header: "Nombre", key: "name", width: 50 }
+  ];
+  modelosSheet.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
+  modelosSheet.getRow(1).fill = {
+    type: "pattern",
+    pattern: "solid",
+    fgColor: { argb: "FF70AD47" }
+  };
+  const modelos = [
+    { code: "100", name: "IRPF - Renta" },
+    { code: "111", name: "Retenciones - Rendimientos del trabajo" },
+    { code: "130", name: "IRPF - Pagos fraccionados" },
+    { code: "131", name: "IRPF - Pagos fraccionados (simplificado)" },
+    { code: "180", name: "IP - Impuesto sobre el Patrimonio" },
+    { code: "190", name: "Resumen anual retenciones" },
+    { code: "200", name: "Impuesto sobre Sociedades" },
+    { code: "202", name: "Pagos fraccionados IS" },
+    { code: "303", name: "IVA - Autoliquidaci\xF3n" },
+    { code: "347", name: "Declaraci\xF3n anual operaciones con terceros" },
+    { code: "349", name: "Declaraci\xF3n recapitulativa (intracomunitaria)" },
+    { code: "390", name: "IVA - Declaraci\xF3n recapitulativa" },
+    { code: "720", name: "Declaraci\xF3n informativa bienes en el exterior" }
+  ];
+  modelos.forEach((modelo) => {
+    modelosSheet.addRow(modelo);
+  });
+  const buffer = await workbook.xlsx.writeBuffer();
+  return Buffer.from(buffer);
+}
+
+// server/routes.ts
+init_reports_service();
+
 // server/middleware/rate-limit.ts
 import rateLimit from "express-rate-limit";
-var loginLimiter = rateLimit({
+var loginLimiter = process.env.DISABLE_LOGIN_RATE_LIMIT === "1" ? ((req, res, next) => next()) : rateLimit({
   windowMs: 15 * 60 * 1e3,
   // 15 minutos
   max: 5,
@@ -7801,17 +12419,17 @@ var strictLimiter = rateLimit({
 });
 
 // server/epic-tasks-routes.ts
-import { PrismaClient as PrismaClient16 } from "@prisma/client";
-import multer from "multer";
-import path10 from "path";
+import { PrismaClient as PrismaClient12 } from "@prisma/client";
+import multer2 from "multer";
+import path11 from "path";
 import fs8 from "fs";
-import { randomUUID as randomUUID3 } from "crypto";
-var prisma16 = new PrismaClient16();
-var tasksUploadsDir = path10.join(process.cwd(), "uploads", "tasks", "attachments");
+import { randomUUID as randomUUID7 } from "crypto";
+var prisma12 = new PrismaClient12();
+var tasksUploadsDir = path11.join(process.cwd(), "uploads", "tasks", "attachments");
 if (!fs8.existsSync(tasksUploadsDir)) {
   fs8.mkdirSync(tasksUploadsDir, { recursive: true });
 }
-var taskAttachmentsStorage = multer.diskStorage({
+var taskAttachmentsStorage = multer2.diskStorage({
   destination: (req, file, cb) => {
     cb(null, tasksUploadsDir);
   },
@@ -7820,7 +12438,7 @@ var taskAttachmentsStorage = multer.diskStorage({
     cb(null, `${uniqueSuffix}-${file.originalname}`);
   }
 });
-var uploadTaskAttachment = multer({
+var uploadTaskAttachment = multer2({
   storage: taskAttachmentsStorage,
   limits: { fileSize: 10 * 1024 * 1024 }
   // 10MB max
@@ -7829,7 +12447,7 @@ function registerEpicTasksRoutes(app2) {
   app2.get("/api/tasks/:taskId/comments", authenticateToken, async (req, res) => {
     try {
       const { taskId } = req.params;
-      const comments = await prisma16.task_comments.findMany({
+      const comments = await prisma12.task_comments.findMany({
         where: { taskId },
         include: {
           users: {
@@ -7855,13 +12473,13 @@ function registerEpicTasksRoutes(app2) {
       if (!contenido || contenido.trim() === "") {
         return res.status(400).json({ error: "El contenido del comentario es requerido" });
       }
-      const task = await prisma16.tasks.findUnique({ where: { id: taskId } });
+      const task = await prisma12.tasks.findUnique({ where: { id: taskId } });
       if (!task) {
         return res.status(404).json({ error: "Tarea no encontrada" });
       }
-      const comment = await prisma16.task_comments.create({
+      const comment = await prisma12.task_comments.create({
         data: {
-          id: randomUUID3(),
+          id: randomUUID7(),
           tasks: { connect: { id: taskId } },
           users: { connect: { id: req.user.id } },
           contenido,
@@ -7877,9 +12495,9 @@ function registerEpicTasksRoutes(app2) {
           }
         }
       });
-      await prisma16.task_activities.create({
+      await prisma12.task_activities.create({
         data: {
-          id: randomUUID3(),
+          id: randomUUID7(),
           taskId,
           userId: req.user.id,
           accion: "commented",
@@ -7897,7 +12515,7 @@ function registerEpicTasksRoutes(app2) {
     try {
       const { taskId, commentId } = req.params;
       const { contenido } = req.body;
-      const comment = await prisma16.task_comments.findUnique({
+      const comment = await prisma12.task_comments.findUnique({
         where: { id: commentId }
       });
       if (!comment) {
@@ -7906,7 +12524,7 @@ function registerEpicTasksRoutes(app2) {
       if (comment.userId !== req.user.id) {
         return res.status(403).json({ error: "No tienes permiso para editar este comentario" });
       }
-      const updated = await prisma16.task_comments.update({
+      const updated = await prisma12.task_comments.update({
         where: { id: commentId },
         data: {
           contenido,
@@ -7931,7 +12549,7 @@ function registerEpicTasksRoutes(app2) {
   app2.delete("/api/tasks/:taskId/comments/:commentId", authenticateToken, async (req, res) => {
     try {
       const { commentId } = req.params;
-      const comment = await prisma16.task_comments.findUnique({
+      const comment = await prisma12.task_comments.findUnique({
         where: { id: commentId }
       });
       if (!comment) {
@@ -7940,7 +12558,7 @@ function registerEpicTasksRoutes(app2) {
       if (comment.userId !== req.user.id && !req.user.permissions.includes("admin:settings")) {
         return res.status(403).json({ error: "No tienes permiso para eliminar este comentario" });
       }
-      await prisma16.task_comments.delete({
+      await prisma12.task_comments.delete({
         where: { id: commentId }
       });
       res.status(204).end();
@@ -7952,7 +12570,7 @@ function registerEpicTasksRoutes(app2) {
   app2.get("/api/tasks/:taskId/attachments", authenticateToken, async (req, res) => {
     try {
       const { taskId } = req.params;
-      const attachments = await prisma16.task_attachments.findMany({
+      const attachments = await prisma12.task_attachments.findMany({
         where: { taskId },
         include: {
           users: {
@@ -7976,13 +12594,13 @@ function registerEpicTasksRoutes(app2) {
       if (!req.file) {
         return res.status(400).json({ error: "No se proporcion\xF3 ning\xFAn archivo" });
       }
-      const task = await prisma16.tasks.findUnique({ where: { id: taskId } });
+      const task = await prisma12.tasks.findUnique({ where: { id: taskId } });
       if (!task) {
         return res.status(404).json({ error: "Tarea no encontrada" });
       }
-      const attachment = await prisma16.task_attachments.create({
+      const attachment = await prisma12.task_attachments.create({
         data: {
-          id: randomUUID3(),
+          id: randomUUID7(),
           tasks: { connect: { id: taskId } },
           users: { connect: { id: req.user.id } },
           fileName: req.file.filename,
@@ -8000,9 +12618,9 @@ function registerEpicTasksRoutes(app2) {
           }
         }
       });
-      await prisma16.task_activities.create({
+      await prisma12.task_activities.create({
         data: {
-          id: randomUUID3(),
+          id: randomUUID7(),
           taskId,
           userId: req.user.id,
           accion: "attachment_added",
@@ -8019,7 +12637,7 @@ function registerEpicTasksRoutes(app2) {
   app2.delete("/api/tasks/:taskId/attachments/:attachmentId", authenticateToken, async (req, res) => {
     try {
       const { attachmentId } = req.params;
-      const attachment = await prisma16.task_attachments.findUnique({
+      const attachment = await prisma12.task_attachments.findUnique({
         where: { id: attachmentId }
       });
       if (!attachment) {
@@ -8028,11 +12646,11 @@ function registerEpicTasksRoutes(app2) {
       if (attachment.userId !== req.user.id && !req.user.permissions.includes("admin:settings")) {
         return res.status(403).json({ error: "No tienes permiso para eliminar este adjunto" });
       }
-      const filePath = path10.join(process.cwd(), "uploads", "tasks", "attachments", attachment.fileName);
+      const filePath = path11.join(process.cwd(), "uploads", "tasks", "attachments", attachment.fileName);
       if (fs8.existsSync(filePath)) {
         fs8.unlinkSync(filePath);
       }
-      await prisma16.task_attachments.delete({
+      await prisma12.task_attachments.delete({
         where: { id: attachmentId }
       });
       res.status(204).end();
@@ -8044,7 +12662,7 @@ function registerEpicTasksRoutes(app2) {
   app2.get("/api/tasks/:taskId/time-entries", authenticateToken, async (req, res) => {
     try {
       const { taskId } = req.params;
-      const entries = await prisma16.task_time_entries.findMany({
+      const entries = await prisma12.task_time_entries.findMany({
         where: { taskId },
         include: {
           users: {
@@ -8069,13 +12687,13 @@ function registerEpicTasksRoutes(app2) {
       if (!minutos || minutos <= 0) {
         return res.status(400).json({ error: "Los minutos deben ser mayores a 0" });
       }
-      const task = await prisma16.tasks.findUnique({ where: { id: taskId } });
+      const task = await prisma12.tasks.findUnique({ where: { id: taskId } });
       if (!task) {
         return res.status(404).json({ error: "Tarea no encontrada" });
       }
-      const entry = await prisma16.task_time_entries.create({
+      const entry = await prisma12.task_time_entries.create({
         data: {
-          id: randomUUID3(),
+          id: randomUUID7(),
           tasks: { connect: { id: taskId } },
           users: { connect: { id: req.user.id } },
           minutos,
@@ -8092,15 +12710,15 @@ function registerEpicTasksRoutes(app2) {
           }
         }
       });
-      await prisma16.tasks.update({
+      await prisma12.tasks.update({
         where: { id: taskId },
         data: {
           tiempo_invertido: task.tiempo_invertido + minutos
         }
       });
-      await prisma16.task_activities.create({
+      await prisma12.task_activities.create({
         data: {
-          id: randomUUID3(),
+          id: randomUUID7(),
           taskId,
           userId: req.user.id,
           accion: "time_logged",
@@ -8117,7 +12735,7 @@ function registerEpicTasksRoutes(app2) {
   app2.delete("/api/tasks/:taskId/time-entries/:entryId", authenticateToken, async (req, res) => {
     try {
       const { taskId, entryId } = req.params;
-      const entry = await prisma16.task_time_entries.findUnique({
+      const entry = await prisma12.task_time_entries.findUnique({
         where: { id: entryId }
       });
       if (!entry) {
@@ -8126,16 +12744,16 @@ function registerEpicTasksRoutes(app2) {
       if (entry.userId !== req.user.id) {
         return res.status(403).json({ error: "No tienes permiso para eliminar este registro" });
       }
-      const task = await prisma16.tasks.findUnique({ where: { id: taskId } });
+      const task = await prisma12.tasks.findUnique({ where: { id: taskId } });
       if (task) {
-        await prisma16.tasks.update({
+        await prisma12.tasks.update({
           where: { id: taskId },
           data: {
             tiempo_invertido: Math.max(0, task.tiempo_invertido - entry.minutos)
           }
         });
       }
-      await prisma16.task_time_entries.delete({
+      await prisma12.task_time_entries.delete({
         where: { id: entryId }
       });
       res.status(204).end();
@@ -8147,7 +12765,7 @@ function registerEpicTasksRoutes(app2) {
   app2.get("/api/tasks/:taskId/activities", authenticateToken, async (req, res) => {
     try {
       const { taskId } = req.params;
-      const activities = await prisma16.task_activities.findMany({
+      const activities = await prisma12.task_activities.findMany({
         where: { taskId },
         include: {
           users: {
@@ -8170,7 +12788,7 @@ function registerEpicTasksRoutes(app2) {
   app2.get("/api/tasks/:taskId/subtasks", authenticateToken, async (req, res) => {
     try {
       const { taskId } = req.params;
-      const subtasks = await prisma16.tasks.findMany({
+      const subtasks = await prisma12.tasks.findMany({
         where: { parent_task_id: taskId },
         include: {
           users: {
@@ -8192,11 +12810,11 @@ function registerEpicTasksRoutes(app2) {
     try {
       const { taskId } = req.params;
       const { estado, orden } = req.body;
-      const task = await prisma16.tasks.findUnique({ where: { id: taskId } });
+      const task = await prisma12.tasks.findUnique({ where: { id: taskId } });
       if (!task) {
         return res.status(404).json({ error: "Tarea no encontrada" });
       }
-      const updatedTask = await prisma16.tasks.update({
+      const updatedTask = await prisma12.tasks.update({
         where: { id: taskId },
         data: {
           ...estado !== void 0 && { estado },
@@ -8205,9 +12823,9 @@ function registerEpicTasksRoutes(app2) {
         }
       });
       if (estado && estado !== task.estado) {
-        await prisma16.task_activities.create({
+        await prisma12.task_activities.create({
           data: {
-            id: randomUUID3(),
+            id: randomUUID7(),
             taskId,
             userId: req.user.id,
             accion: "status_changed",
@@ -8233,23 +12851,23 @@ function registerEpicTasksRoutes(app2) {
         porPrioridad,
         porUsuario
       ] = await Promise.all([
-        prisma16.tasks.count({ where: { is_archived: false } }),
-        prisma16.tasks.count({ where: { estado: "PENDIENTE", is_archived: false } }),
-        prisma16.tasks.count({ where: { estado: "EN_PROGRESO", is_archived: false } }),
-        prisma16.tasks.count({ where: { estado: "COMPLETADA", is_archived: false } }),
-        prisma16.tasks.count({
+        prisma12.tasks.count({ where: { is_archived: false } }),
+        prisma12.tasks.count({ where: { estado: "PENDIENTE", is_archived: false } }),
+        prisma12.tasks.count({ where: { estado: "EN_PROGRESO", is_archived: false } }),
+        prisma12.tasks.count({ where: { estado: "COMPLETADA", is_archived: false } }),
+        prisma12.tasks.count({
           where: {
             fecha_vencimiento: { lt: /* @__PURE__ */ new Date() },
             estado: { not: "COMPLETADA" },
             is_archived: false
           }
         }),
-        prisma16.tasks.groupBy({
+        prisma12.tasks.groupBy({
           by: ["prioridad"],
           where: { is_archived: false },
           _count: true
         }),
-        prisma16.tasks.groupBy({
+        prisma12.tasks.groupBy({
           by: ["asignado_a"],
           where: { is_archived: false, asignado_a: { not: null } },
           _count: true
@@ -8281,7 +12899,11 @@ function registerEpicTasksRoutes(app2) {
 }
 
 // server/routes.ts
-var prisma18 = new PrismaClient18();
+import nodemailer5 from "nodemailer";
+import { exec } from "child_process";
+import { promisify } from "util";
+var execPromise = promisify(exec);
+var prisma13 = new PrismaClient13();
 if (!process.env.JWT_SECRET) {
   throw new Error("FATAL: JWT_SECRET no est\xE1 configurado. Este valor es OBLIGATORIO para la seguridad del sistema.");
 }
@@ -8306,7 +12928,7 @@ var attachmentsMimeTypes = [
   "application/zip",
   "application/x-zip-compressed"
 ];
-var multerStorageImages = multer2.diskStorage({
+var multerStorageImages = multer3.diskStorage({
   destination: (req, file, cb) => {
     cb(null, manualsImagesDir);
   },
@@ -8315,7 +12937,7 @@ var multerStorageImages = multer2.diskStorage({
     cb(null, `${uniqueSuffix}-${file.originalname}`);
   }
 });
-var multerStorageAttachments = multer2.diskStorage({
+var multerStorageAttachments = multer3.diskStorage({
   destination: (req, file, cb) => {
     cb(null, manualsAttachmentsDir);
   },
@@ -8324,8 +12946,8 @@ var multerStorageAttachments = multer2.diskStorage({
     cb(null, `${uniqueSuffix}-${file.originalname}`);
   }
 });
-var upload = multer2({
-  storage: multer2.diskStorage({
+var upload2 = multer3({
+  storage: multer3.diskStorage({
     destination: (req, file, cb) => {
       cb(null, uploadsDir);
     },
@@ -8337,7 +12959,25 @@ var upload = multer2({
   limits: { fileSize: 10 * 1024 * 1024 }
   // 10MB max
 });
-var uploadManualImage = multer2({
+var uploadExcel = multer3({
+  storage: multer3.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  // 10MB max
+  fileFilter: (req, file, cb) => {
+    const allowedMimeTypes = [
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      // .xlsx
+      "application/vnd.ms-excel"
+      // .xls
+    ];
+    if (allowedMimeTypes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error("Solo se permiten archivos Excel (.xlsx, .xls)"));
+    }
+  }
+});
+var uploadManualImage = multer3({
   storage: multerStorageImages,
   limits: { fileSize: 5 * 1024 * 1024 },
   // 5MB max para imágenes
@@ -8349,7 +12989,7 @@ var uploadManualImage = multer2({
     }
   }
 });
-var uploadManualAttachment = multer2({
+var uploadManualAttachment = multer3({
   storage: multerStorageAttachments,
   limits: { fileSize: 10 * 1024 * 1024 },
   // 10MB max para adjuntos
@@ -8373,13 +13013,14 @@ var authenticateToken2 = async (req, res, next) => {
     if (!user) {
       return res.status(401).json({ error: "Usuario no encontrado" });
     }
-    const permissions = user.role?.permissions?.map(
-      (rp) => `${rp.permission.resource}:${rp.permission.action}`
+    const permissions = user.roles?.role_permissions?.map(
+      (rp) => `${rp.permissions.resource}:${rp.permissions.action}`
     ) || [];
     req.user = {
       id: user.id,
       username: user.username,
       roleId: user.roleId,
+      roleName: user.roles?.name || null,
       permissions
     };
     next();
@@ -8387,7 +13028,7 @@ var authenticateToken2 = async (req, res, next) => {
     return res.status(403).json({ error: "Token inv\xE1lido" });
   }
 };
-var checkPermission = (requiredPermission) => {
+var checkPermission2 = (requiredPermission) => {
   return (req, res, next) => {
     if (!req.user) {
       return res.status(401).json({ error: "Usuario no autenticado" });
@@ -8433,19 +13074,23 @@ async function createAudit(usuarioId, accion, tabla, registroId, valorAnterior =
     console.error("Error al crear auditor\xEDa:", error);
   }
 }
-async function registerRoutes(app2) {
-  try {
-    await prismaStorage.ensureTaxModelsConfigSeeded();
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "No se pudo inicializar tax_models_config";
-    logger.fatal(
-      {
-        err: error,
-        remediation: "Ejecuta `npx prisma db push` y reinicia el servidor"
-      },
-      message
-    );
-    throw error;
+async function registerRoutes(app2, options) {
+  if (!options?.skipDbInit) {
+    try {
+      await prismaStorage.ensureTaxModelsConfigSeeded();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "No se pudo inicializar tax_models_config";
+      logger.fatal(
+        {
+          err: error,
+          remediation: "Ejecuta `npx prisma db push` y reinicia el servidor"
+        },
+        message
+      );
+      throw error;
+    }
+  } else {
+    logger.warn("Se ha saltado la inicializaci\xF3n de tax_models_config por configuraci\xF3n (skipDbInit=true)");
   }
   app2.use("/api", (req, res, next) => {
     if (req.path === "/health" || req.path === "/api/health") {
@@ -8486,7 +13131,7 @@ async function registerRoutes(app2) {
         }
         let defaultRoleId = roleId;
         if (!defaultRoleId) {
-          const defaultRole = await prisma18.roles.findUnique({
+          const defaultRole = await prisma13.roles.findUnique({
             where: { name: "Gestor" }
           });
           if (defaultRole) {
@@ -8555,16 +13200,32 @@ async function registerRoutes(app2) {
         (rp) => `${rp.permissions.resource}:${rp.permissions.action}`
       ) || [];
       const roleName = user.roles?.name || null;
-      res.json({ ...userWithoutPassword, permissions, roleName });
+      const isOwner = user.is_owner || false;
+      res.json({ ...userWithoutPassword, permissions, roleName, is_owner: isOwner });
     } catch (error) {
       res.status(500).json({ error: error.message });
     }
   });
   app2.get("/api/users", authenticateToken2, async (req, res) => {
     try {
-      const users = await prismaStorage.getAllUsers();
-      const usersWithoutPassword = users.map(({ password, ...user }) => user);
-      res.json(usersWithoutPassword);
+      const users = await prisma13.users.findMany({
+        select: {
+          id: true,
+          username: true,
+          email: true,
+          createdAt: true,
+          isActive: true,
+          is_owner: true,
+          roleId: true,
+          roles: {
+            select: {
+              name: true,
+              description: true
+            }
+          }
+        }
+      });
+      res.json(users);
     } catch (error) {
       res.status(500).json({ error: error.message });
     }
@@ -8572,7 +13233,7 @@ async function registerRoutes(app2) {
   app2.post(
     "/api/users",
     authenticateToken2,
-    checkPermission("users:create"),
+    checkPermission2("users:create"),
     validateZod(userCreateSchema),
     async (req, res) => {
       try {
@@ -8594,7 +13255,7 @@ async function registerRoutes(app2) {
   app2.patch(
     "/api/users/:id",
     authenticateToken2,
-    checkPermission("users:update"),
+    checkPermission2("users:update"),
     async (req, res) => {
       try {
         const { id } = req.params;
@@ -8616,7 +13277,7 @@ async function registerRoutes(app2) {
   app2.patch(
     "/api/users/:id/toggle-active",
     authenticateToken2,
-    checkPermission("users:update"),
+    checkPermission2("users:update"),
     async (req, res) => {
       try {
         const { id } = req.params;
@@ -8642,10 +13303,102 @@ async function registerRoutes(app2) {
       }
     }
   );
+  app2.post(
+    "/api/users/:id/transfer-owner",
+    authenticateToken2,
+    async (req, res) => {
+      try {
+        const { id } = req.params;
+        const currentUserId = req.user.id;
+        const currentUser = await prisma13.users.findUnique({
+          where: { id: currentUserId },
+          select: { is_owner: true }
+        });
+        if (!currentUser?.is_owner) {
+          return res.status(403).json({
+            error: "Acceso denegado: Solo el Owner puede transferir este rol",
+            code: "NOT_OWNER"
+          });
+        }
+        const targetUser = await prisma13.users.findUnique({
+          where: { id }
+        });
+        if (!targetUser) {
+          return res.status(404).json({ error: "Usuario destino no encontrado" });
+        }
+        if (targetUser.id === currentUserId) {
+          return res.status(400).json({ error: "No puedes transferir el rol a ti mismo" });
+        }
+        await prisma13.users.update({
+          where: { id: currentUserId },
+          data: { is_owner: false }
+        });
+        const newOwner = await prisma13.users.update({
+          where: { id },
+          data: { is_owner: true }
+        });
+        await prismaStorage.createActivityLog({
+          usuarioId: currentUserId,
+          accion: `Transfiri\xF3 el rol de Owner a ${targetUser.username}`,
+          modulo: "admin",
+          detalles: `Nuevo Owner: ${targetUser.username} (${targetUser.email})`
+        });
+        const { password: _, ...userWithoutPassword } = newOwner;
+        res.json({
+          message: "Rol de Owner transferido exitosamente",
+          newOwner: userWithoutPassword
+        });
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+  app2.post(
+    "/api/users/:id/set-owner",
+    authenticateToken2,
+    checkPermission2("admin:system"),
+    async (req, res) => {
+      try {
+        const { id } = req.params;
+        const currentUserId = req.user.id;
+        const targetUser = await prisma13.users.findUnique({
+          where: { id },
+          select: { id: true, username: true, email: true, is_owner: true }
+        });
+        if (!targetUser) {
+          return res.status(404).json({ error: "Usuario no encontrado" });
+        }
+        if (targetUser.is_owner) {
+          return res.status(400).json({ error: "Este usuario ya es Owner" });
+        }
+        await prisma13.users.updateMany({
+          where: { is_owner: true },
+          data: { is_owner: false }
+        });
+        const newOwner = await prisma13.users.update({
+          where: { id },
+          data: { is_owner: true }
+        });
+        await prismaStorage.createActivityLog({
+          usuarioId: currentUserId,
+          accion: `Estableci\xF3 a ${targetUser.username} como Owner`,
+          modulo: "admin",
+          detalles: `Nuevo Owner: ${targetUser.username} (${targetUser.email})`
+        });
+        const { password: _, ...userWithoutPassword } = newOwner;
+        res.json({
+          message: "Usuario establecido como Owner exitosamente",
+          owner: userWithoutPassword
+        });
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
   app2.delete(
     "/api/users/:id",
     authenticateToken2,
-    checkPermission("users:delete"),
+    checkPermission2("users:delete"),
     async (req, res) => {
       try {
         const { id } = req.params;
@@ -8653,9 +13406,19 @@ async function registerRoutes(app2) {
         if (!user) {
           return res.status(404).json({ error: "Usuario no encontrado" });
         }
-        const manuals = await prisma18.manuals.count({ where: { autor_id: id } });
-        const activityLogs = await prisma18.activity_logs.count({ where: { usuarioId: id } });
-        const auditTrails = await prisma18.audit_trail.count({ where: { usuarioId: id } });
+        const userToDelete = await prisma13.users.findUnique({
+          where: { id },
+          select: { is_owner: true, username: true }
+        });
+        if (userToDelete?.is_owner) {
+          return res.status(403).json({
+            error: `No se puede eliminar al usuario Owner (${userToDelete.username}). Solo el Owner puede transferir su rol a otro usuario antes de poder ser eliminado.`,
+            code: "CANNOT_DELETE_OWNER"
+          });
+        }
+        const manuals = await prisma13.manuals.count({ where: { autor_id: id } });
+        const activityLogs = await prisma13.activity_logs.count({ where: { usuarioId: id } });
+        const auditTrails = await prisma13.audit_trail.count({ where: { usuarioId: id } });
         if (manuals > 0) {
           return res.status(409).json({
             error: `No se puede eliminar: el usuario tiene ${manuals} manual(es) asignado(s) que se borrar\xEDan permanentemente. Reasigne los manuales a otro usuario primero.`
@@ -8679,12 +13442,73 @@ async function registerRoutes(app2) {
           }
         });
       } catch (error) {
-        if (error.code === "P2003") {
+        if (error?.code === "CANNOT_DELETE_OWNER") {
+          return res.status(403).json({ error: error.message || "No se puede eliminar al Owner", code: "CANNOT_DELETE_OWNER" });
+        }
+        if (error?.code === "P2003") {
           return res.status(409).json({
             error: "No se puede eliminar el usuario: tiene relaciones activas con otros registros del sistema"
           });
         }
         res.status(500).json({ error: error.message });
+      }
+    }
+  );
+  logger.info("\u2705 [DIAGNOSTICO] Registrando rutas de importaci\xF3n de clientes...");
+  app2.get(
+    "/api/clients/import-template",
+    authenticateToken2,
+    checkPermission2("clients:read"),
+    async (req, res) => {
+      try {
+        logger.info("Generando plantilla de importaci\xF3n de clientes");
+        const buffer = await generateClientsTemplate();
+        logger.info({ bufferSize: buffer.length }, "Plantilla generada exitosamente");
+        res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+        res.setHeader("Content-Disposition", 'attachment; filename="plantilla-importacion-clientes.xlsx"');
+        res.setHeader("Content-Length", buffer.length.toString());
+        res.send(buffer);
+      } catch (error) {
+        logger.error({ err: error }, "Error generando plantilla de clientes");
+        res.status(500).json({ error: "Error generando la plantilla", details: error?.message });
+      }
+    }
+  );
+  app2.post(
+    "/api/clients/import-excel",
+    authenticateToken2,
+    checkPermission2("clients:create"),
+    uploadExcel.single("file"),
+    async (req, res) => {
+      try {
+        if (!req.file) {
+          return res.status(400).json({ error: "No se proporcion\xF3 ning\xFAn archivo" });
+        }
+        logger.info("Iniciando importaci\xF3n de clientes desde Excel");
+        const userId = req.user?.id || "system";
+        const result = await processClientsImport(req.file.buffer, userId);
+        if (!result.success && result.errors.length > 0) {
+          return res.status(400).json({
+            error: "Errores durante la importaci\xF3n",
+            result
+          });
+        }
+        await prismaStorage.createActivityLog({
+          usuarioId: userId,
+          accion: `Import\xF3 ${result.imported + result.updated} clientes desde Excel`,
+          modulo: "clientes",
+          detalles: `Nuevos: ${result.imported}, Actualizados: ${result.updated}`
+        });
+        res.json({
+          message: "Importaci\xF3n completada",
+          result
+        });
+      } catch (error) {
+        logger.error({ err: error }, "Error en importaci\xF3n de clientes Excel");
+        res.status(500).json({
+          error: "Error procesando el archivo Excel",
+          details: error?.message
+        });
       }
     }
   );
@@ -8714,7 +13538,7 @@ async function registerRoutes(app2) {
   app2.post(
     "/api/clients",
     authenticateToken2,
-    checkPermission("clients:create"),
+    checkPermission2("clients:create"),
     validateZod(clientCreateSchema),
     async (req, res) => {
       try {
@@ -8743,7 +13567,7 @@ async function registerRoutes(app2) {
   app2.patch(
     "/api/clients/:id",
     authenticateToken2,
-    checkPermission("clients:update"),
+    checkPermission2("clients:update"),
     validateZod(clientUpdateSchema),
     async (req, res) => {
       try {
@@ -8777,7 +13601,7 @@ async function registerRoutes(app2) {
   app2.delete(
     "/api/clients/:id",
     authenticateToken2,
-    checkPermission("clients:delete"),
+    checkPermission2("clients:delete"),
     async (req, res) => {
       try {
         const { id } = req.params;
@@ -8785,10 +13609,10 @@ async function registerRoutes(app2) {
         if (!client) {
           return res.status(404).json({ error: "Cliente no encontrado" });
         }
-        const clientTaxes = await prisma18.client_tax.findMany({
+        const clientTaxes = await prisma13.client_tax.findMany({
           where: { clientId: id }
         });
-        const assignmentCount = await prisma18.client_tax_assignments.count({
+        const assignmentCount = await prisma13.client_tax_assignments.count({
           where: { clientId: id }
         });
         if (clientTaxes.length > 0 || assignmentCount > 0) {
@@ -8852,19 +13676,19 @@ async function registerRoutes(app2) {
   app2.get(
     "/api/tax-models-config",
     authenticateToken2,
-    checkPermission("taxes:read"),
+    checkPermission2("taxes:read"),
     handleGetTaxConfigs
   );
   app2.get(
     "/api/tax/config",
     authenticateToken2,
-    checkPermission("taxes:read"),
+    checkPermission2("taxes:read"),
     handleGetTaxConfigs
   );
   app2.get(
     "/api/tax/assignments",
     authenticateToken2,
-    checkPermission("taxes:read"),
+    checkPermission2("taxes:read"),
     async (req, res) => {
       try {
         const clientId = req.query.clientId;
@@ -8881,7 +13705,7 @@ async function registerRoutes(app2) {
   app2.get(
     "/api/tax-assignments/:assignmentId/history",
     authenticateToken2,
-    checkPermission("taxes:read"),
+    checkPermission2("taxes:read"),
     async (req, res) => {
       try {
         const { assignmentId } = req.params;
@@ -8895,7 +13719,7 @@ async function registerRoutes(app2) {
   app2.post(
     "/api/clients/:id/tax-assignments",
     authenticateToken2,
-    checkPermission("clients:update"),
+    checkPermission2("clients:update"),
     validateZod(taxAssignmentCreateSchema),
     async (req, res) => {
       try {
@@ -8930,6 +13754,19 @@ async function registerRoutes(app2) {
           activeFlag,
           notes: req.body.notes ?? null
         });
+        try {
+          console.log("DEBUG: createClientTaxAssignment payload for client", clientId, {
+            taxModelCode,
+            periodicity,
+            startDate,
+            endDate,
+            activeFlag,
+            notes: req.body.notes ?? null
+          });
+          console.log("DEBUG: createClientTaxAssignment returned", assignment && typeof assignment === "object" ? JSON.stringify(assignment) : assignment);
+        } catch (e) {
+          console.error("DEBUG: error logging assignment debug info", e);
+        }
         await prismaStorage.createActivityLog({
           usuarioId: req.user.id,
           accion: `Asign\xF3 modelo ${taxModelCode} al cliente ${client.razonSocial}`,
@@ -8954,7 +13791,7 @@ async function registerRoutes(app2) {
   app2.patch(
     "/api/tax-assignments/:assignmentId",
     authenticateToken2,
-    checkPermission("clients:update"),
+    checkPermission2("clients:update"),
     validateZod(taxAssignmentUpdateSchema),
     async (req, res) => {
       try {
@@ -9022,10 +13859,11 @@ async function registerRoutes(app2) {
   app2.delete(
     "/api/tax-assignments/:assignmentId",
     authenticateToken2,
-    checkPermission("clients:update"),
+    checkPermission2("clients:update"),
     async (req, res) => {
       try {
         const { assignmentId } = req.params;
+        const hardDelete = req.query.hard === "1" || req.query.hard === "true";
         const existing = await prismaStorage.getClientTaxAssignment(assignmentId);
         if (!existing) {
           return res.status(404).json({ error: "Asignaci\xF3n no encontrada" });
@@ -9037,13 +13875,18 @@ async function registerRoutes(app2) {
         let result;
         let message;
         let action = "DELETE";
-        if (hasHistory) {
+        if (hardDelete) {
+          result = await prismaStorage.deleteClientTaxAssignment(assignmentId);
+          message = hasHistory ? "Asignaci\xF3n eliminada definitivamente (incluyendo hist\xF3rico)." : "Asignaci\xF3n eliminada correctamente.";
+          action = "DELETE";
+        } else if (hasHistory) {
           result = await prismaStorage.softDeactivateClientTaxAssignment(assignmentId, /* @__PURE__ */ new Date());
           message = "Asignaci\xF3n desactivada. Posee hist\xF3rico de presentaciones.";
           action = "UPDATE";
         } else {
           result = await prismaStorage.deleteClientTaxAssignment(assignmentId);
           message = "Asignaci\xF3n eliminada correctamente.";
+          action = "DELETE";
         }
         await prismaStorage.createActivityLog({
           usuarioId: req.user.id,
@@ -9073,7 +13916,7 @@ async function registerRoutes(app2) {
   app2.patch(
     "/api/clients/:id/toggle-active",
     authenticateToken2,
-    checkPermission("clients:update"),
+    checkPermission2("clients:update"),
     async (req, res) => {
       try {
         const { id } = req.params;
@@ -9106,7 +13949,7 @@ async function registerRoutes(app2) {
   app2.put(
     "/api/clients/:id/employees",
     authenticateToken2,
-    checkPermission("clients:update"),
+    checkPermission2("clients:update"),
     async (req, res) => {
       try {
         const { id } = req.params;
@@ -9115,11 +13958,11 @@ async function registerRoutes(app2) {
         if (!client) {
           return res.status(404).json({ error: "Cliente no encontrado" });
         }
-        await prisma18.client_employees.deleteMany({
+        await prisma13.client_employees.deleteMany({
           where: { clientId: id }
         });
         if (employeeIds && Array.isArray(employeeIds) && employeeIds.length > 0) {
-          await prisma18.client_employees.createMany({
+          await prisma13.client_employees.createMany({
             data: employeeIds.map((userId) => ({
               clientId: id,
               userId,
@@ -9148,7 +13991,7 @@ async function registerRoutes(app2) {
   app2.post(
     "/api/clients/:id/employees/:userId",
     authenticateToken2,
-    checkPermission("clients:update"),
+    checkPermission2("clients:update"),
     async (req, res) => {
       try {
         const { id, userId } = req.params;
@@ -9162,12 +14005,12 @@ async function registerRoutes(app2) {
           return res.status(404).json({ error: "Usuario no encontrado" });
         }
         if (isPrimary) {
-          await prisma18.client_employees.updateMany({
+          await prisma13.client_employees.updateMany({
             where: { clientId: id },
             data: { is_primary: false }
           });
         }
-        await prisma18.client_employees.upsert({
+        await prisma13.client_employees.upsert({
           where: {
             clientId_userId: {
               clientId: id,
@@ -9186,7 +14029,7 @@ async function registerRoutes(app2) {
         if (isPrimary) {
           await prismaStorage.updateClient(id, { responsableAsignado: userId });
         } else {
-          const primaryEmployee = await prisma18.client_employees.findFirst({
+          const primaryEmployee = await prisma13.client_employees.findFirst({
             where: { clientId: id, is_primary: true }
           });
           await prismaStorage.updateClient(id, {
@@ -9209,7 +14052,7 @@ async function registerRoutes(app2) {
   app2.delete(
     "/api/clients/:id/employees/:userId",
     authenticateToken2,
-    checkPermission("clients:update"),
+    checkPermission2("clients:update"),
     async (req, res) => {
       try {
         const { id, userId } = req.params;
@@ -9218,7 +14061,7 @@ async function registerRoutes(app2) {
           return res.status(404).json({ error: "Cliente no encontrado" });
         }
         const user = await prismaStorage.getUser(userId);
-        const employeeToDelete = await prisma18.client_employees.findUnique({
+        const employeeToDelete = await prisma13.client_employees.findUnique({
           where: {
             clientId_userId: {
               clientId: id,
@@ -9226,7 +14069,7 @@ async function registerRoutes(app2) {
             }
           }
         });
-        await prisma18.client_employees.delete({
+        await prisma13.client_employees.delete({
           where: {
             clientId_userId: {
               clientId: id,
@@ -9235,11 +14078,11 @@ async function registerRoutes(app2) {
           }
         });
         if (employeeToDelete?.is_primary) {
-          const remainingEmployee = await prisma18.client_employees.findFirst({
+          const remainingEmployee = await prisma13.client_employees.findFirst({
             where: { clientId: id }
           });
           if (remainingEmployee) {
-            await prisma18.client_employees.update({
+            await prisma13.client_employees.update({
               where: {
                 clientId_userId: {
                   clientId: id,
@@ -9283,7 +14126,7 @@ async function registerRoutes(app2) {
   app2.post(
     "/api/impuestos",
     authenticateToken2,
-    checkPermission("taxes:create"),
+    checkPermission2("taxes:create"),
     async (req, res) => {
       try {
         const { modelo, nombre, descripcion } = req.body;
@@ -9309,7 +14152,7 @@ async function registerRoutes(app2) {
   app2.patch(
     "/api/impuestos/:id",
     authenticateToken2,
-    checkPermission("taxes:update"),
+    checkPermission2("taxes:update"),
     async (req, res) => {
       try {
         const { modelo, nombre, descripcion } = req.body;
@@ -9332,7 +14175,7 @@ async function registerRoutes(app2) {
   app2.delete(
     "/api/impuestos/:id",
     authenticateToken2,
-    checkPermission("taxes:delete"),
+    checkPermission2("taxes:delete"),
     async (req, res) => {
       try {
         await prismaStorage.deleteImpuesto(req.params.id);
@@ -9375,7 +14218,7 @@ async function registerRoutes(app2) {
   app2.post(
     "/api/obligaciones-fiscales",
     authenticateToken2,
-    checkPermission("taxes:create"),
+    checkPermission2("taxes:create"),
     async (req, res) => {
       try {
         const { clienteId, impuestoId, periodicidad, diaVencimiento, observaciones, fechaInicio, fechaFin, activo } = req.body;
@@ -9408,7 +14251,7 @@ async function registerRoutes(app2) {
   app2.patch(
     "/api/obligaciones-fiscales/:id",
     authenticateToken2,
-    checkPermission("taxes:update"),
+    checkPermission2("taxes:update"),
     async (req, res) => {
       try {
         const updateData = { ...req.body };
@@ -9434,7 +14277,7 @@ async function registerRoutes(app2) {
   app2.delete(
     "/api/obligaciones-fiscales/:id",
     authenticateToken2,
-    checkPermission("taxes:delete"),
+    checkPermission2("taxes:delete"),
     async (req, res) => {
       try {
         await prismaStorage.deleteObligacionFiscal(req.params.id);
@@ -9468,7 +14311,7 @@ async function registerRoutes(app2) {
   app2.post(
     "/api/tasks",
     authenticateToken2,
-    checkPermission("tasks:create"),
+    checkPermission2("tasks:create"),
     validateZod(taskCreateSchema),
     async (req, res) => {
       try {
@@ -9546,12 +14389,12 @@ async function registerRoutes(app2) {
   app2.post(
     "/api/manuals",
     authenticateToken2,
-    checkPermission("manuals:create"),
+    checkPermission2("manuals:create"),
     async (req, res) => {
       try {
         const manual = await prismaStorage.createManual({
           ...req.body,
-          autor_id: req.user.id
+          autorId: req.user.id
         });
         await prismaStorage.createActivityLog({
           usuarioId: req.user.id,
@@ -9568,7 +14411,7 @@ async function registerRoutes(app2) {
   app2.patch(
     "/api/manuals/:id",
     authenticateToken2,
-    checkPermission("manuals:update"),
+    checkPermission2("manuals:update"),
     async (req, res) => {
       try {
         const { id } = req.params;
@@ -9604,7 +14447,7 @@ async function registerRoutes(app2) {
   app2.delete(
     "/api/manuals/:id",
     authenticateToken2,
-    checkPermission("manuals:update"),
+    checkPermission2("manuals:update"),
     async (req, res) => {
       const { id } = req.params;
       try {
@@ -9627,7 +14470,7 @@ async function registerRoutes(app2) {
   app2.post(
     "/api/manuals/upload-image",
     authenticateToken2,
-    checkPermission("manuals:update"),
+    checkPermission2("manuals:update"),
     uploadManualImage.single("image"),
     uploadToStorage,
     async (req, res) => {
@@ -9645,7 +14488,7 @@ async function registerRoutes(app2) {
   app2.post(
     "/api/manuals/:id/attachments",
     authenticateToken2,
-    checkPermission("manuals:update"),
+    checkPermission2("manuals:update"),
     uploadManualAttachment.single("file"),
     uploadToStorage,
     async (req, res) => {
@@ -9689,7 +14532,7 @@ async function registerRoutes(app2) {
   app2.delete(
     "/api/manuals/:manualId/attachments/:attachmentId",
     authenticateToken2,
-    checkPermission("manuals:update"),
+    checkPermission2("manuals:update"),
     async (req, res) => {
       try {
         const { attachmentId } = req.params;
@@ -9726,7 +14569,7 @@ async function registerRoutes(app2) {
   app2.post(
     "/api/manuals/:id/versions/restore/:versionId",
     authenticateToken2,
-    checkPermission("manuals:update"),
+    checkPermission2("manuals:update"),
     async (req, res) => {
       try {
         const { id, versionId } = req.params;
@@ -9749,7 +14592,7 @@ async function registerRoutes(app2) {
   app2.get(
     "/api/activity-logs",
     authenticateToken2,
-    checkPermission("audits:read"),
+    checkPermission2("audits:read"),
     async (req, res) => {
       try {
         const logs = await prismaStorage.getAllActivityLogs();
@@ -9788,7 +14631,7 @@ async function registerRoutes(app2) {
   app2.post(
     "/api/admin/smtp-config",
     authenticateToken2,
-    checkPermission("admin:settings"),
+    checkPermission2("admin:settings"),
     validateZod(smtpConfigSchema),
     async (req, res) => {
       try {
@@ -9823,7 +14666,7 @@ async function registerRoutes(app2) {
   app2.get(
     "/api/admin/smtp-config",
     authenticateToken2,
-    checkPermission("admin:settings"),
+    checkPermission2("admin:settings"),
     async (req, res) => {
       try {
         const config = getSMTPConfig();
@@ -9843,7 +14686,7 @@ async function registerRoutes(app2) {
   );
   app2.get("/api/admin/online-count", authenticateToken2, async (req, res) => {
     try {
-      const count = await prisma18.sessions.count({
+      const count = await prisma13.sessions.count({
         where: { ended_at: null }
       });
       res.json({ count });
@@ -9856,12 +14699,14 @@ async function registerRoutes(app2) {
   app2.use("/api/price-catalog", price_catalog_default);
   app2.use("/api/budgets", budgets_default);
   app2.use("/public/budgets", public_budgets_default);
+  app2.use("/api/gestoria-budgets", gestoria_budgets_default);
   app2.use("/api/budget-parameters", budget_parameters_default);
   app2.use("/api/budget-templates", budget_templates_default);
+  app2.use("/api/documents", authenticateToken2, documentsRouter);
   app2.get(
     "/api/admin/smtp-accounts",
     authenticateToken2,
-    checkPermission("admin:smtp_manage"),
+    checkPermission2("admin:smtp_manage"),
     async (req, res) => {
       try {
         const accounts = await prismaStorage.getAllSMTPAccounts();
@@ -9878,7 +14723,7 @@ async function registerRoutes(app2) {
   app2.post(
     "/api/admin/smtp-accounts",
     authenticateToken2,
-    checkPermission("admin:smtp_manage"),
+    checkPermission2("admin:smtp_manage"),
     validateZod(smtpAccountSchema),
     async (req, res) => {
       try {
@@ -9911,7 +14756,7 @@ async function registerRoutes(app2) {
   app2.patch(
     "/api/admin/smtp-accounts/:id",
     authenticateToken2,
-    checkPermission("admin:smtp_manage"),
+    checkPermission2("admin:smtp_manage"),
     async (req, res) => {
       try {
         const { id } = req.params;
@@ -9935,7 +14780,7 @@ async function registerRoutes(app2) {
   app2.delete(
     "/api/admin/smtp-accounts/:id",
     authenticateToken2,
-    checkPermission("admin:smtp_manage"),
+    checkPermission2("admin:smtp_manage"),
     async (req, res) => {
       try {
         const { id } = req.params;
@@ -9955,11 +14800,10 @@ async function registerRoutes(app2) {
   app2.post(
     "/api/admin/smtp-accounts/test",
     authenticateToken2,
-    checkPermission("admin:smtp_manage"),
+    checkPermission2("admin:smtp_manage"),
     async (req, res) => {
       try {
         const { host, port, user, password } = req.body;
-        const nodemailer5 = __require("nodemailer");
         const transporter2 = nodemailer5.createTransport({
           host,
           port: parseInt(port),
@@ -9973,13 +14817,54 @@ async function registerRoutes(app2) {
       }
     }
   );
+  app2.post(
+    "/api/admin/apply-migrations",
+    authenticateToken2,
+    checkPermission2("admin:system"),
+    async (req, res) => {
+      try {
+        console.log("\u{1F680} Iniciando migraciones...");
+        const updatedUsers = await prisma13.users.updateMany({
+          where: { username: "CarlosAdmin" },
+          data: { is_owner: true }
+        });
+        const adminUser = await prisma13.users.findFirst({
+          where: { username: "CarlosAdmin" },
+          select: { username: true, email: true, is_owner: true }
+        });
+        const roles = await prisma13.roles.findMany({
+          select: {
+            id: true,
+            name: true,
+            is_system: true
+          }
+        });
+        res.json({
+          success: true,
+          message: "\u2705 Migraciones aplicadas exitosamente",
+          migrations: {
+            usersUpdated: updatedUsers.count,
+            adminUser,
+            rolesCount: roles.length,
+            roles
+          }
+        });
+      } catch (error) {
+        console.error("\u274C Error en migraciones:", error);
+        res.status(500).json({
+          success: false,
+          error: error.message
+        });
+      }
+    }
+  );
   app2.get(
     "/api/admin/storage-config",
     authenticateToken2,
-    checkPermission("admin:system"),
+    checkPermission2("admin:system"),
     async (req, res) => {
       try {
-        const config = await prisma18.storage_configs.findFirst({
+        const config = await prisma13.storage_configs.findFirst({
           where: { isActive: true },
           orderBy: { createdAt: "desc" }
         });
@@ -10009,7 +14894,7 @@ async function registerRoutes(app2) {
   app2.post(
     "/api/admin/storage-config",
     authenticateToken2,
-    checkPermission("admin:system"),
+    checkPermission2("admin:system"),
     async (req, res) => {
       try {
         const { type, host, port, username, password, basePath } = req.body;
@@ -10024,13 +14909,13 @@ async function registerRoutes(app2) {
           }
         }
         const encryptedPassword = password ? encryptPassword2(password) : null;
-        await prisma18.storage_configs.updateMany({
+        await prisma13.storage_configs.updateMany({
           where: { isActive: true },
           data: { isActive: false }
         });
-        const config = await prisma18.storage_configs.create({
+        const config = await prisma13.storage_configs.create({
           data: {
-            id: randomUUID4(),
+            id: randomUUID8(),
             type,
             name: `${type} - ${(/* @__PURE__ */ new Date()).toISOString()}`,
             host,
@@ -10065,7 +14950,7 @@ async function registerRoutes(app2) {
   app2.post(
     "/api/admin/storage-config/test",
     authenticateToken2,
-    checkPermission("admin:system"),
+    checkPermission2("admin:system"),
     async (req, res) => {
       try {
         const { type, host, port, username, password, basePath } = req.body;
@@ -10108,7 +14993,7 @@ async function registerRoutes(app2) {
   app2.post(
     "/api/admin/storage-config/migrate",
     authenticateToken2,
-    checkPermission("admin:system"),
+    checkPermission2("admin:system"),
     async (req, res) => {
       try {
         const { targetConfigId } = req.body;
@@ -10117,8 +15002,8 @@ async function registerRoutes(app2) {
             error: "Se requiere targetConfigId"
           });
         }
-        const { migrateStorage: migrateStorage2 } = await Promise.resolve().then(() => (init_migration_service(), migration_service_exports));
-        const result = await migrateStorage2(targetConfigId);
+        const { migrateStorage } = await import("./services/migration-service");
+        const result = await migrateStorage(targetConfigId);
         res.json({
           success: result.success,
           totalFiles: result.totalFiles,
@@ -10151,7 +15036,7 @@ async function registerRoutes(app2) {
   app2.patch(
     "/api/admin/system-settings",
     authenticateToken2,
-    checkPermission("admin:settings"),
+    checkPermission2("admin:settings"),
     async (req, res) => {
       try {
         const { registrationEnabled } = req.body;
@@ -10173,10 +15058,10 @@ async function registerRoutes(app2) {
   app2.get(
     "/api/system/config",
     authenticateToken2,
-    checkPermission("admin:settings"),
+    checkPermission2("admin:settings"),
     async (req, res) => {
       try {
-        const configs = await prisma18.system_config.findMany({
+        const configs = await prisma13.system_config.findMany({
           orderBy: { key: "asc" }
         });
         res.json(configs);
@@ -10188,10 +15073,10 @@ async function registerRoutes(app2) {
   app2.get(
     "/api/system/config/:key",
     authenticateToken2,
-    checkPermission("admin:settings"),
+    checkPermission2("admin:settings"),
     async (req, res) => {
       try {
-        const config = await prisma18.system_config.findUnique({
+        const config = await prisma13.system_config.findUnique({
           where: { key: req.params.key }
         });
         if (!config) {
@@ -10206,14 +15091,14 @@ async function registerRoutes(app2) {
   app2.put(
     "/api/system/config/:key",
     authenticateToken2,
-    checkPermission("admin:settings"),
+    checkPermission2("admin:settings"),
     async (req, res) => {
       try {
         const { value } = req.body;
         if (value === void 0 || value === null) {
           return res.status(400).json({ error: "El valor de la configuraci\xF3n es requerido" });
         }
-        const existing = await prisma18.system_config.findUnique({
+        const existing = await prisma13.system_config.findUnique({
           where: { key: req.params.key }
         });
         if (!existing) {
@@ -10222,7 +15107,7 @@ async function registerRoutes(app2) {
         if (!existing.is_editable) {
           return res.status(403).json({ error: "Esta configuraci\xF3n no es editable" });
         }
-        const config = await prisma18.system_config.update({
+        const config = await prisma13.system_config.update({
           where: { key: req.params.key },
           data: { value: String(value) }
         });
@@ -10241,13 +15126,13 @@ async function registerRoutes(app2) {
   app2.get(
     "/api/admin/github-config",
     authenticateToken2,
-    checkPermission("admin:settings"),
+    checkPermission2("admin:settings"),
     async (req, res) => {
       try {
-        const repoConfig = await prisma18.system_config.findUnique({
+        const repoConfig = await prisma13.system_config.findUnique({
           where: { key: "github_repo_url" }
         });
-        const branchConfig = await prisma18.system_config.findUnique({
+        const branchConfig = await prisma13.system_config.findUnique({
           where: { key: "github_branch" }
         });
         res.json({
@@ -10263,7 +15148,7 @@ async function registerRoutes(app2) {
   app2.put(
     "/api/admin/github-config",
     authenticateToken2,
-    checkPermission("admin:settings"),
+    checkPermission2("admin:settings"),
     validateZod(githubConfigSchema),
     async (req, res) => {
       try {
@@ -10297,10 +15182,10 @@ async function registerRoutes(app2) {
           }
         }
         if (repoUrl !== void 0) {
-          await prisma18.system_config.upsert({
+          await prisma13.system_config.upsert({
             where: { key: "github_repo_url" },
             create: {
-              id: randomUUID4(),
+              id: randomUUID8(),
               key: "github_repo_url",
               value: repoUrl,
               description: "URL del repositorio de GitHub para actualizaciones",
@@ -10311,10 +15196,10 @@ async function registerRoutes(app2) {
           });
         }
         if (branch !== void 0) {
-          await prisma18.system_config.upsert({
+          await prisma13.system_config.upsert({
             where: { key: "github_branch" },
             create: {
-              id: randomUUID4(),
+              id: randomUUID8(),
               key: "github_branch",
               value: branch,
               description: "Rama de GitHub para actualizaciones",
@@ -10344,11 +15229,11 @@ async function registerRoutes(app2) {
   app2.get(
     "/api/system/version",
     authenticateToken2,
-    checkPermission("admin:system"),
+    checkPermission2("admin:system"),
     async (req, res) => {
       try {
         const currentVersion = await getCurrentVersion();
-        const repoConfig = await prisma18.system_config.findUnique({
+        const repoConfig = await prisma13.system_config.findUnique({
           where: { key: "github_repo_url" }
         });
         if (!repoConfig?.value) {
@@ -10384,7 +15269,7 @@ async function registerRoutes(app2) {
   app2.post(
     "/api/system/update",
     authenticateToken2,
-    checkPermission("admin:system"),
+    checkPermission2("admin:system"),
     async (req, res) => {
       try {
         const gitCheck = await verifyGitSetup();
@@ -10428,7 +15313,7 @@ async function registerRoutes(app2) {
   app2.get(
     "/api/system/backups",
     authenticateToken2,
-    checkPermission("admin:system"),
+    checkPermission2("admin:system"),
     async (req, res) => {
       try {
         const backups = await listBackups();
@@ -10441,7 +15326,7 @@ async function registerRoutes(app2) {
   app2.post(
     "/api/system/backups",
     authenticateToken2,
-    checkPermission("admin:system"),
+    checkPermission2("admin:system"),
     async (req, res) => {
       try {
         const backup = await createSystemBackup(req.user.id);
@@ -10460,7 +15345,7 @@ async function registerRoutes(app2) {
   app2.post(
     "/api/system/restore/:id",
     authenticateToken2,
-    checkPermission("admin:system"),
+    checkPermission2("admin:system"),
     async (req, res) => {
       try {
         await restoreFromBackup(req.params.id, req.user.id);
@@ -10482,7 +15367,7 @@ async function registerRoutes(app2) {
   app2.get(
     "/api/system/updates",
     authenticateToken2,
-    checkPermission("admin:system"),
+    checkPermission2("admin:system"),
     async (req, res) => {
       try {
         const updates = await getUpdateHistory(20);
@@ -10495,11 +15380,20 @@ async function registerRoutes(app2) {
   app2.get(
     "/api/roles",
     authenticateToken2,
-    checkPermission("admin:roles"),
+    checkPermission2("admin:roles"),
     async (req, res) => {
       try {
         const roles = await prismaStorage.getAllRoles();
-        res.json(roles);
+        const enrichedRoles = roles.map((role) => ({
+          ...role,
+          color: role.color || "#6366f1",
+          icon: role.icon || "shield",
+          can_create_users: role.can_create_users !== void 0 ? role.can_create_users : false,
+          can_delete_users: role.can_delete_users !== void 0 ? role.can_delete_users : false,
+          can_manage_roles: role.can_manage_roles !== void 0 ? role.can_manage_roles : false,
+          is_active: role.is_active !== void 0 ? role.is_active : true
+        }));
+        res.json(enrichedRoles);
       } catch (error) {
         res.status(500).json({ error: error.message });
       }
@@ -10508,14 +15402,23 @@ async function registerRoutes(app2) {
   app2.get(
     "/api/roles/:id",
     authenticateToken2,
-    checkPermission("admin:roles"),
+    checkPermission2("admin:roles"),
     async (req, res) => {
       try {
         const role = await prismaStorage.getRoleById(req.params.id);
         if (!role) {
           return res.status(404).json({ error: "Rol no encontrado" });
         }
-        res.json(role);
+        const enrichedRole = {
+          ...role,
+          color: role.color || "#6366f1",
+          icon: role.icon || "shield",
+          can_create_users: role.can_create_users !== void 0 ? role.can_create_users : false,
+          can_delete_users: role.can_delete_users !== void 0 ? role.can_delete_users : false,
+          can_manage_roles: role.can_manage_roles !== void 0 ? role.can_manage_roles : false,
+          is_active: role.is_active !== void 0 ? role.is_active : true
+        };
+        res.json(enrichedRole);
       } catch (error) {
         res.status(500).json({ error: error.message });
       }
@@ -10524,25 +15427,70 @@ async function registerRoutes(app2) {
   app2.post(
     "/api/roles",
     authenticateToken2,
-    checkPermission("admin:roles"),
+    checkPermission2("admin:roles"),
     async (req, res) => {
       try {
-        const { name, description } = req.body;
+        const {
+          name,
+          description,
+          color,
+          icon,
+          can_create_users,
+          can_delete_users,
+          can_manage_roles
+        } = req.body;
         if (!name) {
           return res.status(400).json({ error: "El nombre del rol es requerido" });
         }
-        const role = await prismaStorage.createRole({ name, description });
-        await prismaStorage.createActivityLog({
-          usuarioId: req.user.id,
-          accion: `Cre\xF3 el rol: ${name}`,
-          modulo: "admin",
-          detalles: description || ""
+        const existingRole = await prisma13.roles.findUnique({
+          where: { name }
         });
-        res.status(201).json(role);
-      } catch (error) {
-        if (error.code === "P2002") {
+        if (existingRole) {
           return res.status(400).json({ error: "Ya existe un rol con ese nombre" });
         }
+        const role = await prisma13.roles.create({
+          data: {
+            id: randomUUID8(),
+            name,
+            description: description || null,
+            is_system: false,
+            createdAt: /* @__PURE__ */ new Date(),
+            updatedAt: /* @__PURE__ */ new Date()
+          },
+          include: {
+            role_permissions: {
+              include: {
+                permissions: true
+              }
+            }
+          }
+        });
+        const enrichedRole = {
+          ...role,
+          color: color || "#6366f1",
+          icon: icon || "shield",
+          can_create_users: can_create_users || false,
+          can_delete_users: can_delete_users || false,
+          can_manage_roles: can_manage_roles || false,
+          is_active: true,
+          created_by: req.user.id
+        };
+        await prismaStorage.createActivityLog({
+          usuarioId: req.user.id,
+          accion: `Cre\xF3 el rol personalizado: ${name}`,
+          modulo: "admin",
+          detalles: JSON.stringify({
+            description,
+            color,
+            icon,
+            can_create_users,
+            can_delete_users,
+            can_manage_roles
+          })
+        });
+        res.status(201).json(enrichedRole);
+      } catch (error) {
+        console.error("Error creando rol:", error);
         res.status(500).json({ error: error.message });
       }
     }
@@ -10550,22 +15498,82 @@ async function registerRoutes(app2) {
   app2.patch(
     "/api/roles/:id",
     authenticateToken2,
-    checkPermission("admin:roles"),
+    checkPermission2("admin:roles"),
     async (req, res) => {
       try {
-        const { name, description } = req.body;
-        const role = await prismaStorage.updateRole(req.params.id, { name, description });
+        const { id } = req.params;
+        const {
+          name,
+          description,
+          color,
+          icon,
+          can_create_users,
+          can_delete_users,
+          can_manage_roles,
+          is_active
+        } = req.body;
+        const existingRole = await prisma13.roles.findUnique({
+          where: { id }
+        });
+        if (!existingRole) {
+          return res.status(404).json({ error: "Rol no encontrado" });
+        }
+        if (existingRole.is_system) {
+          return res.status(403).json({
+            error: "No se pueden modificar roles del sistema",
+            code: "SYSTEM_ROLE_PROTECTED"
+          });
+        }
+        if (name && name !== existingRole.name) {
+          const duplicateRole = await prisma13.roles.findUnique({
+            where: { name }
+          });
+          if (duplicateRole) {
+            return res.status(400).json({ error: "Ya existe un rol con ese nombre" });
+          }
+        }
+        const updateData = {
+          updatedAt: /* @__PURE__ */ new Date()
+        };
+        if (name !== void 0) updateData.name = name;
+        if (description !== void 0) updateData.description = description;
+        const additionalFields = {};
+        if (color !== void 0) additionalFields.color = color;
+        if (icon !== void 0) additionalFields.icon = icon;
+        if (can_create_users !== void 0) additionalFields.can_create_users = can_create_users;
+        if (can_delete_users !== void 0) additionalFields.can_delete_users = can_delete_users;
+        if (can_manage_roles !== void 0) additionalFields.can_manage_roles = can_manage_roles;
+        if (is_active !== void 0) additionalFields.is_active = is_active;
+        const role = await prisma13.roles.update({
+          where: { id },
+          data: updateData,
+          include: {
+            role_permissions: {
+              include: {
+                permissions: true
+              }
+            }
+          }
+        });
+        const enrichedRole = {
+          ...role,
+          ...additionalFields,
+          color: additionalFields.color || "#6366f1",
+          icon: additionalFields.icon || "shield",
+          can_create_users: additionalFields.can_create_users || false,
+          can_delete_users: additionalFields.can_delete_users || false,
+          can_manage_roles: additionalFields.can_manage_roles || false,
+          is_active: additionalFields.is_active !== void 0 ? additionalFields.is_active : true
+        };
         await prismaStorage.createActivityLog({
           usuarioId: req.user.id,
-          accion: `Actualiz\xF3 el rol: ${role.name}`,
+          accion: `Actualiz\xF3 el rol personalizado: ${role.name}`,
           modulo: "admin",
-          detalles: JSON.stringify({ name, description })
+          detalles: JSON.stringify({ ...updateData, ...additionalFields })
         });
-        res.json(role);
+        res.json(enrichedRole);
       } catch (error) {
-        if (error.code === "P2002") {
-          return res.status(400).json({ error: "Ya existe un rol con ese nombre" });
-        }
+        console.error("Error actualizando rol:", error);
         res.status(500).json({ error: error.message });
       }
     }
@@ -10573,18 +15581,49 @@ async function registerRoutes(app2) {
   app2.delete(
     "/api/roles/:id",
     authenticateToken2,
-    checkPermission("admin:roles"),
+    checkPermission2("admin:roles"),
     async (req, res) => {
       try {
-        await prismaStorage.deleteRole(req.params.id);
+        const { id } = req.params;
+        const role = await prisma13.roles.findUnique({
+          where: { id }
+        });
+        if (!role) {
+          return res.status(404).json({ error: "Rol no encontrado" });
+        }
+        if (role.is_system) {
+          return res.status(403).json({
+            error: "No se pueden eliminar roles del sistema",
+            code: "SYSTEM_ROLE_PROTECTED"
+          });
+        }
+        const usersWithRole = await prisma13.users.count({
+          where: { roleId: id }
+        });
+        if (usersWithRole > 0) {
+          return res.status(409).json({
+            error: `No se puede eliminar el rol: hay ${usersWithRole} usuario(s) asignado(s) a este rol. Reasignalos a otro rol primero.`,
+            code: "ROLE_IN_USE"
+          });
+        }
+        await prisma13.role_permissions.deleteMany({
+          where: { roleId: id }
+        });
+        await prisma13.roles.delete({
+          where: { id }
+        });
         await prismaStorage.createActivityLog({
           usuarioId: req.user.id,
-          accion: `Elimin\xF3 un rol`,
+          accion: `Elimin\xF3 el rol personalizado: ${role.name}`,
           modulo: "admin",
-          detalles: `ID: ${req.params.id}`
+          detalles: `ID: ${id}`
         });
-        res.json({ success: true });
+        res.json({
+          success: true,
+          message: `Rol "${role.name}" eliminado exitosamente`
+        });
       } catch (error) {
+        console.error("Error eliminando rol:", error);
         res.status(500).json({ error: error.message });
       }
     }
@@ -10592,7 +15631,7 @@ async function registerRoutes(app2) {
   app2.get(
     "/api/permissions",
     authenticateToken2,
-    checkPermission("admin:roles"),
+    checkPermission2("admin:roles"),
     async (req, res) => {
       try {
         const permissions = await prismaStorage.getAllPermissions();
@@ -10605,7 +15644,7 @@ async function registerRoutes(app2) {
   app2.post(
     "/api/roles/:id/permissions",
     authenticateToken2,
-    checkPermission("admin:roles"),
+    checkPermission2("admin:roles"),
     async (req, res) => {
       try {
         const { permissionIds } = req.body;
@@ -10625,10 +15664,86 @@ async function registerRoutes(app2) {
       }
     }
   );
+  app2.post(
+    "/api/roles/:id/assign-permissions",
+    authenticateToken2,
+    checkPermission2("admin:roles"),
+    async (req, res) => {
+      try {
+        const { id } = req.params;
+        const { permissionIds } = req.body;
+        if (!Array.isArray(permissionIds)) {
+          return res.status(400).json({ error: "permissionIds debe ser un array" });
+        }
+        const role = await prisma13.roles.findUnique({
+          where: { id }
+        });
+        if (!role) {
+          return res.status(404).json({ error: "Rol no encontrado" });
+        }
+        if (role.is_system) {
+          return res.status(403).json({
+            error: "No se pueden modificar permisos de roles del sistema",
+            code: "SYSTEM_ROLE_PROTECTED"
+          });
+        }
+        await prisma13.role_permissions.deleteMany({
+          where: { roleId: id }
+        });
+        const rolePermissions = await Promise.all(
+          permissionIds.map(
+            (permissionId) => prisma13.role_permissions.create({
+              data: {
+                id: randomUUID8(),
+                roleId: id,
+                permissionId
+              }
+            })
+          )
+        );
+        const updatedRole = await prisma13.roles.findUnique({
+          where: { id },
+          include: {
+            role_permissions: {
+              include: {
+                permissions: true
+              }
+            }
+          }
+        });
+        const enrichedRole = {
+          ...updatedRole,
+          color: updatedRole?.color || "#6366f1",
+          icon: updatedRole?.icon || "shield",
+          can_create_users: updatedRole?.can_create_users !== void 0 ? updatedRole.can_create_users : false,
+          can_delete_users: updatedRole?.can_delete_users !== void 0 ? updatedRole.can_delete_users : false,
+          can_manage_roles: updatedRole?.can_manage_roles !== void 0 ? updatedRole.can_manage_roles : false,
+          is_active: updatedRole?.is_active !== void 0 ? updatedRole.is_active : true
+        };
+        await prismaStorage.createActivityLog({
+          usuarioId: req.user.id,
+          accion: `Asign\xF3 ${permissionIds.length} permisos al rol: ${role.name}`,
+          modulo: "admin",
+          detalles: JSON.stringify({
+            permissionIds,
+            totalPermissions: permissionIds.length
+          })
+        });
+        res.json({
+          success: true,
+          message: `${permissionIds.length} permisos asignados al rol "${role.name}"`,
+          role: enrichedRole
+        });
+      } catch (error) {
+        console.error("Error asignando permisos:", error);
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
   app2.get(
     "/api/audit",
     authenticateToken2,
-    checkPermission("audits:read"),
+    checkPermission2("audits:read"),
     async (req, res) => {
       try {
         const { table, recordId, userId } = req.query;
@@ -10683,7 +15798,7 @@ async function registerRoutes(app2) {
   );
   app2.get("/api/tax-requirements", authenticateToken2, async (req, res) => {
     try {
-      const requirements = await prisma18.client_tax_requirements.findMany({
+      const requirements = await prisma13.client_tax_requirements.findMany({
         include: { clients: true }
       });
       res.json(requirements);
@@ -10691,12 +15806,12 @@ async function registerRoutes(app2) {
       res.status(500).json({ error: error.message });
     }
   });
-  app2.post("/api/tax-requirements", authenticateToken2, checkPermission("taxes:create"), async (req, res) => {
+  app2.post("/api/tax-requirements", authenticateToken2, checkPermission2("taxes:create"), async (req, res) => {
     try {
       const { clientId, taxModelCode, impuesto, required = true, note, colorTag, detalle } = req.body;
-      const requirement = await prisma18.client_tax_requirements.create({
+      const requirement = await prisma13.client_tax_requirements.create({
         data: {
-          id: randomUUID4(),
+          id: randomUUID8(),
           clientId,
           taxModelCode: taxModelCode || null,
           impuesto: impuesto || taxModelCode || "SIN_ESPECIFICAR",
@@ -10712,14 +15827,14 @@ async function registerRoutes(app2) {
       res.status(500).json({ error: error.message });
     }
   });
-  app2.patch("/api/tax-requirements/:id/toggle", authenticateToken2, checkPermission("taxes:update"), async (req, res) => {
+  app2.patch("/api/tax-requirements/:id/toggle", authenticateToken2, checkPermission2("taxes:update"), async (req, res) => {
     try {
       const { id } = req.params;
-      const current = await prisma18.client_tax_requirements.findUnique({ where: { id } });
+      const current = await prisma13.client_tax_requirements.findUnique({ where: { id } });
       if (!current) {
         return res.status(404).json({ error: "Requisito no encontrado" });
       }
-      const updated = await prisma18.client_tax_requirements.update({
+      const updated = await prisma13.client_tax_requirements.update({
         where: { id },
         data: { required: !current.required },
         include: { clients: true }
@@ -10729,11 +15844,11 @@ async function registerRoutes(app2) {
       res.status(500).json({ error: error.message });
     }
   });
-  app2.patch("/api/tax-requirements/:id", authenticateToken2, checkPermission("taxes:update"), async (req, res) => {
+  app2.patch("/api/tax-requirements/:id", authenticateToken2, checkPermission2("taxes:update"), async (req, res) => {
     try {
       const { id } = req.params;
       const { note, color_tag: colorTag } = req.body;
-      const updated = await prisma18.client_tax_requirements.update({
+      const updated = await prisma13.client_tax_requirements.update({
         where: { id },
         data: { note, color_tag: colorTag },
         include: { clients: true }
@@ -10745,7 +15860,7 @@ async function registerRoutes(app2) {
   });
   app2.get("/api/fiscal-periods", authenticateToken2, async (req, res) => {
     try {
-      const periods = await prisma18.fiscal_periods.findMany({
+      const periods = await prisma13.fiscal_periods.findMany({
         orderBy: [{ year: "desc" }, { quarter: "asc" }]
       });
       res.json(periods);
@@ -10756,7 +15871,7 @@ async function registerRoutes(app2) {
   app2.get(
     "/api/tax/periods",
     authenticateToken2,
-    checkPermission("taxes:read"),
+    checkPermission2("taxes:read"),
     async (req, res) => {
       try {
         const year = req.query.year ? parseInt(req.query.year, 10) : void 0;
@@ -10770,7 +15885,7 @@ async function registerRoutes(app2) {
   app2.get(
     "/api/tax/periods/:id",
     authenticateToken2,
-    checkPermission("taxes:read"),
+    checkPermission2("taxes:read"),
     async (req, res) => {
       try {
         const period = await prismaStorage.getFiscalPeriod(req.params.id);
@@ -10786,7 +15901,7 @@ async function registerRoutes(app2) {
   app2.post(
     "/api/tax/periods/create-year",
     authenticateToken2,
-    checkPermission("taxes:create"),
+    checkPermission2("taxes:create"),
     async (req, res) => {
       try {
         const year = parseInt(req.body?.year, 10);
@@ -10803,7 +15918,7 @@ async function registerRoutes(app2) {
   app2.post(
     "/api/tax/periods/create",
     authenticateToken2,
-    checkPermission("taxes:create"),
+    checkPermission2("taxes:create"),
     async (req, res) => {
       try {
         const { year, kind, label, quarter, startsAt, endsAt } = req.body;
@@ -10827,7 +15942,7 @@ async function registerRoutes(app2) {
   app2.patch(
     "/api/tax/periods/:id/status",
     authenticateToken2,
-    checkPermission("taxes:update"),
+    checkPermission2("taxes:update"),
     async (req, res) => {
       try {
         const { id } = req.params;
@@ -10843,9 +15958,114 @@ async function registerRoutes(app2) {
     }
   );
   app2.get(
+    "/api/tax-models",
+    authenticateToken2,
+    checkPermission2("taxes:read"),
+    async (_req, res) => {
+      try {
+        const models = await prismaStorage.getAllTaxModels();
+        res.json(models);
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+  app2.post(
+    "/api/tax-models",
+    authenticateToken2,
+    checkPermission2("taxes:update"),
+    async (req, res) => {
+      try {
+        const { code, name, allowedTypes, allowedPeriods } = req.body;
+        if (!code || !name) {
+          return res.status(400).json({ error: "C\xF3digo y nombre son requeridos" });
+        }
+        const existing = await prismaStorage.getTaxModelByCode(code.toUpperCase());
+        if (existing) {
+          return res.status(409).json({ error: "Ya existe un modelo con ese c\xF3digo" });
+        }
+        const model = await prismaStorage.createTaxModel({
+          code: code.toUpperCase(),
+          name,
+          allowedTypes: Array.isArray(allowedTypes) ? allowedTypes : [],
+          allowedPeriods: Array.isArray(allowedPeriods) ? allowedPeriods : []
+        });
+        await prismaStorage.createActivityLog({
+          usuarioId: req.user.id,
+          accion: `Cre\xF3 modelo fiscal ${code}`,
+          modulo: "impuestos",
+          detalles: `Nombre: ${name}`
+        });
+        res.status(201).json(model);
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+  app2.put(
+    "/api/tax-models/:code",
+    authenticateToken2,
+    checkPermission2("taxes:update"),
+    async (req, res) => {
+      try {
+        const { code } = req.params;
+        const { name, allowedTypes, allowedPeriods, isActive } = req.body;
+        const existing = await prismaStorage.getTaxModelByCode(code.toUpperCase());
+        if (!existing) {
+          return res.status(404).json({ error: "Modelo no encontrado" });
+        }
+        const updated = await prismaStorage.updateTaxModel(code.toUpperCase(), {
+          name,
+          allowedTypes: Array.isArray(allowedTypes) ? allowedTypes : void 0,
+          allowedPeriods: Array.isArray(allowedPeriods) ? allowedPeriods : void 0,
+          isActive
+        });
+        await prismaStorage.createActivityLog({
+          usuarioId: req.user.id,
+          accion: `Actualiz\xF3 modelo fiscal ${code}`,
+          modulo: "impuestos",
+          detalles: `Nombre: ${name}`
+        });
+        res.json(updated);
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+  app2.delete(
+    "/api/tax-models/:code",
+    authenticateToken2,
+    checkPermission2("taxes:delete"),
+    async (req, res) => {
+      try {
+        const { code } = req.params;
+        const existing = await prismaStorage.getTaxModelByCode(code.toUpperCase());
+        if (!existing) {
+          return res.status(404).json({ error: "Modelo no encontrado" });
+        }
+        const assignments = await prismaStorage.getAssignmentsByTaxModel(code.toUpperCase());
+        if (assignments && assignments.length > 0) {
+          return res.status(409).json({
+            error: `No se puede eliminar el modelo ${code} porque tiene ${assignments.length} asignaciones activas`
+          });
+        }
+        await prismaStorage.deleteTaxModel(code.toUpperCase());
+        await prismaStorage.createActivityLog({
+          usuarioId: req.user.id,
+          accion: `Elimin\xF3 modelo fiscal ${code}`,
+          modulo: "impuestos",
+          detalles: `Nombre: ${existing.name}`
+        });
+        res.json({ success: true, message: "Modelo eliminado correctamente" });
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+  app2.get(
     "/api/tax/calendar",
     authenticateToken2,
-    checkPermission("taxes:read"),
+    checkPermission2("taxes:read"),
     async (req, res) => {
       try {
         const y = Number(req.query.year);
@@ -10860,7 +16080,7 @@ async function registerRoutes(app2) {
         if (periodicity === "annual") where.period = "ANUAL";
         if (periodicity === "special") where.period = { in: ["M04", "M10", "M12"] };
         if (status && ["PENDIENTE", "ABIERTO", "CERRADO"].includes(status)) where.status = status;
-        const list = await prisma18.tax_calendar.findMany({ where, orderBy: [{ endDate: "asc" }] });
+        const list = await prisma13.tax_calendar.findMany({ where, orderBy: [{ endDate: "asc" }] });
         const rows = list.map((r) => ({
           id: r.id,
           modelCode: r.modelCode,
@@ -10870,7 +16090,9 @@ async function registerRoutes(app2) {
           endDate: r.endDate,
           status: r.status,
           daysToStart: r.days_to_start,
-          daysToEnd: r.days_to_end
+          daysToEnd: r.days_to_end,
+          active: r.active,
+          locked: r.locked
         }));
         res.json(rows);
       } catch (error) {
@@ -10881,7 +16103,7 @@ async function registerRoutes(app2) {
   app2.post(
     "/api/tax/calendar",
     authenticateToken2,
-    checkPermission("taxes:create"),
+    checkPermission2("taxes:create"),
     async (req, res) => {
       try {
         const { modelCode, period, year, startDate, endDate, active = true } = req.body || {};
@@ -10910,13 +16132,14 @@ async function registerRoutes(app2) {
   app2.patch(
     "/api/tax/calendar/:id",
     authenticateToken2,
-    checkPermission("taxes:update"),
+    checkPermission2("taxes:update"),
     async (req, res) => {
       try {
         const data = {};
         if (req.body.startDate) data.startDate = new Date(req.body.startDate);
         if (req.body.endDate) data.endDate = new Date(req.body.endDate);
         if (typeof req.body.active !== "undefined") data.active = Boolean(req.body.active);
+        if (typeof req.body.locked !== "undefined") data.locked = Boolean(req.body.locked);
         const updated = await prismaStorage.updateTaxCalendar(req.params.id, data);
         res.json(updated);
       } catch (error) {
@@ -10927,7 +16150,7 @@ async function registerRoutes(app2) {
   app2.delete(
     "/api/tax/calendar/:id",
     authenticateToken2,
-    checkPermission("taxes:delete"),
+    checkPermission2("taxes:delete"),
     async (req, res) => {
       try {
         const ok = await prismaStorage.deleteTaxCalendar(req.params.id);
@@ -10941,7 +16164,7 @@ async function registerRoutes(app2) {
   app2.post(
     "/api/tax/calendar/create-year",
     authenticateToken2,
-    checkPermission("taxes:create"),
+    checkPermission2("taxes:create"),
     async (req, res) => {
       try {
         const y = Number(req.body?.year);
@@ -10956,7 +16179,7 @@ async function registerRoutes(app2) {
   app2.post(
     "/api/tax/calendar/seed-year",
     authenticateToken2,
-    checkPermission("taxes:create"),
+    checkPermission2("taxes:create"),
     async (req, res) => {
       try {
         const y = Number(req.body?.year);
@@ -10973,15 +16196,48 @@ async function registerRoutes(app2) {
       }
     }
   );
+  app2.post(
+    "/api/tax/calendar/generate-aeat-calendar",
+    authenticateToken2,
+    checkPermission2("taxes:create"),
+    async (req, res) => {
+      try {
+        const y = Number(req.body?.year);
+        if (!Number.isFinite(y)) return res.status(400).json({ error: "A\xF1o inv\xE1lido" });
+        logger.info({ year: y }, "Generando calendario AEAT completo");
+        const dbUrl2 = process.env.DATABASE_URL;
+        const { stdout, stderr } = await execPromise(
+          `DATABASE_URL="${dbUrl2}" YEAR="${y}" npx tsx server/scripts/generate-tax-calendar-aeat.ts --year=${y}`,
+          {
+            cwd: process.cwd(),
+            timeout: 3e4
+            // 30 segundos timeout
+          }
+        );
+        logger.info({ stdout, stderr }, "Calendario AEAT generado exitosamente");
+        res.json({
+          success: true,
+          message: `Calendario AEAT completo generado para ${y} y ${y + 1}`,
+          output: stdout
+        });
+      } catch (error) {
+        logger.error({ error: error.message, stderr: error.stderr }, "Error generando calendario AEAT");
+        res.status(500).json({
+          error: error.message || "Error al generar el calendario",
+          details: error.stderr
+        });
+      }
+    }
+  );
   app2.get(
     "/api/tax/calendar/:year.ics",
     authenticateToken2,
-    checkPermission("taxes:read"),
+    checkPermission2("taxes:read"),
     async (req, res) => {
       try {
         const y = Number(req.params.year);
         if (!Number.isFinite(y)) return res.status(400).send("");
-        const rows = await prisma18.tax_calendar.findMany({ where: { year: y }, orderBy: [{ startDate: "asc" }] });
+        const rows = await prisma13.tax_calendar.findMany({ where: { year: y }, orderBy: [{ startDate: "asc" }] });
         const toICSDate = (d) => {
           const pad = (n) => String(n).padStart(2, "0");
           const yyyy = d.getUTCFullYear();
@@ -11017,16 +16273,391 @@ async function registerRoutes(app2) {
     }
   );
   app2.get(
+    "/api/tax/calendar/download-template",
+    authenticateToken2,
+    checkPermission2("taxes:read"),
+    async (req, res) => {
+      try {
+        const buffer = await generateTemplate();
+        res.setHeader(
+          "Content-Type",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        );
+        res.setHeader(
+          "Content-Disposition",
+          'attachment; filename="plantilla-calendario-fiscal.xlsx"'
+        );
+        res.send(buffer);
+      } catch (error) {
+        logger.error({ err: error }, "Error generando plantilla Excel");
+        res.status(500).json({
+          error: "No se pudo generar la plantilla",
+          details: error?.message
+        });
+      }
+    }
+  );
+  app2.post(
+    "/api/tax/calendar/import-excel",
+    authenticateToken2,
+    checkPermission2("taxes:create"),
+    uploadExcel.single("file"),
+    async (req, res) => {
+      try {
+        if (!req.file) {
+          return res.status(400).json({ error: "No se proporcion\xF3 ning\xFAn archivo" });
+        }
+        const userId = req.user?.id || "system";
+        const result = await processExcelImport(req.file.buffer, userId);
+        if (!result.success) {
+          return res.status(400).json({
+            error: "Errores durante la importaci\xF3n",
+            result
+          });
+        }
+        res.json({
+          message: "Importaci\xF3n completada",
+          result
+        });
+      } catch (error) {
+        logger.error({ err: error }, "Error en importaci\xF3n Excel");
+        res.status(500).json({
+          error: "Error procesando el archivo Excel",
+          details: error?.message
+        });
+      }
+    }
+  );
+  const parseReportFilters = (req) => {
+    const parseNumber = (value) => {
+      if (value === void 0 || value === null || value === "") return void 0;
+      const n = Number(value);
+      return Number.isFinite(n) ? n : void 0;
+    };
+    return {
+      year: parseNumber(req.query.year),
+      periodId: req.query.periodId ? String(req.query.periodId) : void 0,
+      model: req.query.model ? String(req.query.model) : void 0,
+      assigneeId: req.query.assigneeId ? String(req.query.assigneeId) : void 0,
+      clientId: req.query.clientId ? String(req.query.clientId) : void 0,
+      status: req.query.status ? String(req.query.status) : void 0
+    };
+  };
+  app2.get(
+    "/api/tax/reports/kpis",
+    authenticateToken2,
+    checkPermission2("taxes:read"),
+    async (req, res) => {
+      try {
+        const data = await getReportsKpis(parseReportFilters(req));
+        res.json(data);
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+  app2.get(
+    "/api/tax/reports/summary/model",
+    authenticateToken2,
+    checkPermission2("taxes:read"),
+    async (req, res) => {
+      try {
+        const data = await getSummaryByModel(parseReportFilters(req));
+        res.json(data);
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+  app2.get(
+    "/api/tax/reports/summary/assignee",
+    authenticateToken2,
+    checkPermission2("taxes:read"),
+    async (req, res) => {
+      try {
+        const data = await getSummaryByAssignee(parseReportFilters(req));
+        res.json(data);
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+  app2.get(
+    "/api/tax/reports/summary/client",
+    authenticateToken2,
+    checkPermission2("taxes:read"),
+    async (req, res) => {
+      try {
+        const data = await getSummaryByClient(parseReportFilters(req));
+        res.json(data);
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+  app2.get(
+    "/api/tax/reports/trends",
+    authenticateToken2,
+    checkPermission2("taxes:read"),
+    async (req, res) => {
+      try {
+        const filters = parseReportFilters(req);
+        const data = await getTrends({ ...filters, granularity: req.query.granularity === "week" ? "week" : "month" });
+        res.json(data);
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+  app2.get(
+    "/api/tax/reports/exceptions",
+    authenticateToken2,
+    checkPermission2("taxes:read"),
+    async (req, res) => {
+      try {
+        const data = await getExceptions(parseReportFilters(req));
+        res.json(data);
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+  app2.get(
+    "/api/tax/reports/filings",
+    authenticateToken2,
+    checkPermission2("taxes:read"),
+    async (req, res) => {
+      try {
+        const filters = parseReportFilters(req);
+        const page = Number(req.query.page || 1);
+        const size = Number(req.query.size || 50);
+        const data = await getFilings({ ...filters, page, size });
+        res.json(data);
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+  app2.get(
+    "/api/tax/reports/export",
+    authenticateToken2,
+    checkPermission2("taxes:read"),
+    async (req, res) => {
+      try {
+        const filters = parseReportFilters(req);
+        const data = await getFilings({ ...filters, page: 1, size: 2e3 });
+        const headers = [
+          "Modelo",
+          "Periodo",
+          "Cliente",
+          "Gestor",
+          "Estado",
+          "Fecha presentaci\xF3n",
+          "Fecha l\xEDmite",
+          "D\xEDas restantes",
+          "D\xEDas ciclo"
+        ];
+        const lines = [
+          headers.join(","),
+          ...data.items.map((item) => {
+            const fields = [
+              item.modelCode,
+              item.periodLabel,
+              item.cliente ?? "",
+              item.gestor ?? "",
+              String(item.status ?? "").toUpperCase(),
+              item.presentedAt ? new Date(item.presentedAt).toISOString() : "",
+              item.dueDate ? new Date(item.dueDate).toISOString() : "",
+              item.daysRemaining ?? "",
+              item.cycleDays ?? ""
+            ];
+            return fields.map((field) => {
+              if (field === null || field === void 0) return "";
+              const text = String(field);
+              return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+            }).join(",");
+          })
+        ].join("\n");
+        res.setHeader("Content-Type", "text/csv; charset=utf-8");
+        res.setHeader(
+          "Content-Disposition",
+          `attachment; filename="reporte-impuestos-${filters.year ?? "global"}.csv"`
+        );
+        res.send(lines);
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+  app2.get(
+    "/api/tax/reports/export-excel",
+    authenticateToken2,
+    checkPermission2("taxes:read"),
+    async (req, res) => {
+      try {
+        const filters = parseReportFilters(req);
+        const { generateAdvancedExcelBuffer: generateAdvancedExcelBuffer2 } = await Promise.resolve().then(() => (init_reports_export_service(), reports_export_service_exports));
+        const buffer = await generateAdvancedExcelBuffer2(filters);
+        res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+        res.setHeader(
+          "Content-Disposition",
+          `attachment; filename="reporte-impuestos-${filters.year ?? "global"}-${Date.now()}.xlsx"`
+        );
+        res.send(buffer);
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+  app2.get(
+    "/api/tax/reports/year-comparison",
+    authenticateToken2,
+    checkPermission2("taxes:read"),
+    async (req, res) => {
+      try {
+        const year1 = Number(req.query.year1 || (/* @__PURE__ */ new Date()).getFullYear() - 1);
+        const year2 = Number(req.query.year2 || (/* @__PURE__ */ new Date()).getFullYear());
+        const filters = {
+          model: req.query.model ? String(req.query.model) : void 0,
+          assigneeId: req.query.assigneeId ? String(req.query.assigneeId) : void 0,
+          clientId: req.query.clientId ? String(req.query.clientId) : void 0
+        };
+        const { getYearComparison: getYearComparison2 } = await Promise.resolve().then(() => (init_reports_service(), reports_service_exports));
+        const data = await getYearComparison2(year1, year2, filters);
+        res.json(data);
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+  app2.get(
+    "/api/tax/reports/productivity",
+    authenticateToken2,
+    checkPermission2("taxes:read"),
+    async (req, res) => {
+      try {
+        const { getProductivityAnalysis: getProductivityAnalysis2 } = await Promise.resolve().then(() => (init_reports_service(), reports_service_exports));
+        const data = await getProductivityAnalysis2(parseReportFilters(req));
+        res.json(data);
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+  app2.get(
+    "/api/tax/reports/predictions",
+    authenticateToken2,
+    checkPermission2("taxes:read"),
+    async (req, res) => {
+      try {
+        const { getPredictions: getPredictions2 } = await Promise.resolve().then(() => (init_reports_service(), reports_service_exports));
+        const data = await getPredictions2(parseReportFilters(req));
+        res.json(data);
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+  app2.get(
+    "/api/tax/reports/temporal-performance",
+    authenticateToken2,
+    checkPermission2("taxes:read"),
+    async (req, res) => {
+      try {
+        const { getTemporalPerformance: getTemporalPerformance2 } = await Promise.resolve().then(() => (init_reports_service(), reports_service_exports));
+        const data = await getTemporalPerformance2(parseReportFilters(req));
+        res.json(data);
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+  app2.get(
+    "/api/tax/reports/goals",
+    authenticateToken2,
+    checkPermission2("taxes:read"),
+    async (req, res) => {
+      try {
+        const { getGoals: getGoals2, evaluateGoals: evaluateGoals2 } = await Promise.resolve().then(() => (init_goals_service(), goals_service_exports));
+        const kpis = await getReportsKpis(parseReportFilters(req));
+        const goals = getGoals2();
+        const evaluated = evaluateGoals2(kpis, goals);
+        res.json(evaluated);
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+  app2.get(
+    "/api/tax/reports/diagnostic",
+    authenticateToken2,
+    checkPermission2("taxes:read"),
+    async (req, res) => {
+      try {
+        const year = req.query.year ? Number(req.query.year) : (/* @__PURE__ */ new Date()).getFullYear();
+        const totalFilings = await prisma13.client_tax_filings.count();
+        const filingsWithPeriods = await prisma13.client_tax_filings.count({
+          where: { fiscal_periods: { isNot: null } }
+        });
+        const totalPeriods = await prisma13.fiscal_periods.count();
+        const periodsThisYear = await prisma13.fiscal_periods.count({ where: { year } });
+        const periods = await prisma13.fiscal_periods.findMany({
+          select: { year: true },
+          distinct: ["year"],
+          orderBy: { year: "desc" }
+        });
+        const filingsThisYear = await prisma13.client_tax_filings.count({
+          where: { fiscal_periods: { year } }
+        });
+        const sampleFilings = await prisma13.client_tax_filings.findMany({
+          take: 3,
+          include: {
+            fiscal_periods: true,
+            clients: { select: { razonSocial: true } }
+          }
+        });
+        res.json({
+          summary: {
+            totalFilings,
+            filingsWithPeriods,
+            filingsWithoutPeriods: totalFilings - filingsWithPeriods,
+            totalPeriods,
+            periodsThisYear,
+            filingsThisYear
+          },
+          availableYears: periods.map((p) => p.year),
+          requestedYear: year,
+          sampleFilings: sampleFilings.map((f) => ({
+            id: f.id,
+            model: f.taxModelCode,
+            client: f.clients?.razonSocial,
+            status: f.status,
+            periodId: f.periodId,
+            periodYear: f.fiscal_periods?.year,
+            periodLabel: f.fiscal_periods?.label
+          })),
+          message: filingsThisYear === 0 && totalFilings > 0 ? `Hay ${totalFilings} declaraciones pero ninguna para el a\xF1o ${year}. A\xF1os disponibles: ${periods.map((p) => p.year).join(", ")}` : `Todo correcto: ${filingsThisYear} declaraciones para ${year}`
+        });
+      } catch (error) {
+        res.status(500).json({ error: error.message, stack: error.stack });
+      }
+    }
+  );
+  app2.get(
     "/api/tax/filings",
     authenticateToken2,
-    checkPermission("taxes:read"),
+    checkPermission2("taxes:read"),
     async (req, res) => {
       try {
         const filings = await prismaStorage.getTaxFilings({
+          year: req.query.year ? Number(req.query.year) : void 0,
+          clientId: req.query.clientId,
+          gestorId: req.query.gestorId,
           periodId: req.query.periodId,
           status: req.query.status,
           model: req.query.model,
-          search: req.query.search
+          search: req.query.q || req.query.search,
+          includeClosedPeriods: req.query.includeClosedPeriods === "true"
         });
         res.json(filings);
       } catch (error) {
@@ -11034,10 +16665,32 @@ async function registerRoutes(app2) {
       }
     }
   );
+  app2.post(
+    "/api/tax/filings/ensure-year",
+    authenticateToken2,
+    checkPermission2("taxes:update"),
+    async (req, res) => {
+      try {
+        const rawYear = req.body?.year ?? req.query?.year;
+        const yearNumber = rawYear === void 0 || rawYear === null || rawYear === "" ? (/* @__PURE__ */ new Date()).getFullYear() : Number(rawYear);
+        if (!Number.isFinite(yearNumber)) {
+          return res.status(400).json({ error: "A\xF1o inv\xE1lido" });
+        }
+        const result = await prismaStorage.ensureClientTaxFilingsForYear(yearNumber);
+        res.json({
+          success: true,
+          year: result.year,
+          generated: result.generated
+        });
+      } catch (error) {
+        res.status(500).json({ error: error.message || "No se pudieron generar las tarjetas fiscales" });
+      }
+    }
+  );
   app2.patch(
     "/api/tax/filings/:id",
     authenticateToken2,
-    checkPermission("taxes:update"),
+    checkPermission2("taxes:update"),
     async (req, res) => {
       try {
         const isAdmin = req.user?.roleName === "Administrador";
@@ -11053,6 +16706,66 @@ async function registerRoutes(app2) {
         );
         res.json(updated);
       } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+  app2.post(
+    "/api/tax/filings/cleanup",
+    authenticateToken2,
+    checkPermission2("taxes:delete"),
+    async (req, res) => {
+      try {
+        const allFilings = await prisma13.client_tax_filings.findMany({
+          include: {
+            fiscal_periods: true
+          }
+        });
+        const assignments = await prisma13.client_tax_assignments.findMany({
+          where: { activeFlag: true }
+        });
+        const assignmentMap = /* @__PURE__ */ new Map();
+        assignments.forEach((a) => {
+          const key = `${a.clientId}:${a.taxModelCode}`;
+          if (!assignmentMap.has(key)) assignmentMap.set(key, []);
+          assignmentMap.get(key).push(a);
+        });
+        const orphanIds = [];
+        for (const filing of allFilings) {
+          const key = `${filing.clientId}:${filing.taxModelCode}`;
+          const clientAssignments = assignmentMap.get(key);
+          if (!clientAssignments || clientAssignments.length === 0) {
+            orphanIds.push(filing.id);
+            continue;
+          }
+          const period = filing.fiscal_periods;
+          if (!period) {
+            orphanIds.push(filing.id);
+            continue;
+          }
+          const ps = period.starts_at;
+          const pe = period.ends_at;
+          const hasValidAssignment = clientAssignments.some((a) => {
+            const startOk = a.startDate <= pe;
+            const endOk = !a.endDate || a.endDate >= ps;
+            return startOk && endOk;
+          });
+          if (!hasValidAssignment) {
+            orphanIds.push(filing.id);
+          }
+        }
+        if (orphanIds.length > 0) {
+          await prisma13.client_tax_filings.deleteMany({
+            where: { id: { in: orphanIds } }
+          });
+        }
+        res.json({
+          success: true,
+          deleted: orphanIds.length,
+          message: `Se eliminaron ${orphanIds.length} tarjetas hu\xE9rfanas`
+        });
+      } catch (error) {
+        logger.error({ err: error }, "Error limpiando filings hu\xE9rfanos");
         res.status(500).json({ error: error.message });
       }
     }
@@ -11097,7 +16810,7 @@ async function registerRoutes(app2) {
   app2.get(
     "/api/notification-templates",
     authenticateToken2,
-    checkPermission("notifications:view_history"),
+    checkPermission2("notifications:view_history"),
     async (req, res) => {
       try {
         const templates = await prismaStorage.getAllNotificationTemplates();
@@ -11110,7 +16823,7 @@ async function registerRoutes(app2) {
   app2.post(
     "/api/notification-templates",
     authenticateToken2,
-    checkPermission("notifications:create"),
+    checkPermission2("notifications:create"),
     async (req, res) => {
       try {
         const { nombre, asunto, contenidoHTML, variables, tipo, activa } = req.body;
@@ -11141,7 +16854,7 @@ async function registerRoutes(app2) {
   app2.patch(
     "/api/notification-templates/:id",
     authenticateToken2,
-    checkPermission("notifications:update"),
+    checkPermission2("notifications:update"),
     async (req, res) => {
       try {
         const { id } = req.params;
@@ -11162,7 +16875,7 @@ async function registerRoutes(app2) {
   app2.delete(
     "/api/notification-templates/:id",
     authenticateToken2,
-    checkPermission("notifications:delete"),
+    checkPermission2("notifications:delete"),
     async (req, res) => {
       try {
         const { id } = req.params;
@@ -11182,7 +16895,7 @@ async function registerRoutes(app2) {
   app2.post(
     "/api/notifications/send",
     authenticateToken2,
-    checkPermission("notifications:send"),
+    checkPermission2("notifications:send"),
     async (req, res) => {
       try {
         const { plantillaId, smtpAccountId, destinatarios, asunto, contenido } = req.body;
@@ -11215,7 +16928,7 @@ async function registerRoutes(app2) {
   app2.get(
     "/api/notifications/history",
     authenticateToken2,
-    checkPermission("notifications:view_history"),
+    checkPermission2("notifications:view_history"),
     async (req, res) => {
       try {
         const logs = await prismaStorage.getAllNotificationLogs();
@@ -11228,7 +16941,7 @@ async function registerRoutes(app2) {
   app2.get(
     "/api/notifications/scheduled",
     authenticateToken2,
-    checkPermission("notifications:view_history"),
+    checkPermission2("notifications:view_history"),
     async (req, res) => {
       try {
         const scheduled = await prismaStorage.getAllScheduledNotifications();
@@ -11241,7 +16954,7 @@ async function registerRoutes(app2) {
   app2.post(
     "/api/notifications/schedule",
     authenticateToken2,
-    checkPermission("notifications:send"),
+    checkPermission2("notifications:send"),
     async (req, res) => {
       try {
         const { plantillaId, smtpAccountId, destinatariosSeleccionados, fechaProgramada, recurrencia } = req.body;
@@ -11272,7 +16985,7 @@ async function registerRoutes(app2) {
   app2.patch(
     "/api/notifications/scheduled/:id",
     authenticateToken2,
-    checkPermission("notifications:update"),
+    checkPermission2("notifications:update"),
     async (req, res) => {
       try {
         const { id } = req.params;
@@ -11296,7 +17009,7 @@ async function registerRoutes(app2) {
   app2.delete(
     "/api/notifications/scheduled/:id",
     authenticateToken2,
-    checkPermission("notifications:delete"),
+    checkPermission2("notifications:delete"),
     async (req, res) => {
       try {
         const { id } = req.params;
@@ -11322,7 +17035,7 @@ async function registerRoutes(app2) {
     let lastHeartbeat = Date.now();
     heartbeatInterval = setInterval(async () => {
       try {
-        await prisma18.sessions.updateMany({
+        await prisma13.sessions.updateMany({
           where: { socket_id: socket.id, ended_at: null },
           data: { last_seen_at: /* @__PURE__ */ new Date() }
         });
@@ -11338,7 +17051,7 @@ async function registerRoutes(app2) {
     socket.on("heartbeat-response", async () => {
       lastHeartbeat = Date.now();
       try {
-        await prisma18.sessions.updateMany({
+        await prisma13.sessions.updateMany({
           where: { socket_id: socket.id, ended_at: null },
           data: { last_seen_at: /* @__PURE__ */ new Date() }
         });
@@ -11373,9 +17086,9 @@ async function registerRoutes(app2) {
         const ipHeader = socket.handshake.headers["x-forwarded-for"] || "";
         const ip = ipHeader ? ipHeader.split(",")[0].trim() : socket.handshake.address;
         const userAgent = String(socket.handshake.headers["user-agent"] || "");
-        await prisma18.sessions.create({
+        await prisma13.sessions.create({
           data: {
-            id: randomUUID4(),
+            id: randomUUID8(),
             userId: user.id,
             socket_id: socket.id,
             ip,
@@ -11410,7 +17123,7 @@ async function registerRoutes(app2) {
         });
         (async () => {
           try {
-            await prisma18.sessions.updateMany({
+            await prisma13.sessions.updateMany({
               where: { socket_id: socket.id, ended_at: null },
               data: { ended_at: /* @__PURE__ */ new Date(), last_seen_at: /* @__PURE__ */ new Date() }
             });
@@ -11430,7 +17143,7 @@ async function registerRoutes(app2) {
 }
 
 // server/vite.ts
-import express6 from "express";
+import express7 from "express";
 import fs10 from "fs";
 import path14 from "path";
 import { createServer as createViteServer, createLogger } from "vite";
@@ -11525,34 +17238,38 @@ function serveStatic(app2) {
       `Could not find the build directory: ${distPath}, make sure to build the client first`
     );
   }
-  app2.use(express6.static(distPath));
+  app2.use(express7.static(distPath));
   app2.use("*", (_req, res) => {
     res.sendFile(path14.resolve(distPath, "index.html"));
   });
 }
 
 // server/index.ts
+init_prisma_client();
 import helmet from "helmet";
 import cors from "cors";
-import { PrismaClient as PrismaClient20 } from "@prisma/client";
 
 // server/jobs.ts
 import cron from "node-cron";
-import { PrismaClient as PrismaClient19 } from "@prisma/client";
-import nodemailer4 from "nodemailer";
+import { PrismaClient as PrismaClient14 } from "@prisma/client";
+import nodemailer6 from "nodemailer";
 import { addDays, format } from "date-fns";
 import { es } from "date-fns/locale";
-var prisma19;
+var prisma14;
 function initializeJobs(client) {
-  prisma19 = client;
+  prisma14 = client;
 }
-var transporter = nodemailer4.createTransport({
+var smtpPassword = process.env.SMTP_PASS || process.env.SMTP_PASSWORD;
+if (process.env.SMTP_USER && !smtpPassword) {
+  console.warn("\u26A0\uFE0F  SMTP password environment variable missing. Define SMTP_PASS or SMTP_PASSWORD.");
+}
+var transporter = nodemailer6.createTransport({
   host: process.env.SMTP_HOST,
   port: parseInt(process.env.SMTP_PORT || "587"),
   secure: process.env.SMTP_SECURE === "true",
-  auth: process.env.SMTP_USER && process.env.SMTP_PASS ? {
+  auth: process.env.SMTP_USER && smtpPassword ? {
     user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS
+    pass: smtpPassword
   } : void 0
 });
 var isMailConfigured = false;
@@ -11587,7 +17304,7 @@ var taskRemindersJob = cron.createTask("0 9 * * *", async () => {
   try {
     const tomorrow = addDays(/* @__PURE__ */ new Date(), 1);
     const nextWeek = addDays(/* @__PURE__ */ new Date(), 7);
-    const upcomingTasks = await prisma19.tasks.findMany({
+    const upcomingTasks = await prisma14.tasks.findMany({
       where: {
         estado: { notIn: ["COMPLETADA"] },
         fecha_vencimiento: {
@@ -11646,7 +17363,7 @@ var taxRemindersJob = cron.createTask("0 8 * * *", async () => {
   try {
     const now = /* @__PURE__ */ new Date();
     const nextMonth = addDays(now, 30);
-    const clientes = await prisma19.clients.findMany({
+    const clientes = await prisma14.clients.findMany({
       include: {
         clientTaxes: {
           include: {
@@ -11705,19 +17422,19 @@ var taxRemindersJob = cron.createTask("0 8 * * *", async () => {
     console.error("\u274C Error en job de recordatorios fiscales:", error);
   }
 });
-var taxCalendarRefreshJob = cron.createTask("0 0 * * *", async () => {
-  if (!prisma19) {
+var taxCalendarRefreshJob = cron.createTask("0 */6 * * *", async () => {
+  if (!prisma14) {
     console.warn("\u26A0\uFE0F  taxCalendarRefreshJob: Prisma no inicializado");
     return;
   }
   console.log("\u{1F5D3}\uFE0F  Ejecutando job: refresco calendario fiscal");
   try {
-    const entries = await prisma19.tax_calendar.findMany();
+    const entries = await prisma14.tax_calendar.findMany();
     let updated = 0;
     for (const entry of entries) {
       const derived = calculateDerivedFields(entry.startDate, entry.endDate);
       if (entry.status !== derived.status || entry.days_to_start !== derived.daysToStart || entry.days_to_end !== derived.daysToEnd) {
-        await prisma19.tax_calendar.update({
+        await prisma14.tax_calendar.update({
           where: { id: entry.id },
           data: {
             status: derived.status,
@@ -11733,6 +17450,54 @@ var taxCalendarRefreshJob = cron.createTask("0 0 * * *", async () => {
     console.error("\u274C Error actualizando calendario fiscal:", error);
   }
 });
+var fiscalPeriodsStatusJob = cron.createTask("0 */6 * * *", async () => {
+  if (!prisma14) {
+    console.warn("\u26A0\uFE0F  fiscalPeriodsStatusJob: Prisma no inicializado");
+    return;
+  }
+  console.log("\u{1F4C5} Ejecutando job: actualizaci\xF3n de estados de per\xEDodos fiscales");
+  try {
+    const now = /* @__PURE__ */ new Date();
+    now.setHours(0, 0, 0, 0);
+    const periods = await prisma14.fiscal_periods.findMany({
+      select: {
+        id: true,
+        starts_at: true,
+        ends_at: true,
+        status: true
+      }
+    });
+    let toOpen = 0;
+    let toClosed = 0;
+    for (const period of periods) {
+      const startsAt = new Date(period.starts_at);
+      const endsAt = new Date(period.ends_at);
+      startsAt.setHours(0, 0, 0, 0);
+      endsAt.setHours(0, 0, 0, 0);
+      let newStatus = null;
+      if (now >= startsAt && now <= endsAt) {
+        if (period.status !== "OPEN") {
+          newStatus = "OPEN";
+          toOpen++;
+        }
+      } else if (now > endsAt) {
+        if (period.status !== "CLOSED") {
+          newStatus = "CLOSED";
+          toClosed++;
+        }
+      }
+      if (newStatus && newStatus !== period.status) {
+        await prisma14.fiscal_periods.update({
+          where: { id: period.id },
+          data: { status: newStatus }
+        });
+      }
+    }
+    console.log(`\u2705 Estados de per\xEDodos actualizados: ${toOpen} abiertos, ${toClosed} cerrados`);
+  } catch (error) {
+    console.error("\u274C Error actualizando estados de fiscal_periods:", error);
+  }
+});
 var ensureDeclarationsDailyJob = cron.createTask("10 1 * * *", async () => {
   const year = (/* @__PURE__ */ new Date()).getFullYear();
   try {
@@ -11742,13 +17507,29 @@ var ensureDeclarationsDailyJob = cron.createTask("10 1 * * *", async () => {
     console.error("\u274C Error en ensureDeclarationsDailyJob:", e);
   }
 });
+var ensureTaxFilingsJob = cron.createTask("10 * * * *", async () => {
+  try {
+    const now = /* @__PURE__ */ new Date();
+    const currentYear = now.getFullYear();
+    const years = [currentYear];
+    if (now.getMonth() >= 9) {
+      years.push(currentYear + 1);
+    }
+    for (const year of years) {
+      const result = await prismaStorage.ensureClientTaxFilingsForYear(year);
+      console.log(`\u{1F4C7} ensureTaxFilingsJob: sincronizado a\xF1o ${year} (${result.generated} periodos revisados)`);
+    }
+  } catch (error) {
+    console.error("\u274C Error en ensureTaxFilingsJob:", error);
+  }
+});
 var cleanupSessionsJob = cron.createTask("0 * * * *", async () => {
   console.log("\u{1F9F9} Ejecutando job: limpieza de sesiones");
   try {
-    const prisma21 = new PrismaClient19();
+    const prisma15 = new PrismaClient14();
     const sevenDaysAgo = /* @__PURE__ */ new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-    const closedSessionsResult = await prisma21.sessions.deleteMany({
+    const closedSessionsResult = await prisma15.sessions.deleteMany({
       where: {
         ended_at: {
           not: null,
@@ -11758,7 +17539,7 @@ var cleanupSessionsJob = cron.createTask("0 * * * *", async () => {
     });
     const twoHoursAgo = /* @__PURE__ */ new Date();
     twoHoursAgo.setHours(twoHoursAgo.getHours() - 2);
-    const inactiveSessionsResult = await prisma21.sessions.updateMany({
+    const inactiveSessionsResult = await prisma15.sessions.updateMany({
       where: {
         ended_at: null,
         last_seen_at: { lt: twoHoursAgo }
@@ -11768,7 +17549,7 @@ var cleanupSessionsJob = cron.createTask("0 * * * *", async () => {
       }
     });
     console.log(`\u2705 Sesiones limpias: ${closedSessionsResult.count} eliminadas, ${inactiveSessionsResult.count} marcadas como inactivas`);
-    await prisma21.$disconnect();
+    await prisma15.$disconnect();
   } catch (error) {
     console.error("\u274C Error en job de limpieza:", error);
   }
@@ -11795,7 +17576,7 @@ var backupDatabaseJob = cron.createTask("0 3 * * *", async () => {
   }
 });
 function startAllJobs() {
-  if (!prisma19) {
+  if (!prisma14) {
     throw new Error(
       "\u274C JOBS ERROR: Prisma client no inicializado.\n   Debe llamar a initializeJobs(prisma) antes de startAllJobs().\n   Ver server/index.ts para el orden correcto de inicializaci\xF3n."
     );
@@ -11813,6 +17594,12 @@ function startAllJobs() {
   console.log("  \u2713 Recordatorios de tareas (09:00 diario)");
   taxRemindersJob.start();
   console.log("  \u2713 Recordatorios fiscales (08:00 diario)");
+  taxCalendarRefreshJob.start();
+  console.log("  \u2713 Actualizaci\xF3n de calendario fiscal (cada 6 horas)");
+  fiscalPeriodsStatusJob.start();
+  console.log("  \u2713 Actualizaci\xF3n de estados de per\xEDodos (cada 6 horas)");
+  ensureTaxFilingsJob.start();
+  console.log("  \u2713 Sincronizaci\xF3n de tarjetas fiscales (cada hora)");
   cleanupSessionsJob.start();
   console.log("  \u2713 Limpieza de sesiones (cada hora)");
   backupDatabaseJob.start();
@@ -11820,11 +17607,14 @@ function startAllJobs() {
   console.log("\u2705 Todos los jobs activos");
 }
 function stopAllJobs() {
-  if (!prisma19) {
+  if (!prisma14) {
     throw new Error("Jobs no inicializados: debe llamar initializeJobs(prisma) primero");
   }
   taskRemindersJob.stop();
   taxRemindersJob.stop();
+  taxCalendarRefreshJob.stop();
+  fiscalPeriodsStatusJob.stop();
+  ensureTaxFilingsJob.stop();
   cleanupSessionsJob.stop();
   backupDatabaseJob.stop();
   console.log("\u{1F6D1} Todos los jobs detenidos");
@@ -11940,9 +17730,9 @@ function validateSecurityConfig() {
 }
 
 // server/index.ts
-import { randomUUID as randomUUID5 } from "crypto";
+import { randomUUID as randomUUID9 } from "crypto";
 var SALT_ROUNDS2 = 10;
-var app = express7();
+var app = express8();
 validateSecurityConfig();
 app.set("trust proxy", 1);
 var dbUrl = process.env.DATABASE_URL;
@@ -11978,23 +17768,18 @@ Si quieres permitir uso de una base de datos local (ej. docker-compose) define A
 } catch (e) {
   logger.warn({ err: e }, "No se pudo parsear DATABASE_URL para validaci\xF3n de host");
 }
-var prisma20 = new PrismaClient20({
-  log: [
-    { level: "query", emit: "event" },
-    { level: "error", emit: "event" },
-    { level: "warn", emit: "event" }
-  ]
-});
-prisma20.$on("query", (e) => {
-  dbLogger.debug({ duration: e.duration, query: e.query }, "Database query");
-});
-prisma20.$on("error", (e) => {
+var isDev = process.env.NODE_ENV === "development";
+if (isDev) {
+  prisma_client_default.$on("query", (e) => {
+    dbLogger.debug({ duration: e.duration, query: e.query }, "Database query");
+  });
+}
+prisma_client_default.$on("error", (e) => {
   dbLogger.error({ target: e.target }, e.message);
 });
-prisma20.$on("warn", (e) => {
+prisma_client_default.$on("warn", (e) => {
   dbLogger.warn({ target: e.target }, e.message);
 });
-var isDev = process.env.NODE_ENV === "development";
 app.use(helmet({
   contentSecurityPolicy: isDev ? false : {
     directives: {
@@ -12022,9 +17807,9 @@ app.use(cors({
   origin: process.env.FRONTEND_URL || (isDev ? "*" : false),
   credentials: true
 }));
-app.use(express7.json({ limit: "10mb" }));
-app.use(express7.urlencoded({ extended: false, limit: "10mb" }));
-app.use("/uploads", express7.static("uploads"));
+app.use(express8.json({ limit: "10mb" }));
+app.use(express8.urlencoded({ extended: false, limit: "10mb" }));
+app.use("/uploads", express8.static("uploads"));
 app.use(httpLogger);
 app.get("/health", async (_req, res) => {
   res.status(200).json({
@@ -12035,7 +17820,7 @@ app.get("/health", async (_req, res) => {
 });
 app.get("/ready", async (_req, res) => {
   try {
-    await prisma20.$queryRaw`SELECT 1`;
+    await prisma_client_default.$queryRaw`SELECT 1`;
     res.status(200).json({
       status: "ready",
       timestamp: (/* @__PURE__ */ new Date()).toISOString(),
@@ -12054,14 +17839,22 @@ app.get("/ready", async (_req, res) => {
 });
 async function createInitialAdmin() {
   try {
-    const adminRole = await prisma20.roles.findFirst({
-      where: { name: "Administrador" }
+    const adminRole = await prisma_client_default.roles.findFirst({
+      where: { name: "Administrador" },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        is_system: true,
+        createdAt: true,
+        updatedAt: true
+      }
     });
     if (!adminRole) {
       logger.warn("\u26A0\uFE0F  Rol Administrador no encontrado. Ejecuta las migraciones primero.");
       return;
     }
-    const existingAdmin = await prisma20.users.findFirst({
+    const existingAdmin = await prisma_client_default.users.findFirst({
       where: { roleId: adminRole.id }
     });
     if (existingAdmin) {
@@ -12146,7 +17939,7 @@ async function createInitialAdmin() {
       );
       process.exit(1);
     }
-    const existingUser = await prisma20.users.findFirst({
+    const existingUser = await prisma_client_default.users.findFirst({
       where: {
         OR: [
           { email: adminEmail },
@@ -12164,13 +17957,15 @@ async function createInitialAdmin() {
       process.exit(1);
     }
     const hashedPassword = await bcrypt2.hash(adminPassword, SALT_ROUNDS2);
-    const adminUser = await prisma20.users.create({
+    const adminUser = await prisma_client_default.users.create({
       data: {
-        id: randomUUID5(),
+        id: randomUUID9(),
         username: adminUsername,
         email: adminEmail,
         password: hashedPassword,
-        roleId: adminRole.id
+        roleId: adminRole.id,
+        is_owner: true
+        // Mark as owner
       }
     });
     logger.info(
@@ -12199,7 +17994,32 @@ async function createInitialAdmin() {
 }
 (async () => {
   await createInitialAdmin();
-  initializeJobs(prisma20);
+  async function waitForDatabase(retries = 5, delayMs = 2e3) {
+    for (let i = 0; i < retries; i++) {
+      try {
+        await prisma_client_default.$queryRaw`SELECT 1`;
+        return true;
+      } catch (err) {
+        logger.warn({ attempt: i + 1, err }, `DB not available yet (attempt ${i + 1}/${retries})`);
+        if (i < retries - 1) {
+          await new Promise((r) => setTimeout(r, delayMs));
+        }
+      }
+    }
+    return false;
+  }
+  const dbRetries = Number(process.env.DB_CONNECT_RETRIES || "5");
+  const dbDelay = Number(process.env.DB_CONNECT_DELAY_MS || "2000");
+  const dbAvailable = await waitForDatabase(dbRetries, dbDelay);
+  if (!dbAvailable) {
+    const force = process.env.FORCE_START_WITHOUT_DB === "true";
+    if (!force) {
+      logger.fatal({ retries: dbRetries }, "No se pudo conectar a la base de datos. Aborting startup. Set FORCE_START_WITHOUT_DB=true to bypass.");
+      process.exit(1);
+    }
+    logger.warn("FORCE_START_WITHOUT_DB=true \u2014 arrancando en modo degradado sin inicializar ciertas dependencias de DB");
+  }
+  initializeJobs(prisma_client_default);
   const enableCronJobs = process.env.ENABLE_CRON_JOBS === "true";
   if (isDev || enableCronJobs) {
     try {
@@ -12213,7 +18033,7 @@ async function createInitialAdmin() {
       "\u2139\uFE0F  Cron jobs deshabilitados (entorno Autoscale). Use Scheduled Deployments de Replit para tareas programadas."
     );
   }
-  const server = await registerRoutes(app);
+  const server = await registerRoutes(app, { skipDbInit: !dbAvailable });
   app.use((err, req, res, _next) => {
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
@@ -12286,7 +18106,7 @@ async function createInitialAdmin() {
         logger.error({ err: error }, "Error deteniendo jobs");
       }
     }
-    await prisma20.$disconnect();
+    await prisma_client_default.$disconnect();
     logger.info("Database connection closed");
     process.exit(0);
   };

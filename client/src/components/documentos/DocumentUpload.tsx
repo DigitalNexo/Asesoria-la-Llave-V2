@@ -5,9 +5,7 @@ import { Input } from '@/components/ui/input';
 
 interface UploadedFile {
   id: string;
-  name: string;
-  size: number;
-  type: string;
+  file: File;
 }
 
 export function DocumentUpload() {
@@ -20,17 +18,15 @@ export function DocumentUpload() {
     const selectedFiles = e.target.files;
     if (!selectedFiles) return;
 
-    Array.from(selectedFiles).forEach((file) => {
-      setFiles((prev) => [
-        ...prev,
-        {
-          id: `${file.name}-${Date.now()}`,
-          name: file.name,
-          size: file.size,
-          type: file.type,
-        },
-      ]);
-    });
+    const newFiles = Array.from(selectedFiles).map((file) => ({
+      id: `${file.name}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      file,
+    }));
+
+    setFiles((prev) => [...prev, ...newFiles]);
+
+    // Reset input so the same file can be selected again if needed
+    e.target.value = '';
   };
 
   const handleRemoveFile = (id: string) => {
@@ -56,7 +52,7 @@ export function DocumentUpload() {
         body: JSON.stringify({
           name: documentName,
           type: documentType,
-          description: `Documento cargado: ${files.map((f) => f.name).join(', ')}`,
+          description: `Documento cargado: ${files.map((f) => f.file.name).join(', ')}`,
         }),
       });
 
@@ -67,22 +63,17 @@ export function DocumentUpload() {
       // Subir archivos
       for (const file of files) {
         const formData = new FormData();
-        const input = document.querySelector(
-          'input[type="file"]'
-        ) as HTMLInputElement;
-        if (input?.files) {
-          formData.append('file', input.files[0]);
+        formData.append('file', file.file);
 
-          const uploadRes = await fetch(`/api/documents/${doc.id}/upload`, {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${localStorage.getItem('token')}`,
-            },
-            body: formData,
-          });
+        const uploadRes = await fetch(`/api/documents/${doc.id}/upload`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${localStorage.getItem('token')}`,
+          },
+          body: formData,
+        });
 
-          if (!uploadRes.ok) throw new Error('Error al subir archivo');
-        }
+        if (!uploadRes.ok) throw new Error('Error al subir archivo');
       }
 
       alert('Documento cargado exitosamente');
@@ -156,9 +147,9 @@ export function DocumentUpload() {
           <div className="space-y-2">
             <h3 className="font-semibold text-sm">Archivos Seleccionados ({files.length})</h3>
             <div className="space-y-2">
-              {files.map((file) => (
+              {files.map(({ id, file }) => (
                 <div
-                  key={file.id}
+                  key={id}
                   className="flex items-center justify-between p-3 bg-gray-50 rounded-md"
                 >
                   <div className="flex items-center gap-3 flex-1">
@@ -169,7 +160,7 @@ export function DocumentUpload() {
                     </div>
                   </div>
                   <button
-                    onClick={() => handleRemoveFile(file.id)}
+                    onClick={() => handleRemoveFile(id)}
                     className="text-gray-400 hover:text-red-500"
                   >
                     <X className="w-4 h-4" />

@@ -3,7 +3,7 @@
  * Reemplaza {{variable}} en HTML con datos reales
  */
 
-import { BudgetType } from '@prisma/client';
+import type { budgets_type as BudgetType } from '@prisma/client';
 
 interface BudgetData {
   // Datos comunes a todos los presupuestos

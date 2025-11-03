@@ -66,7 +66,7 @@ export class StorageFactory {
   // Obtener el provider de almacenamiento activo
   static async getActiveProvider(): Promise<StorageProvider> {
     // Obtener configuración activa de la base de datos
-    const activeConfig = await prisma.storageConfig.findFirst({
+    const activeConfig = await prisma.storage_configs.findFirst({
       where: { isActive: true },
     });
 
@@ -81,7 +81,7 @@ export class StorageFactory {
 
   // Obtener provider para una configuración específica por ID
   static async getProviderById(configId: string): Promise<StorageProvider> {
-    const config = await prisma.storageConfig.findUnique({
+    const config = await prisma.storage_configs.findUnique({
       where: { id: configId }
     });
 
@@ -98,13 +98,13 @@ export class StorageFactory {
     if (!config || config.type === 'LOCAL') {
       // Usar el basePath del config o el default del LocalStorageProvider
       // Si no hay config, pasar undefined para usar el default de LocalStorageProvider
-      const basePath = config?.basePath ? path.join(process.cwd(), config.basePath) : undefined;
+      const basePath = config?.base_path ? path.join(process.cwd(), config.base_path) : undefined;
       return new LocalStorageProvider(basePath);
     }
 
     // FTP
     if (config.type === 'FTP') {
-      if (!config.host || !config.port || !config.username || !config.encryptedPassword) {
+      if (!config.host || !config.port || !config.username || !config.encrypted_password) {
         throw new Error('Configuración FTP incompleta');
       }
 
@@ -112,8 +112,8 @@ export class StorageFactory {
         host: config.host,
         port: config.port,
         user: config.username,
-        password: decryptPassword(config.encryptedPassword),
-        basePath: config.basePath || '/uploads',
+        password: decryptPassword(config.encrypted_password),
+        basePath: config.base_path || '/uploads',
         secure: false, // Puede ser configurable
       };
 
@@ -122,12 +122,12 @@ export class StorageFactory {
 
     // SMB
     if (config.type === 'SMB') {
-      if (!config.host || !config.username || !config.encryptedPassword) {
+      if (!config.host || !config.username || !config.encrypted_password) {
         throw new Error('Configuración SMB incompleta');
       }
 
       // Extraer share del basePath (formato: share/path)
-      const pathParts = config.basePath.split('/').filter((p: string) => p);
+      const pathParts = (config.base_path || '').split('/').filter((p: string) => p);
       const share = pathParts[0] || 'uploads';
       const basePath = '/' + pathParts.slice(1).join('/');
 
@@ -136,7 +136,7 @@ export class StorageFactory {
         port: config.port || 445,
         domain: '', // Puede ser configurable
         username: config.username,
-        password: decryptPassword(config.encryptedPassword),
+        password: decryptPassword(config.encrypted_password),
         basePath: basePath || '/',
         share: share,
       };
@@ -150,7 +150,7 @@ export class StorageFactory {
 
   // Probar conexión con una configuración específica guardada
   static async testConfiguration(configId: string): Promise<boolean> {
-    const config = await prisma.storageConfig.findUnique({
+    const config = await prisma.storage_configs.findUnique({
       where: { id: configId },
     });
 
@@ -202,7 +202,7 @@ export class StorageFactory {
 
   // Crear provider para una configuración específica (sin activarla)
   static async createProviderForConfig(configId: string): Promise<StorageProvider> {
-    const config = await prisma.storageConfig.findUnique({
+    const config = await prisma.storage_configs.findUnique({
       where: { id: configId },
     });
 

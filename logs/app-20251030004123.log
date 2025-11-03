@@ -1,0 +1,13 @@
+nohup: ignoring input
+✅ Validaciones de seguridad completadas exitosamente
+{"level":"INFO","time":1761784887667,"pid":292897,"hostname":"vps-zap880072-1","msg":"ℹ️  Usuario administrador ya existe en el sistema"}
+{"level":"INFO","time":1761784887675,"pid":292897,"hostname":"vps-zap880072-1","msg":"ℹ️  Cron jobs deshabilitados (entorno Autoscale). Use Scheduled Deployments de Replit para tareas programadas."}
+⚠️  SMTP no configurado - emails deshabilitados: Invalid login: 535-5.7.8 Username and Password not accepted. For more information, go to
+535 5.7.8  https://support.google.com/mail/?p=BadCredentials a640c23a62f3a-b6d8541fb5bsm1582100566b.56 - gsmtp
+{"level":"INFO","time":1761784887925,"pid":292897,"hostname":"vps-zap880072-1","msg":"🚀 Epic Tasks routes registered successfully"}
+{"level":"INFO","time":1761784887943,"pid":292897,"hostname":"vps-zap880072-1","port":5000,"env":"production","nodeVersion":"v20.19.5","reusePort":true,"msg":"🚀 Server listening on port 5000"}
+{"level":"INFO","time":1761784991230,"pid":292897,"hostname":"vps-zap880072-1","request":{"id":"d3e80d53-9b61-4952-9cf5-6de5581e8874","method":"GET","url":"/version","headers":{"host":"185.239.239.43","user-agent":"Mozilla/5.0 zgrab/0.x"}},"response":{"statusCode":200,"headers":{}},"duration":53,"msg":"GET / 200"}
+{"level":"INFO","time":1761785249522,"pid":292897,"hostname":"vps-zap880072-1","request":{"id":"a7664c7b-f47d-4cbe-b4fe-37852fa64dcf","method":"HEAD","url":"/","headers":{"host":"gestion.asesorialallave.com","user-agent":"Go-http-client/2.0"}},"response":{"statusCode":200,"headers":{}},"duration":418,"msg":"HEAD / 200"}
+{"level":"INFO","time":1761785329966,"pid":292897,"hostname":"vps-zap880072-1","msg":"SIGTERM received, shutting down gracefully..."}
+{"level":"INFO","time":1761785330113,"pid":292897,"hostname":"vps-zap880072-1","msg":"HTTP server closed"}
+{"level":"INFO","time":1761785330315,"pid":292897,"hostname":"vps-zap880072-1","msg":"Database connection closed"}

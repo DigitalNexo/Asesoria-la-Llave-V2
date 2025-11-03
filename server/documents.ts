@@ -14,6 +14,29 @@ interface AuthRequest extends Request {
 const documentsRouter = Router();
 const upload = configureMulter();
 
+const normalizeDocument = (doc: any) => {
+  if (!doc) return null;
+  return {
+    id: doc.id,
+    type: doc.type,
+    name: doc.name,
+    description: doc.description ?? null,
+    template_id: doc.template_id ?? null,
+    client_id: doc.client_id ?? null,
+    created_by: doc.created_by,
+    file_path: doc.file_path ?? null,
+    file_name: doc.file_name ?? null,
+    file_size: doc.file_size ?? null,
+    file_type: doc.file_type ?? null,
+    status: doc.status,
+    signature_status: doc.signature_status ?? 'unsigned',
+    signature_date: doc.signature_date ?? null,
+    signed_by: doc.signed_by ?? null,
+    created_at: doc.created_at,
+    updated_at: doc.updated_at,
+  };
+};
+
 // Middleware de autenticación simple (verificar que exista user)
 const requireAuth = (req: AuthRequest, res: Response, next: NextFunction) => {
   if (!req.user) {
@@ -52,6 +75,162 @@ documentsRouter.use(requireAuth);
 // ============ DOCUMENTOS - CRUD ============
 
 /**
+ * GET /api/documents/stats/all
+ * Obtener estadísticas de documentos
+ * Permisos requeridos: documents:read
+ * NOTA: Debe estar ANTES de /:id para evitar conflictos de enrutamiento
+ */
+documentsRouter.get(
+  '/stats/all',
+  checkPermission('documents:read'),
+  async (req: Request, res: Response) => {
+    try {
+      const stats = await documentService.getDocumentStats();
+
+      res.json({
+        success: true,
+        data: stats,
+      });
+    } catch (error: any) {
+      res.status(500).json({
+        success: false,
+        error: error.message,
+      });
+    }
+  }
+);
+
+/**
+ * GET /api/documents/client/:clientId
+ * Obtener todos los documentos de un cliente
+ * Permisos requeridos: documents:read
+ * NOTA: Debe estar ANTES de /:id para evitar conflictos de enrutamiento
+ */
+documentsRouter.get(
+  '/client/:clientId',
+  checkPermission('documents:read'),
+  async (req: Request, res: Response) => {
+    try {
+      const { clientId } = req.params;
+
+      const documents = await documentService.getClientDocuments(clientId);
+
+      res.json({
+        success: true,
+        data: documents,
+      });
+    } catch (error: any) {
+      res.status(500).json({
+        success: false,
+        error: error.message,
+      });
+    }
+  }
+);
+
+/**
+ * GET /api/documents/search/:query
+ * Buscar documentos
+ * Permisos requeridos: documents:read
+ * NOTA: Debe estar ANTES de /:id para evitar conflictos de enrutamiento
+ */
+documentsRouter.get(
+  '/search/:query',
+  checkPermission('documents:read'),
+  async (req: Request, res: Response) => {
+    try {
+      const { query } = req.params;
+
+      if (!query || query.length < 2) {
+        return res.status(400).json({
+          success: false,
+          error: 'Query debe tener al menos 2 caracteres',
+        });
+      }
+
+      const documents = await documentService.searchDocuments(query);
+
+      res.json({
+        success: true,
+        data: documents,
+      });
+    } catch (error: any) {
+      res.status(500).json({
+        success: false,
+        error: error.message,
+      });
+    }
+  }
+);
+
+// ============ PLANTILLAS ============
+
+/**
+ * GET /api/documents/templates
+ * Listar plantillas
+ * Query params: type
+ * Permisos requeridos: documents:read
+ * NOTA: Debe estar ANTES de /:id para evitar conflictos de enrutamiento
+ */
+documentsRouter.get('/templates', checkPermission('documents:read'), async (req: Request, res: Response) => {
+  try {
+    const { type } = req.query;
+
+    const templates = await documentService.getTemplates(type as string);
+
+    res.json({
+      success: true,
+      data: templates,
+    });
+  } catch (error: any) {
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+/**
+ * POST /api/documents/templates
+ * Crear nueva plantilla
+ * Permisos requeridos: admin:templates
+ */
+documentsRouter.post(
+  '/templates',
+  checkPermission('admin:templates'),
+  async (req: Request, res: Response) => {
+    try {
+      const { type, name, description, content, variables } = req.body;
+
+      if (!type || !name || !content) {
+        return res.status(400).json({
+          success: false,
+          error: 'type, name y content son requeridos',
+        });
+      }
+
+      const template = await documentService.createTemplate({
+        type,
+        name,
+        description,
+        content,
+        variables,
+      });
+
+      res.status(201).json({
+        success: true,
+        data: template,
+      });
+    } catch (error: any) {
+      res.status(500).json({
+        success: false,
+        error: error.message,
+      });
+    }
+  }
+);
+
+/**
  * POST /api/documents
  * Crear nuevo documento
  * Permisos requeridos: documents:create
@@ -59,7 +238,7 @@ documentsRouter.use(requireAuth);
 documentsRouter.post(
   '/',
   checkPermission('documents:create'),
-  async (req: Request, res: Response) => {
+  async (req: AuthRequest, res: Response) => {
     try {
       const { type, name, description, templateId, clientId } = req.body;
 
@@ -80,10 +259,7 @@ documentsRouter.post(
         createdBy: req.user.id,
       });
 
-      res.status(201).json({
-        success: true,
-        data: document,
-      });
+      res.status(201).json(normalizeDocument(document));
     } catch (error: any) {
       res.status(500).json({
         success: false,
@@ -102,7 +278,7 @@ documentsRouter.post(
 documentsRouter.get(
   '/',
   checkPermission('documents:read'),
-  async (req: Request, res: Response) => {
+  async (req: AuthRequest, res: Response) => {
     try {
       const { type, status, clientId, createdBy } = req.query;
 
@@ -113,10 +289,34 @@ documentsRouter.get(
       if (createdBy) filters.createdBy = createdBy as string;
 
       const documents = await documentService.getDocuments(filters);
+      res.json(documents.map(normalizeDocument));
+    } catch (error: any) {
+      res.status(500).json({
+        success: false,
+        error: error.message,
+      });
+    }
+  }
+);
+
+/**
+ * PUT /api/documents/:id/archive
+ * Archivar un documento
+ * Permisos requeridos: documents:update
+ * NOTA: Debe estar ANTES de /:id para evitar conflictos de enrutamiento
+ */
+documentsRouter.put(
+  '/:id/archive',
+  checkPermission('documents:update'),
+  async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+
+      const document = await documentService.archiveDocument(id);
 
       res.json({
         success: true,
-        data: documents,
+        data: document,
       });
     } catch (error: any) {
       res.status(500).json({
@@ -135,7 +335,7 @@ documentsRouter.get(
 documentsRouter.get(
   '/:id',
   checkPermission('documents:read'),
-  async (req: Request, res: Response) => {
+  async (req: AuthRequest, res: Response) => {
     try {
       const { id } = req.params;
 
@@ -148,10 +348,7 @@ documentsRouter.get(
         });
       }
 
-      res.json({
-        success: true,
-        data: document,
-      });
+      res.json(normalizeDocument(document));
     } catch (error: any) {
       res.status(500).json({
         success: false,
@@ -169,17 +366,14 @@ documentsRouter.get(
 documentsRouter.put(
   '/:id',
   checkPermission('documents:update'),
-  async (req: Request, res: Response) => {
+  async (req: AuthRequest, res: Response) => {
     try {
       const { id } = req.params;
       const updateData = req.body;
 
       const document = await documentService.updateDocument(id, updateData);
 
-      res.json({
-        success: true,
-        data: document,
-      });
+      res.json(normalizeDocument(document));
     } catch (error: any) {
       res.status(500).json({
         success: false,
@@ -197,7 +391,7 @@ documentsRouter.put(
 documentsRouter.delete(
   '/:id',
   checkPermission('documents:delete'),
-  async (req: Request, res: Response) => {
+  async (req: AuthRequest, res: Response) => {
     try {
       const { id } = req.params;
 
@@ -241,7 +435,7 @@ documentsRouter.post(
 
       const signature = await documentService.signDocument(
         id,
-        req.user.id,
+        (req as any).user?.id,
         signatureType,
         req.ip,
         req.get('user-agent')
@@ -313,7 +507,7 @@ documentsRouter.post(
       const version = await documentService.createVersion(
         id,
         content,
-        req.user.id
+        (req as any).user?.id
       );
 
       res.status(201).json({
@@ -408,6 +602,13 @@ documentsRouter.get(
 
       const fileData = await documentService.downloadFile(id);
 
+      if (!fileData) {
+        return res.status(404).json({
+          success: false,
+          error: 'Archivo no encontrado',
+        });
+      }
+
       res.setHeader(
         'Content-Disposition',
         `attachment; filename="${fileData.fileName}"`
@@ -415,187 +616,6 @@ documentsRouter.get(
       res.setHeader('Content-Type', fileData.mimeType);
 
       res.send(fileData.buffer);
-    } catch (error: any) {
-      res.status(500).json({
-        success: false,
-        error: error.message,
-      });
-    }
-  }
-);
-
-// ============ PLANTILLAS ============
-
-/**
- * GET /api/templates
- * Listar plantillas
- * Query params: type
- * Permisos requeridos: Ninguno (público)
- */
-documentsRouter.get('/templates', async (req: Request, res: Response) => {
-  try {
-    const { type } = req.query;
-
-    const templates = await documentService.getTemplates(type as string);
-
-    res.json({
-      success: true,
-      data: templates,
-    });
-  } catch (error: any) {
-    res.status(500).json({
-      success: false,
-      error: error.message,
-    });
-  }
-});
-
-/**
- * POST /api/templates
- * Crear nueva plantilla
- * Permisos requeridos: admin
- */
-documentsRouter.post(
-  '/templates',
-  checkPermission('admin:templates'),
-  async (req: Request, res: Response) => {
-    try {
-      const { type, name, description, content, variables } = req.body;
-
-      if (!type || !name || !content) {
-        return res.status(400).json({
-          success: false,
-          error: 'type, name y content son requeridos',
-        });
-      }
-
-      const template = await documentService.createTemplate({
-        type,
-        name,
-        description,
-        content,
-        variables,
-      });
-
-      res.status(201).json({
-        success: true,
-        data: template,
-      });
-    } catch (error: any) {
-      res.status(500).json({
-        success: false,
-        error: error.message,
-      });
-    }
-  }
-);
-
-// ============ UTILIDADES ============
-
-/**
- * GET /api/documents/stats/all
- * Obtener estadísticas de documentos
- * Permisos requeridos: documents:read
- */
-documentsRouter.get(
-  '/stats/all',
-  checkPermission('documents:read'),
-  async (req: Request, res: Response) => {
-    try {
-      const stats = await documentService.getDocumentStats();
-
-      res.json({
-        success: true,
-        data: stats,
-      });
-    } catch (error: any) {
-      res.status(500).json({
-        success: false,
-        error: error.message,
-      });
-    }
-  }
-);
-
-/**
- * GET /api/documents/client/:clientId
- * Obtener todos los documentos de un cliente
- * Permisos requeridos: documents:read
- */
-documentsRouter.get(
-  '/client/:clientId',
-  checkPermission('documents:read'),
-  async (req: Request, res: Response) => {
-    try {
-      const { clientId } = req.params;
-
-      const documents = await documentService.getClientDocuments(clientId);
-
-      res.json({
-        success: true,
-        data: documents,
-      });
-    } catch (error: any) {
-      res.status(500).json({
-        success: false,
-        error: error.message,
-      });
-    }
-  }
-);
-
-/**
- * PUT /api/documents/:id/archive
- * Archivar un documento
- * Permisos requeridos: documents:update
- */
-documentsRouter.put(
-  '/:id/archive',
-  checkPermission('documents:update'),
-  async (req: Request, res: Response) => {
-    try {
-      const { id } = req.params;
-
-      const document = await documentService.archiveDocument(id);
-
-      res.json({
-        success: true,
-        data: document,
-      });
-    } catch (error: any) {
-      res.status(500).json({
-        success: false,
-        error: error.message,
-      });
-    }
-  }
-);
-
-/**
- * GET /api/documents/search/:query
- * Buscar documentos
- * Permisos requeridos: documents:read
- */
-documentsRouter.get(
-  '/search/:query',
-  checkPermission('documents:read'),
-  async (req: Request, res: Response) => {
-    try {
-      const { query } = req.params;
-
-      if (!query || query.length < 2) {
-        return res.status(400).json({
-          success: false,
-          error: 'Query debe tener al menos 2 caracteres',
-        });
-      }
-
-      const documents = await documentService.searchDocuments(query);
-
-      res.json({
-        success: true,
-        data: documents,
-      });
     } catch (error: any) {
       res.status(500).json({
         success: false,

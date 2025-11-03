@@ -4,7 +4,12 @@ import rateLimit from 'express-rate-limit';
  * SEGURIDAD: Rate limiting para endpoints de autenticación
  * Previene ataques de fuerza bruta contra login
  */
-export const loginLimiter = rateLimit({
+// Allow temporarily disabling login rate limit for emergency troubleshooting by
+// setting DISABLE_LOGIN_RATE_LIMIT=1 in the environment. This should only be
+// used briefly and reverted afterwards for security.
+export const loginLimiter = process.env.DISABLE_LOGIN_RATE_LIMIT === '1'
+  ? ((req: any, res: any, next: any) => next()) as any
+  : rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutos
   max: 5, // Máximo 5 intentos por IP en 15 minutos
   message: {

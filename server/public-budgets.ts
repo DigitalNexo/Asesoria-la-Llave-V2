@@ -1,5 +1,5 @@
 import express from 'express';
-import { PrismaClient } from '@prisma/client';
+import prisma from './prisma-client';
 import { verifyAcceptanceHash } from './utils/budgets';
 import { createBudgetPdf } from './utils';
 import { getSMTPConfig } from './email';
@@ -7,8 +7,6 @@ import nodemailer from 'nodemailer';
 import logger from './logger';
 import path from 'path';
 import fs from 'fs';
-
-const prisma = new PrismaClient();
 const router = express.Router();
 
 // GET /public/budgets/:code/accept?t=hash

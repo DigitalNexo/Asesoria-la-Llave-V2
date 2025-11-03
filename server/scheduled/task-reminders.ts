@@ -13,13 +13,19 @@ import { es } from "date-fns/locale";
 const prisma = new PrismaClient();
 
 // Configuración SMTP
+const smtpPassword = process.env.SMTP_PASS || process.env.SMTP_PASSWORD;
+
+if (process.env.SMTP_USER && !smtpPassword) {
+  console.warn("⚠️  SMTP password environment variable missing. Define SMTP_PASS or SMTP_PASSWORD.");
+}
+
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST,
   port: parseInt(process.env.SMTP_PORT || "587"),
   secure: process.env.SMTP_SECURE === "true",
-  auth: process.env.SMTP_USER && process.env.SMTP_PASS ? {
+  auth: process.env.SMTP_USER && smtpPassword ? {
     user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
+    pass: smtpPassword,
   } : undefined,
 });
 

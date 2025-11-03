@@ -1,0 +1,10 @@
+nohup: ignoring input
+✅ Validaciones de seguridad completadas exitosamente
+⚠️  SMTP no configurado - emails deshabilitados: Invalid login: 535-5.7.8 Username and Password not accepted. For more information, go to
+535 5.7.8  https://support.google.com/mail/?p=BadCredentials a640c23a62f3a-b6d853f3851sm1597827366b.48 - gsmtp
+{"level":"INFO","time":1761785349361,"pid":294643,"hostname":"vps-zap880072-1","msg":"ℹ️  Usuario administrador ya existe en el sistema"}
+{"level":"INFO","time":1761785349372,"pid":294643,"hostname":"vps-zap880072-1","msg":"ℹ️  Cron jobs deshabilitados (entorno Autoscale). Use Scheduled Deployments de Replit para tareas programadas."}
+{"level":"INFO","time":1761785349594,"pid":294643,"hostname":"vps-zap880072-1","msg":"🚀 Epic Tasks routes registered successfully"}
+{"level":"WARN","time":1761785349610,"pid":294643,"hostname":"vps-zap880072-1","port":5000,"msg":"Puerto 5000 en uso, intentando puerto 5001..."}
+{"level":"INFO","time":1761785349812,"pid":294643,"hostname":"vps-zap880072-1","port":5001,"env":"production","nodeVersion":"v20.19.5","reusePort":true,"msg":"🚀 Server listening on port 5001"}
+{"level":"INFO","time":1761785349813,"pid":294643,"hostname":"vps-zap880072-1","port":5001,"env":"production","nodeVersion":"v20.19.5","reusePort":true,"msg":"🚀 Server listening on port 5001"}

@@ -10,8 +10,8 @@ interface SMTPConfig {
 
 let smtpConfig: SMTPConfig | null = null;
 
-export function configureSMTP(config: SMTPConfig) {
-  smtpConfig = config;
+export function configureSMTP(config: SMTPConfig | null) {
+  smtpConfig = config ? { ...config } : null;
 }
 
 export function getSMTPConfig(): SMTPConfig | null {

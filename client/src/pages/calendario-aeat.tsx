@@ -9,9 +9,13 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { TAX_MODEL_METADATA } from "@shared/tax-rules";
-import { CalendarDays, Filter, Plus, RotateCcw, Search, Trash2, KanbanSquare, FileText, AlertTriangle, AlarmClock, Clock3, Timer, CheckCircle2, XCircle, Calendar, List, TrendingUp, Download, Sparkles } from "lucide-react";
-import { Link, useLocation } from "wouter";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { CalendarDays, Plus, RotateCcw, Search, Trash2, KanbanSquare, FileText, AlertTriangle, AlarmClock, Clock3, Timer, CheckCircle2, XCircle, Calendar, List, TrendingUp, Download, Sparkles, Pencil, Lock, LockOpen, Upload, FileSpreadsheet, ChevronDown, MoreVertical } from "lucide-react";
+// wouter Link/location and Tabs not needed; use TaxesNav for internal navigation
+import { TaxesNav } from "@/components/taxes-nav";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
+import { ImportDialog } from "@/features/tax-calendar/ImportDialog";
+import { downloadTemplate } from "@/features/tax-calendar/api";
+import { getTaxModels, type TaxModel } from "@/features/tax-models/api";
 
 type Row = {
   id: string;
@@ -23,6 +27,8 @@ type Row = {
   status?: "PENDIENTE" | "ABIERTO" | "CERRADO";
   daysToStart: number | null;
   daysToEnd: number | null;
+  active?: boolean;
+  locked?: boolean;
 };
 
 type Periodicity = "TODAS" | "MENSUAL" | "TRIMESTRAL" | "ANUAL" | "ESPECIAL";
@@ -42,6 +48,7 @@ export default function CalendarioAEATPage() {
   const [sortKey, setSortKey] = useState<"model"|"period"|"start"|"end">("end");
   const [sortDir, setSortDir] = useState<"asc"|"desc">("asc");
   const [viewMode, setViewMode] = useState<"list" | "calendar">("calendar");
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
 
   const { data: rows = [], refetch } = useQuery<Row[]>({
     queryKey: ["/api/tax/calendar", year, periodicity, model, statusFilter],
@@ -70,38 +77,81 @@ export default function CalendarioAEATPage() {
         body: JSON.stringify({ year: y }),
       }).then((r) => { if(!r.ok) throw new Error("No se pudo crear el año"); return r.json(); });
     },
-    onSuccess: () => refetch(),
+    onSuccess: () => {
+      refetch();
+      toast({ title: "Año fiscal creado", description: `Se ha creado el año ${year}` });
+    },
+  });
+
+  const generateAeatCalendar = useMutation({
+    mutationFn: async (y: number) => {
+      const res = await fetch(`/api/tax/calendar/generate-aeat-calendar`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${localStorage.getItem("token")}` },
+        credentials: "include",
+        body: JSON.stringify({ year: y }),
+      });
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.error || "No se pudo generar el calendario");
+      }
+      return res.json();
+    },
+    onSuccess: (data) => {
+      refetch();
+      toast({
+        title: "Calendario AEAT generado",
+        description: data.message || `Se han generado todos los periodos fiscales`,
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "No se pudo generar el calendario",
+        variant: "destructive"
+      });
+    },
+  });
+
+  const deletePeriod = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await fetch(`/api/tax/calendar/${id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("No se pudo eliminar el periodo");
+    },
+    onSuccess: () => {
+      refetch();
+      toast({ title: "Periodo eliminado", description: "El periodo se ha eliminado correctamente" });
+    },
+    onError: (error: any) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
   });
 
   const exportIcs = () => {
     window.open(`/api/tax/calendar/${year}.ics`, "_blank");
   };
 
-  const seedYear = async () => {
+  const handleDownloadTemplate = async () => {
     try {
-      const body: any = { year };
-      if (model && model !== 'ALL') body.model = model;
-      if (periodicity && periodicity !== 'TODAS') {
-        body.periodicity = periodicity === 'MENSUAL' ? 'monthly' : periodicity === 'TRIMESTRAL' ? 'quarterly' : periodicity === 'ANUAL' ? 'annual' : 'special';
-      }
-      const res = await fetch(`/api/tax/calendar/seed-year`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}` },
-        credentials: 'include',
-        body: JSON.stringify(body),
+      await downloadTemplate();
+      toast({
+        title: "Plantilla descargada",
+        description: "El archivo Excel se ha descargado correctamente",
       });
-      if (!res.ok) {
-        let detail = '';
-        try { const j = await res.json(); detail = j?.error || ''; } catch {}
-        throw new Error(detail || 'No se pudo sembrar el año');
-      }
-      const json = await res.json();
-      toast({ title: 'Año sembrado', description: `${json.created} periodos generados` });
-      refetch();
-    } catch (e: any) {
-      toast({ title: 'Error', description: e?.message ?? '', variant: 'destructive' });
+    } catch (error: any) {
+      toast({
+        title: "Error al descargar",
+        description: error?.message || "No se pudo descargar la plantilla",
+        variant: "destructive",
+      });
     }
   };
+
+  // Sembrar año functionality removed per request
 
   const computeStatus = (r: Row): "PENDIENTE" | "ABIERTO" | "CERRADO" => {
     if (r.status === 'PENDIENTE' || r.status === 'ABIERTO' || r.status === 'CERRADO') return r.status;
@@ -220,7 +270,24 @@ export default function CalendarioAEATPage() {
 
   const dayLabel = (n: number | null) => n === null ? "—" : `${n} día${Math.abs(n) === 1 ? "" : "s"}`;
 
-  const modelsList = useMemo(() => Object.entries(TAX_MODEL_METADATA).map(([code, meta]) => ({ code, name: meta.name })), []);
+  // Cargar modelos fiscales dinámicamente desde la API
+  const { data: taxModelsData = [] } = useQuery<TaxModel[]>({
+    queryKey: ["/api/tax-models"],
+    queryFn: getTaxModels,
+  });
+
+  const modelsList = useMemo(() => {
+    // Combinar modelos de la BD con los estáticos para compatibilidad
+    const dbModels = taxModelsData.map(m => ({ code: m.code, name: m.name }));
+    const staticModels = Object.entries(TAX_MODEL_METADATA).map(([code, meta]) => ({ code, name: meta.name }));
+    
+    // Crear un mapa para evitar duplicados (priorizar BD)
+    const modelsMap = new Map<string, { code: string; name: string }>();
+    staticModels.forEach(m => modelsMap.set(m.code, m));
+    dbModels.forEach(m => modelsMap.set(m.code, m));
+    
+    return Array.from(modelsMap.values()).sort((a, b) => a.code.localeCompare(b.code));
+  }, [taxModelsData]);
   // humanPeriod ya está definido más arriba
 
   const fmtInput = (iso: string) => {
@@ -307,41 +374,30 @@ export default function CalendarioAEATPage() {
   };
 
   const humanPeriod = (code: string) => {
-    const map: Record<string, string> = {
+    const monthMap: Record<string, string> = {
       M01: 'Enero', M02: 'Febrero', M03: 'Marzo', M04: 'Abril', M05: 'Mayo', M06: 'Junio',
       M07: 'Julio', M08: 'Agosto', M09: 'Septiembre', M10: 'Octubre', M11: 'Noviembre', M12: 'Diciembre',
     };
-    return map[code] || code;
+    const quarterMap: Record<string, string> = {
+      '1T': '1.º trimestre',
+      '2T': '2.º trimestre',
+      '3T': '3.º trimestre',
+      '4T': '4.º trimestre',
+    };
+    if (monthMap[code]) return monthMap[code];
+    if (quarterMap[code]) return quarterMap[code];
+    if (code === 'ANUAL') return 'Anual';
+    return code;
   };
 
   return (
-    <div className="p-8 space-y-8">
-      {/* Page header and sub-navigation */}
-      <div className="space-y-4">
-        <div>
-          <h1 className="text-3xl font-display font-bold">Impuestos</h1>
-          <p className="text-sm text-muted-foreground">Seguimiento y planificación fiscal con la misma experiencia consistente que Administración.</p>
-        </div>
-        {(() => {
-          const [location, navigate] = useLocation();
-          const current = location?.startsWith('/impuestos/calendario') ? 'calendar' : 'control';
-          return (
-            <Tabs value={current} className="">
-              <TabsList className="h-auto grid grid-cols-2 md:grid-cols-3 gap-1 p-1">
-                <TabsTrigger value="control" onClick={() => navigate('/impuestos/control')}>
-                  <KanbanSquare className="h-4 w-4 mr-2" /> Control de impuestos
-                </TabsTrigger>
-                <TabsTrigger value="calendar" onClick={() => navigate('/impuestos/calendario')}>
-                  <FileText className="h-4 w-4 mr-2" /> Calendario fiscal
-                </TabsTrigger>
-                <TabsTrigger value="reports" onClick={() => navigate('/impuestos/reportes')}>
-                  <FileText className="h-4 w-4 mr-2" /> Reportes
-                </TabsTrigger>
-              </TabsList>
-            </Tabs>
-          );
-        })()}
+    <div className="p-8 space-y-6">
+      <div>
+        <h1 className="text-3xl font-display font-bold">Impuestos</h1>
+        <p className="text-sm text-muted-foreground">Seguimiento y planificación fiscal con la misma experiencia consistente que Administración.</p>
       </div>
+
+      <TaxesNav />
 
       <Card className="shadow-sm">
         <CardHeader className="pb-3">
@@ -354,10 +410,56 @@ export default function CalendarioAEATPage() {
               <p className="text-sm text-muted-foreground">Gestiona los modelos oficiales con sus fechas de apertura y cierre.</p>
             </div>
             <div className="flex items-center gap-2">
-              <Button onClick={() => setIsDialogOpen(true)} className="gap-2"><Plus className="h-4 w-4" /> Añadir periodo</Button>
-              <Button variant="outline" onClick={seedYear} className="gap-2"><Filter className="h-4 w-4" /> Sembrar Año</Button>
-              <Button variant="outline" onClick={() => createYear.mutate(year)} className="gap-2"><RotateCcw className="h-4 w-4" /> Nuevo año fiscal</Button>
-              <Button variant="outline" onClick={exportIcs} className="gap-2">Exportar .ICS</Button>
+              <Button onClick={() => setIsDialogOpen(true)} className="gap-2">
+                <Plus className="h-4 w-4" /> Añadir periodo
+              </Button>
+
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" className="gap-2">
+                    Acciones <ChevronDown className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-56">
+                  <DropdownMenuItem
+                    onClick={() => {
+                      if (window.confirm(`¿Generar calendario AEAT completo para ${year}?\n\nEsto creará 26 periodos fiscales (trimestres, meses, anuales y especiales) con las fechas oficiales de la Agencia Tributaria.`)) {
+                        generateAeatCalendar.mutate(year);
+                      }
+                    }}
+                    disabled={generateAeatCalendar.isPending}
+                    className="gap-2"
+                  >
+                    <Sparkles className="h-4 w-4" />
+                    {generateAeatCalendar.isPending ? 'Generando...' : 'Generar Calendario AEAT'}
+                  </DropdownMenuItem>
+
+                  <DropdownMenuItem
+                    onClick={() => createYear.mutate(year)}
+                    className="gap-2"
+                  >
+                    <RotateCcw className="h-4 w-4" />
+                    Nuevo año fiscal
+                  </DropdownMenuItem>
+
+                  <DropdownMenuSeparator />
+
+                  <DropdownMenuItem onClick={exportIcs} className="gap-2">
+                    <Download className="h-4 w-4" />
+                    Exportar .ICS
+                  </DropdownMenuItem>
+
+                  <DropdownMenuItem onClick={handleDownloadTemplate} className="gap-2">
+                    <FileSpreadsheet className="h-4 w-4" />
+                    Descargar Plantilla
+                  </DropdownMenuItem>
+
+                  <DropdownMenuItem onClick={() => setImportDialogOpen(true)} className="gap-2">
+                    <Upload className="h-4 w-4" />
+                    Importar Excel
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           </div>
         </CardHeader>
@@ -408,7 +510,7 @@ export default function CalendarioAEATPage() {
           {/* Table header */}
           {filtered.length > 0 ? (
             <div className="grid gap-2">
-              <div className="grid grid-cols-8 text-xs text-muted-foreground px-2">
+              <div className="grid grid-cols-10 text-xs text-muted-foreground px-2">
                 <div>{headerButton('Modelo','model')}</div>
                 <div>{headerButton('Periodo','period')}</div>
                 <div>Estado</div>
@@ -417,6 +519,8 @@ export default function CalendarioAEATPage() {
                 <div>{headerButton('Fecha fin','end')}</div>
                 <div>Finaliza en</div>
                 <div>Activo</div>
+                <div>Bloqueado</div>
+                <div className="text-center"></div>
               </div>
               {filtered.map((r) => {
                 const d = draft[r.id] || {};
@@ -424,38 +528,40 @@ export default function CalendarioAEATPage() {
                 const endVal = d.endDate ?? fmtInput(r.endDate);
                 const status = computeStatus(r);
                 const leftBorder = status === 'PENDIENTE' ? 'border-l-4 border-l-red-400' : status === 'ABIERTO' ? 'border-l-4 border-l-amber-400' : 'border-l-4 border-l-gray-400';
+                // Auto-bloqueo: periodos CERRADOS se bloquean automáticamente
+                const isAutoLocked = status === 'CERRADO';
+                const isManuallyLocked = !!r.locked;
+                const isLocked = isAutoLocked || isManuallyLocked;
                 return (
-                  <div key={r.id} className={`grid grid-cols-8 items-center rounded-lg border p-3 bg-card/50 hover:bg-card transition group ${leftBorder}`}>
+                  <div key={r.id} className={`grid grid-cols-10 items-center rounded-lg border p-3 bg-card/50 hover:bg-card transition group ${leftBorder}`}>
                     <div className="font-medium flex items-center gap-2"><Badge variant="outline" className="bg-muted">{r.modelCode}</Badge></div>
                     <div>{humanPeriod(r.period)} / {r.year}</div>
                     <div>{statusBadge(r)}</div>
                     <div>
-                      <Input type="date" value={startVal} onChange={(e) => setDraft((prev) => ({ ...prev, [r.id]: { ...prev[r.id], startDate: e.target.value } }))} onBlur={() => patchDate(r.id)} className="h-8" />
+                      <Input
+                        type="date"
+                        value={startVal}
+                        onChange={(e) => setDraft((prev) => ({ ...prev, [r.id]: { ...prev[r.id], startDate: e.target.value } }))}
+                        onBlur={() => patchDate(r.id)}
+                        className="h-8"
+                        disabled={isLocked}
+                      />
                     </div>
                     <div>{renderStartCountdown(r)}</div>
                     <div>
-                      <Input type="date" value={endVal} onChange={(e) => setDraft((prev) => ({ ...prev, [r.id]: { ...prev[r.id], endDate: e.target.value } }))} onBlur={() => patchDate(r.id)} className="h-8" />
+                      <Input
+                        type="date"
+                        value={endVal}
+                        onChange={(e) => setDraft((prev) => ({ ...prev, [r.id]: { ...prev[r.id], endDate: e.target.value } }))}
+                        onBlur={() => patchDate(r.id)}
+                        className="h-8"
+                        disabled={isLocked}
+                      />
                     </div>
-                    <div className="flex items-center gap-2 justify-between">
-                      <span>{renderEndCountdown(r)}</span>
-                      <Button variant="ghost" size="icon" className="opacity-0 group-hover:opacity-100" onClick={async () => {
-                        const ok = window.confirm('¿Eliminar este periodo?');
-                        if (!ok) return;
-                        try {
-                          const res = await fetch(`/api/tax/calendar/${encodeURIComponent(r.id)}`, { method: 'DELETE', headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }, credentials: 'include' });
-                          if (!res.ok && res.status !== 204) throw new Error('No se pudo eliminar');
-                          toast({ title: 'Periodo eliminado' });
-                          refetch();
-                        } catch (e: any) {
-                          toast({ title: 'Error', description: e?.message ?? '', variant: 'destructive' });
-                        }
-                      }} title="Eliminar">
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
+                    <div>{renderEndCountdown(r)}</div>
                     <div className="flex items-center justify-center">
                       <Switch
-                        checked={true}
+                        checked={!!r.active}
                         onCheckedChange={async (checked) => {
                           try {
                             const res = await fetch(`/api/tax/calendar/${encodeURIComponent(r.id)}`, {
@@ -471,6 +577,103 @@ export default function CalendarioAEATPage() {
                           }
                         }}
                       />
+                    </div>
+                    <div className="flex items-center justify-center">
+                      <Button
+                        variant={isLocked ? "default" : "ghost"}
+                        size="icon"
+                        className={`h-8 w-8 ${isAutoLocked ? 'bg-amber-600 hover:bg-amber-700' : ''}`}
+                        onClick={async () => {
+                          // Si está auto-bloqueado, permitir desbloqueo manual temporal
+                          const newLockedState = isAutoLocked ? !isManuallyLocked : !isManuallyLocked;
+                          try {
+                            const res = await fetch(`/api/tax/calendar/${encodeURIComponent(r.id)}`, {
+                              method: 'PATCH',
+                              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}` },
+                              credentials: 'include',
+                              body: JSON.stringify({ locked: newLockedState }),
+                            });
+                            if (!res.ok) throw new Error('No se pudo actualizar');
+                            refetch();
+                            const message = isAutoLocked
+                              ? (newLockedState ? 'Periodo bloqueado manualmente' : 'Auto-bloqueo desactivado temporalmente')
+                              : (newLockedState ? 'Periodo bloqueado' : 'Periodo desbloqueado');
+                            const description = isAutoLocked
+                              ? (newLockedState ? 'El periodo CERRADO permanece bloqueado' : 'Puedes editar el periodo CERRADO temporalmente')
+                              : (newLockedState ? 'Las fechas ya no se pueden editar' : 'Ahora puedes editar las fechas');
+                            toast({ title: message, description });
+                          } catch (e: any) {
+                            toast({ title: 'Error', description: e?.message ?? '', variant: 'destructive' });
+                          }
+                        }}
+                        title={isAutoLocked
+                          ? (isManuallyLocked ? "Auto-bloqueado + Manual - Click para desbloquear" : "Auto-bloqueado - Click para bloquear también manualmente")
+                          : (isManuallyLocked ? "Bloqueado manualmente - Click para desbloquear" : "Desbloqueado - Click para bloquear")
+                        }
+                      >
+                        {isLocked ? <Lock className="h-4 w-4" /> : <LockOpen className="h-4 w-4" />}
+                      </Button>
+                    </div>
+
+                    {/* Dropdown de acciones compacto */}
+                    <div className="flex items-center justify-center">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 opacity-0 group-hover:opacity-100"
+                          >
+                            <MoreVertical className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem
+                            onClick={() => {
+                              if (isLocked) {
+                                toast({
+                                  title: 'Periodo bloqueado',
+                                  description: 'Debe desbloquear el periodo primero para editarlo',
+                                  variant: 'destructive'
+                                });
+                                return;
+                              }
+                              // Abrir diálogo de edición con los datos del periodo
+                              setForm({
+                                modelCode: r.modelCode,
+                                period: r.period,
+                                startDate: fmtInput(r.startDate),
+                                endDate: fmtInput(r.endDate)
+                              });
+                              setIsDialogOpen(true);
+                            }}
+                            className="gap-2"
+                          >
+                            <Pencil className="h-4 w-4" />
+                            Editar
+                          </DropdownMenuItem>
+
+                          <DropdownMenuItem
+                            onClick={async () => {
+                              if (isLocked) {
+                                toast({
+                                  title: 'Periodo bloqueado',
+                                  description: 'Debe desbloquear el periodo primero para eliminarlo',
+                                  variant: 'destructive'
+                                });
+                                return;
+                              }
+                              const ok = window.confirm('¿Eliminar este periodo?');
+                              if (!ok) return;
+                              deletePeriod.mutate(r.id);
+                            }}
+                            className="gap-2 text-destructive focus:text-destructive"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                            Eliminar
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </div>
                   </div>
                 );
@@ -536,6 +739,15 @@ export default function CalendarioAEATPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ImportDialog
+        open={importDialogOpen}
+        onClose={() => setImportDialogOpen(false)}
+        onImportSuccess={() => {
+          refetch();
+          setImportDialogOpen(false);
+        }}
+      />
     </div>
   );
 }

@@ -217,17 +217,19 @@ model client_tax_assignments {
   clientId         String                              @map("client_id") @db.VarChar(36)
   taxModelCode    String                              @map("tax_model_code") @db.VarChar(20)
   periodicidad      client_tax_assignments_periodicidad
-  startDate        DateTime@map("start_date") 
-  endDate          DateTime?@map("end_date") 
+  startDate        DateTime@map("start_date")
+  endDate          DateTime?@map("end_date")
   activeFlag       Boolean                             @map("active_flag") @default(true)
   notes             String?                             @db.Text
   createdAt        DateTime                            @map("created_at") @default(now())
-  updatedAt        DateTime@map("updated_at") 
+  updatedAt        DateTime@map("updated_at")
   clients           clients                             @relation(fields: [clientId], references: [id], onDelete: Cascade)
   tax_models_config tax_models_config                   @relation(fields: [taxModelCode], references: [code])
 
   @@unique([clientId, taxModelCode])
   @@index([taxModelCode])
+  @@index([activeFlag, startDate])
+  @@index([clientId, activeFlag])
 }
 
 model client_tax_filings {
@@ -237,7 +239,7 @@ model client_tax_filings {
   periodId      String                    @map("period_id") @db.VarChar(36)
   status         client_tax_filings_status @default(NOT_STARTED)
   notes          String?                   @db.Text
-  presentedAt   DateTime?@map("presented_at") 
+  presentedAt   DateTime?@map("presented_at")
   assigneeId    String?                   @map("assignee_id") @db.VarChar(36)
   users          users?                    @relation(fields: [assigneeId], references: [id])
   clients        clients                   @relation(fields: [clientId], references: [id], onDelete: Cascade)
@@ -246,6 +248,9 @@ model client_tax_filings {
   @@unique([clientId, taxModelCode, periodId], map: "clientId_taxModelCode_periodId")
   @@index([assigneeId], map: "client_tax_filings_assignee_id_fkey")
   @@index([periodId], map: "client_tax_filings_period_id_fkey")
+  @@index([clientId, status])
+  @@index([status, periodId])
+  @@index([taxModelCode, status])
 }
 
 model client_tax_requirements {
@@ -274,8 +279,13 @@ model clients {
   responsableAsignado    String?                   @map("responsable_asignado") @db.VarChar(36)
   isActive               Boolean                   @map("is_active") @default(true)
   tax_models              String?                   @db.LongText
-  fechaBaja              DateTime?@map("fecha_baja") 
+  fechaBaja              DateTime?                 @map("fecha_baja") 
   notes                   String?                   @db.Text
+  
+  // NUEVO: Sistema de presupuestos gestorías
+  tipoGestoria            clients_tipo_gestoria?    // 'OFICIAL' | 'ONLINE'
+  presupuestoOrigenId     String?                   @db.VarChar(36) // ID del presupuesto que lo generó
+  
   client_employees        client_employees[]
   client_tax              client_tax[]
   client_tax_assignments  client_tax_assignments[]
@@ -291,6 +301,7 @@ model clients {
   @@index([isActive])
   @@index([responsableAsignado])
   @@index([tipo])
+  @@index([tipoGestoria])
 }
 
 model declaraciones {
@@ -327,6 +338,8 @@ model fiscal_periods {
 
   @@unique([year, label])
   @@index([closed_by], map: "fiscal_periods_closed_by_fkey")
+  @@index([year, kind, status])
+  @@index([status, starts_at])
 }
 
 model impuestos {
@@ -677,8 +690,8 @@ model system_config {
 
 model system_settings {
   id                   String   @id @db.VarChar(36)
-  registration_enabled Boolean  @default(true)
-  updatedAt           DateTime@map("updated_at") 
+  registrationEnabled Boolean  @map("registration_enabled") @default(true)
+  updatedAt           DateTime @map("updated_at")
 }
 
 model system_updates {
@@ -809,14 +822,15 @@ model tax_calendar {
   modelCode     String              @db.VarChar(20)
   period        String              @db.VarChar(20)
   year          Int
-  startDate    DateTime@map("start_date") 
-  endDate      DateTime@map("end_date") 
+  startDate    DateTime@map("start_date")
+  endDate      DateTime@map("end_date")
   status        tax_calendar_status @default(PENDIENTE)
   days_to_start Int?
   days_to_end   Int?
   active        Boolean             @default(true)
+  locked        Boolean             @default(false)
   createdAt    DateTime            @map("created_at") @default(now())
-  updatedAt    DateTime@map("updated_at") 
+  updatedAt    DateTime@map("updated_at")
 
   @@unique([modelCode, period, year])
   @@index([modelCode])
@@ -945,6 +959,11 @@ enum clients_tipo {
   PARTICULAR
 }
 
+enum clients_tipo_gestoria {
+  OFICIAL
+  ONLINE
+}
+
 enum client_tax_assignments_periodicidad {
   MENSUAL
   TRIMESTRAL
@@ -1033,6 +1052,7 @@ enum tasks_visibilidad {
 
 enum fiscal_periods_kind {
   QUARTERLY
+  MONTHLY
   ANNUAL
   SPECIAL
 }
@@ -1146,3 +1166,195 @@ model document_versions {
   @@map("document_versions")
 }
 
+// ============ SISTEMA DE PRESUPUESTOS GESTORÍAS ============
+
+model gestoria_budget_configurations {
+  id                          String   @id @default(cuid())
+  tipo                        gestoria_budget_configurations_tipo   // 'OFICIAL' | 'ONLINE'
+  nombre                      String
+  activo                      Boolean  @default(true)
+  
+  // Precios base
+  precioBasePorFactura        Decimal  @db.Decimal(10, 2)
+  precioBasePorNomina         Decimal  @db.Decimal(10, 2)
+  
+  // Porcentajes sistema tributario
+  porcentajeRegimenGeneral    Decimal  @db.Decimal(5, 2)
+  porcentajeModulos           Decimal  @db.Decimal(5, 2)
+  porcentajeEDN               Decimal  @db.Decimal(5, 2)
+  
+  // Recargos período
+  recargoPeriodoMensual       Decimal  @db.Decimal(5, 2)
+  minimoMensual               Decimal  @db.Decimal(10, 2)
+  
+  // Precios modelos
+  precioModelo303             Decimal  @db.Decimal(10, 2)
+  precioModelo111             Decimal  @db.Decimal(10, 2)
+  precioModelo115             Decimal  @db.Decimal(10, 2)
+  precioModelo130             Decimal  @db.Decimal(10, 2)
+  precioModelo100             Decimal  @db.Decimal(10, 2)
+  precioModelo349             Decimal  @db.Decimal(10, 2)
+  precioModelo347             Decimal  @db.Decimal(10, 2)
+  
+  // Servicios adicionales fijos
+  precioCertificados          Decimal  @db.Decimal(10, 2)
+  precioCensos                Decimal  @db.Decimal(10, 2)
+  precioNotificaciones        Decimal  @db.Decimal(10, 2)
+  precioEstadisticas          Decimal  @db.Decimal(10, 2)
+  precioAyudas                Decimal  @db.Decimal(10, 2)
+  
+  // Datos de empresa
+  nombreEmpresa               String
+  nifEmpresa                  String
+  direccionEmpresa            String
+  telefonoEmpresa             String
+  emailEmpresa                String
+  logoPath                    String?
+  colorPrimario               String   @default("#1e40af")
+  colorSecundario             String   @default("#3b82f6")
+  
+  fechaCreacion               DateTime @default(now())
+  fechaModificacion           DateTime @updatedAt
+  creadoPor                   String
+  
+  gestoria_budgets            gestoria_budgets[]
+  
+  @@map("gestoria_budget_configurations")
+}
+
+model gestoria_budgets {
+  id                          String   @id @default(cuid())
+  numero                      String   @unique  // PRE-2025-001
+  tipoGestoria                gestoria_budgets_tipo_gestoria   // 'OFICIAL' | 'ONLINE'
+  estado                      gestoria_budgets_estado   // 'BORRADOR' | 'ENVIADO' | 'ACEPTADO' | 'RECHAZADO' | 'FACTURADO'
+  
+  // Datos del cliente potencial
+  nombreCliente               String
+  nifCif                      String
+  email                       String
+  telefono                    String?
+  direccion                   String?
+  personaContacto             String?
+  
+  // Datos del presupuesto
+  facturasMes                 Int
+  nominasMes                  Int      @default(0)
+  facturacion                 Decimal  @db.Decimal(12, 2)
+  sistemaTributacion          String
+  periodoDeclaraciones        String
+  
+  // Modelos incluidos
+  modelo303                   Boolean  @default(false)
+  modelo111                   Boolean  @default(false)
+  modelo115                   Boolean  @default(false)
+  modelo130                   Boolean  @default(false)
+  modelo100                   Boolean  @default(false)
+  modelo349                   Boolean  @default(false)
+  modelo347                   Boolean  @default(false)
+  
+  // Servicios adicionales fijos
+  solicitudCertificados       Boolean  @default(false)
+  censosAEAT                  Boolean  @default(false)
+  recepcionNotificaciones     Boolean  @default(false)
+  estadisticasINE             Boolean  @default(false)
+  solicitudAyudas             Boolean  @default(false)
+  conLaboralSocial            Boolean  @default(false)
+  
+  // Cálculos
+  totalContabilidad           Decimal  @db.Decimal(12, 2)
+  totalLaboral                Decimal  @db.Decimal(12, 2) @default(0)
+  aplicaDescuento             Boolean  @default(false)
+  tipoDescuento               String?  // 'PORCENTAJE' | 'FIJO'
+  valorDescuento              Decimal? @db.Decimal(10, 2)
+  descuentoCalculado          Decimal  @db.Decimal(10, 2) @default(0)
+  totalFinal                  Decimal  @db.Decimal(12, 2)
+  
+  // Tracking
+  fechaCreacion               DateTime @default(now())
+  fechaEnvio                  DateTime?
+  fechaAceptacion             DateTime?
+  fechaRechazo                DateTime?
+  motivoRechazo               String?  @db.Text
+  creadoPor                   String
+  modificadoPor               String?
+  
+  // Relaciones
+  clienteId                   String?
+  configId                    String
+  configuracion               gestoria_budget_configurations @relation(fields: [configId], references: [id])
+  serviciosAdicionales        gestoria_budget_additional_services[]
+  eventos                     gestoria_budget_statistics_events[]
+  
+  pdfPath                     String?  // Ruta al PDF generado
+  
+  @@index([estado])
+  @@index([tipoGestoria])
+  @@index([nifCif])
+  @@index([fechaCreacion])
+  @@index([clienteId])
+  @@map("gestoria_budgets")
+}
+
+model gestoria_budget_additional_services {
+  id                          String   @id @default(cuid())
+  budgetId                    String
+  budget                      gestoria_budgets  @relation(fields: [budgetId], references: [id], onDelete: Cascade)
+  
+  nombre                      String
+  descripcion                 String?
+  precio                      Decimal  @db.Decimal(10, 2)
+  tipoServicio                gestoria_budget_additional_services_tipo_servicio   // 'MENSUAL' | 'PUNTUAL'
+  incluido                    Boolean  @default(true)
+  
+  @@index([budgetId])
+  @@map("gestoria_budget_additional_services")
+}
+
+model gestoria_budget_statistics_events {
+  id                          String   @id @default(cuid())
+  budgetId                    String
+  budget                      gestoria_budgets  @relation(fields: [budgetId], references: [id], onDelete: Cascade)
+  
+  evento                      gestoria_budget_statistics_events_evento   // 'CREADO' | 'ENVIADO' | 'ACEPTADO' | 'RECHAZADO' | 'CONVERTIDO'
+  fecha                       DateTime @default(now())
+  userId                      String?
+  metadata                    String?  @db.Text // JSON con info adicional
+  
+  @@index([budgetId])
+  @@index([evento])
+  @@index([fecha])
+  @@map("gestoria_budget_statistics_events")
+}
+
+// Enums para el sistema de presupuestos de gestorías
+
+enum gestoria_budget_configurations_tipo {
+  OFICIAL
+  ONLINE
+}
+
+enum gestoria_budgets_tipo_gestoria {
+  OFICIAL
+  ONLINE
+}
+
+enum gestoria_budgets_estado {
+  BORRADOR
+  ENVIADO
+  ACEPTADO
+  RECHAZADO
+  FACTURADO
+}
+
+enum gestoria_budget_additional_services_tipo_servicio {
+  MENSUAL
+  PUNTUAL
+}
+
+enum gestoria_budget_statistics_events_evento {
+  CREADO
+  ENVIADO
+  ACEPTADO
+  RECHAZADO
+  CONVERTIDO
+}
