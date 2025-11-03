@@ -35,16 +35,42 @@ export interface PymeInput {
 
 // ==== AUTÓNOMO ====
 export interface AutonomoInput {
-  facturasMes: number; // rango: 25, 50, 100, 150, 200
+  // Datos base
+  facturasMes: number;
   nominasMes: number;
   facturacion: number;
-  irpfAlquileres: boolean;
-  ivaIntracomunitario: boolean;
-  notificaciones: boolean;
-  estadisticasINE: boolean;
   periodo: 'MENSUAL' | 'TRIMESTRAL';
   sistemaTributacion: 'NORMAL' | 'ESN' | 'MODULOS';
-  emprendedor: boolean;
+  
+  // Modelos IVA
+  modelo303?: boolean;
+  modelo349?: boolean;
+  modelo347?: boolean;
+  
+  // Modelos IRPF
+  modelo111?: boolean;
+  modelo115?: boolean;
+  modelo130?: boolean;
+  modelo100?: boolean;
+  
+  // Servicios adicionales
+  solicitudCertificados?: boolean;
+  censosAEAT?: boolean;
+  recepcionNotificaciones?: boolean;
+  estadisticasINE?: boolean;
+  solicitudAyudas?: boolean;
+  conLaboralSocial?: boolean;
+  
+  // Descuentos
+  aplicaDescuento?: boolean;
+  tipoDescuento?: 'PORCENTAJE' | 'FIJO';
+  valorDescuento?: number;
+  
+  // Legacy fields (mantener compatibilidad)
+  irpfAlquileres?: boolean;
+  ivaIntracomunitario?: boolean;
+  notificaciones?: boolean;
+  emprendedor?: boolean;
 }
 
 // ==== RENTA ====

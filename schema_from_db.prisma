@@ -8,29 +8,29 @@ datasource db {
 }
 
 model activity_logs {
-  id         String   @id @db.VarChar(36)
+  id        String   @id @db.VarChar(36)
   usuarioId String   @map("usuario_id") @db.VarChar(36)
-  accion     String   @db.Text
-  modulo     String
-  detalles   String?  @db.Text
-  fecha      DateTime @default(now())
-  users      users    @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  accion    String   @db.Text
+  modulo    String
+  detalles  String?  @db.Text
+  fecha     DateTime @default(now())
+  users     users    @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
 
   @@index([usuarioId, modulo, fecha])
 }
 
 model audit_trail {
-  id             String             @id @db.VarChar(36)
+  id            String             @id @db.VarChar(36)
   usuarioId     String             @map("usuario_id") @db.VarChar(36)
-  accion         audit_trail_accion
-  tabla          String
+  accion        audit_trail_accion
+  tabla         String
   registroId    String             @map("registro_id") @db.VarChar(36)
   valorAnterior String?            @map("valor_anterior") @db.Text
   valorNuevo    String?            @map("valor_nuevo") @db.Text
-  cambios        String?            @db.Text
-  requestId     String?@map("request_id") 
-  fecha          DateTime           @default(now())
-  users          users              @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  cambios       String?            @db.Text
+  requestId     String?            @map("request_id")
+  fecha         DateTime           @default(now())
+  users         users              @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
 
   @@index([fecha])
   @@index([tabla, registroId])
@@ -38,51 +38,51 @@ model audit_trail {
 }
 
 model budget_email_logs {
-  id         String    @id
-  budgetId  String@map("budget_id") 
-  status     String
-  to_email   String?
-  subject    String?
-  response   String?   @db.LongText
-  createdAt DateTime?@map("created_at") 
-  budgets    budgets   @relation(fields: [budgetId], references: [id], onDelete: Cascade)
+  id        String    @id
+  budgetId  String    @map("budget_id")
+  status    String
+  to_email  String?
+  subject   String?
+  response  String?   @db.LongText
+  createdAt DateTime? @map("created_at")
+  budgets   budgets   @relation(fields: [budgetId], references: [id], onDelete: Cascade)
 
   @@index([budgetId])
 }
 
 model budget_items {
-  id                 String    @id
-  budgetId          String@map("budget_id") 
-  concept            String
-  category           String?
-  position           Int       @default(0)
-  quantity           Decimal   @default(1.00) @db.Decimal(10, 2)
-  unitPrice         Decimal   @map("unit_price") @db.Decimal(12, 2)
-  vatPct            Decimal?  @map("vat_pct") @db.Decimal(5, 2)
-  subtotal           Decimal   @db.Decimal(12, 2)
-  total              Decimal   @db.Decimal(12, 2)
-  isManuallyEdited Boolean?  @map("is_manually_edited") @default(false)
-  createdAt         DateTime? @map("created_at") @default(now())
-  updatedAt         DateTime? @map("updated_at") @default(now())
-  budgets            budgets   @relation(fields: [budgetId], references: [id], onDelete: Cascade)
+  id               String    @id
+  budgetId         String    @map("budget_id")
+  concept          String
+  category         String?
+  position         Int       @default(0)
+  quantity         Decimal   @default(1.00) @db.Decimal(10, 2)
+  unitPrice        Decimal   @map("unit_price") @db.Decimal(12, 2)
+  vatPct           Decimal?  @map("vat_pct") @db.Decimal(5, 2)
+  subtotal         Decimal   @db.Decimal(12, 2)
+  total            Decimal   @db.Decimal(12, 2)
+  isManuallyEdited Boolean?  @default(false) @map("is_manually_edited")
+  createdAt        DateTime? @default(now()) @map("created_at")
+  updatedAt        DateTime? @default(now()) @map("updated_at")
+  budgets          budgets   @relation(fields: [budgetId], references: [id], onDelete: Cascade)
 
   @@index([budgetId])
 }
 
 model budget_parameters {
   id          String                        @id @db.VarChar(36)
-  budgetType budget_parameters_budget_type@map("budget_type") 
+  budgetType  budget_parameters_budget_type @map("budget_type")
   category    String                        @db.VarChar(100)
   subcategory String?                       @db.VarChar(100)
-  paramKey   String                        @map("param_key") @db.VarChar(100)
-  paramLabel String                        @map("param_label") @db.Text
-  paramValue Decimal                       @map("param_value") @db.Decimal(12, 2)
-  minRange   Int?@map("min_range") 
-  maxRange   Int?@map("max_range") 
-  isActive   Boolean?                      @map("is_active") @default(true)
+  paramKey    String                        @map("param_key") @db.VarChar(100)
+  paramLabel  String                        @map("param_label") @db.Text
+  paramValue  Decimal                       @map("param_value") @db.Decimal(12, 2)
+  minRange    Int?                          @map("min_range")
+  maxRange    Int?                          @map("max_range")
+  isActive    Boolean?                      @default(true) @map("is_active")
   description String?                       @db.Text
-  createdAt  DateTime?                     @map("created_at") @default(now())
-  updatedAt  DateTime?                     @map("updated_at") @default(now())
+  createdAt   DateTime?                     @default(now()) @map("created_at")
+  updatedAt   DateTime?                     @default(now()) @map("updated_at")
 
   @@unique([budgetType, paramKey, minRange, maxRange], map: "unique_param")
   @@index([budgetType], map: "idx_budget_type")
@@ -90,12 +90,12 @@ model budget_parameters {
 }
 
 model budget_pdfs {
-  id         String    @id
-  budgetId  String@map("budget_id") 
-  filename   String
-  url        String
-  createdAt DateTime? @map("created_at") @default(now())
-  budgets    budgets   @relation(fields: [budgetId], references: [id], onDelete: Cascade)
+  id        String    @id
+  budgetId  String    @map("budget_id")
+  filename  String
+  url       String
+  createdAt DateTime? @default(now()) @map("created_at")
+  budgets   budgets   @relation(fields: [budgetId], references: [id], onDelete: Cascade)
 
   @@index([budgetId])
 }
@@ -113,8 +113,8 @@ model budget_templates {
   isActive      Boolean               @default(true)
   createdBy     String?
   updatedBy     String?
-  createdAt    DateTime              @map("created_at") @default(now())
-  updatedAt    DateTime              @map("updated_at") @default(now())
+  createdAt     DateTime              @default(now()) @map("created_at")
+  updatedAt     DateTime              @default(now()) @map("updated_at")
 
   @@index([companyBrand], map: "idx_companyBrand")
   @@index([isActive], map: "idx_isActive")
@@ -158,8 +158,8 @@ model budgets {
   manually_edited   Boolean?            @default(false)
   custom_total      Decimal?            @db.Decimal(12, 2)
   vat_mode          String?             @default("IVA_NO_INCLUIDO") @db.VarChar(50)
-  createdAt        DateTime?           @map("created_at") @default(now())
-  updatedAt        DateTime?           @map("updated_at") @default(now())
+  createdAt         DateTime?           @default(now()) @map("created_at")
+  updatedAt         DateTime?           @default(now()) @map("updated_at")
   company_brand     String              @default("LA_LLAVE") @db.VarChar(50)
   budget_email_logs budget_email_logs[]
   budget_items      budget_items[]
@@ -177,13 +177,13 @@ model calendario_aeat {
   periodo_contable String                       @db.VarChar(20)
   fecha_inicio     DateTime
   fecha_fin        DateTime
-  createdAt       DateTime                     @map("created_at") @default(now())
-  updatedAt       DateTime@map("updated_at") 
+  createdAt        DateTime                     @default(now()) @map("created_at")
+  updatedAt        DateTime                     @map("updated_at")
 }
 
 model client_employees {
-  clientId   String   @map("client_id") @db.VarChar(36)
-  userId     String   @map("user_id") @db.VarChar(36)
+  clientId    String   @map("client_id") @db.VarChar(36)
+  userId      String   @map("user_id") @db.VarChar(36)
   is_primary  Boolean  @default(false)
   assigned_at DateTime @default(now())
   clients     clients  @relation(fields: [clientId], references: [id], onDelete: Cascade)
@@ -196,7 +196,7 @@ model client_employees {
 
 model client_tax {
   id                  String      @id @db.VarChar(36)
-  clientId           String      @map("client_id") @db.VarChar(36)
+  clientId            String      @map("client_id") @db.VarChar(36)
   tax_period_id       String      @db.VarChar(36)
   estado              String      @db.VarChar(50)
   notas               String?     @db.Text
@@ -214,33 +214,33 @@ model client_tax {
 
 model client_tax_assignments {
   id                String                              @id @db.VarChar(36)
-  clientId         String                              @map("client_id") @db.VarChar(36)
-  taxModelCode    String                              @map("tax_model_code") @db.VarChar(20)
+  clientId          String                              @map("client_id") @db.VarChar(36)
+  taxModelCode      String                              @map("tax_model_code") @db.VarChar(20)
   periodicidad      client_tax_assignments_periodicidad
-  startDate        DateTime@map("start_date")
-  endDate          DateTime?@map("end_date")
-  activeFlag       Boolean                             @map("active_flag") @default(true)
+  startDate         DateTime                            @map("start_date")
+  endDate           DateTime?                           @map("end_date")
+  activeFlag        Boolean                             @default(true) @map("active_flag")
   notes             String?                             @db.Text
-  createdAt        DateTime                            @map("created_at") @default(now())
-  updatedAt        DateTime@map("updated_at")
+  createdAt         DateTime                            @default(now()) @map("created_at")
+  updatedAt         DateTime                            @map("updated_at")
   clients           clients                             @relation(fields: [clientId], references: [id], onDelete: Cascade)
   tax_models_config tax_models_config                   @relation(fields: [taxModelCode], references: [code])
 
   @@unique([clientId, taxModelCode])
   @@index([taxModelCode])
-  @@index([activeFlag, startDate])
-  @@index([clientId, activeFlag])
+  @@index([activeFlag, startDate], map: "idx_activeFlag_startDate")
+  @@index([clientId, activeFlag], map: "idx_clientId_activeFlag")
 }
 
 model client_tax_filings {
   id             String                    @id @db.VarChar(36)
-  clientId      String                    @map("client_id") @db.VarChar(36)
-  taxModelCode String                    @map("tax_model_code") @db.VarChar(50)
-  periodId      String                    @map("period_id") @db.VarChar(36)
+  clientId       String                    @map("client_id") @db.VarChar(36)
+  taxModelCode   String                    @map("tax_model_code") @db.VarChar(50)
+  periodId       String                    @map("period_id") @db.VarChar(36)
   status         client_tax_filings_status @default(NOT_STARTED)
   notes          String?                   @db.Text
-  presentedAt   DateTime?@map("presented_at")
-  assigneeId    String?                   @map("assignee_id") @db.VarChar(36)
+  presentedAt    DateTime?                 @map("presented_at")
+  assigneeId     String?                   @map("assignee_id") @db.VarChar(36)
   users          users?                    @relation(fields: [assigneeId], references: [id])
   clients        clients                   @relation(fields: [clientId], references: [id], onDelete: Cascade)
   fiscal_periods fiscal_periods            @relation(fields: [periodId], references: [id], onDelete: Cascade)
@@ -248,60 +248,57 @@ model client_tax_filings {
   @@unique([clientId, taxModelCode, periodId], map: "clientId_taxModelCode_periodId")
   @@index([assigneeId], map: "client_tax_filings_assignee_id_fkey")
   @@index([periodId], map: "client_tax_filings_period_id_fkey")
-  @@index([clientId, status])
-  @@index([status, periodId])
-  @@index([taxModelCode, status])
+  @@index([clientId, status], map: "idx_clientId_status")
+  @@index([status, periodId], map: "idx_status_periodId")
+  @@index([taxModelCode, status], map: "idx_taxModelCode_status")
 }
 
 model client_tax_requirements {
-  id             String  @id @db.VarChar(36)
-  clientId      String  @map("client_id") @db.VarChar(36)
-  impuesto       String
-  detalle        String? @db.Text
+  id           String  @id @db.VarChar(36)
+  clientId     String  @map("client_id") @db.VarChar(36)
+  impuesto     String
+  detalle      String? @db.Text
   taxModelCode String? @map("tax_model_code") @db.VarChar(50)
-  required       Boolean @default(true)
-  note           String? @db.Text
-  color_tag      String? @db.VarChar(50)
-  clients        clients @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  required     Boolean @default(true)
+  note         String? @db.Text
+  color_tag    String? @db.VarChar(50)
+  clients      clients @relation(fields: [clientId], references: [id], onDelete: Cascade)
 
   @@index([clientId], map: "client_tax_requirements_client_id_fkey")
 }
 
 model clients {
   id                      String                    @id @db.VarChar(36)
-  razonSocial            String                    @map("razon_social") @db.Text
-  nifCif                 String                    @map("nif_cif") @unique
+  razonSocial             String                    @map("razon_social") @db.Text
+  nifCif                  String                    @unique @map("nif_cif")
   tipo                    clients_tipo
   email                   String?                   @db.Text
   telefono                String?                   @db.Text
   direccion               String?                   @db.Text
-  fechaAlta              DateTime                  @map("fecha_alta") @default(now())
-  responsableAsignado    String?                   @map("responsable_asignado") @db.VarChar(36)
-  isActive               Boolean                   @map("is_active") @default(true)
+  fechaAlta               DateTime                  @default(now()) @map("fecha_alta")
+  responsableAsignado     String?                   @map("responsable_asignado") @db.VarChar(36)
+  isActive                Boolean                   @default(true) @map("is_active")
   tax_models              String?                   @db.LongText
-  fechaBaja              DateTime?                 @map("fecha_baja") 
+  fechaBaja               DateTime?                 @map("fecha_baja")
   notes                   String?                   @db.Text
-  
-  // NUEVO: Sistema de presupuestos gestorías
-  tipoGestoria            clients_tipo_gestoria?    // 'OFICIAL' | 'ONLINE'
-  presupuestoOrigenId     String?                   @db.VarChar(36) // ID del presupuesto que lo generó
-  
+  tipo_gestoria           clients_tipo_gestoria?
+  presupuesto_origen_id   String?                   @db.VarChar(36)
   client_employees        client_employees[]
   client_tax              client_tax[]
   client_tax_assignments  client_tax_assignments[]
   client_tax_filings      client_tax_filings[]
   client_tax_requirements client_tax_requirements[]
   users                   users?                    @relation(fields: [responsableAsignado], references: [id])
+  documents               documents[]
   notificaciones          notificaciones[]
   obligaciones_fiscales   obligaciones_fiscales[]
   tasks                   tasks[]
-  documents               documents[]
 
   @@index([fechaBaja])
   @@index([isActive])
   @@index([responsableAsignado])
   @@index([tipo])
-  @@index([tipoGestoria])
+  @@index([tipo_gestoria])
 }
 
 model declaraciones {
@@ -312,8 +309,8 @@ model declaraciones {
   fecha_presentacion    DateTime?
   archivo_pdf           String?               @db.VarChar(500)
   notas                 String?               @db.Text
-  createdAt            DateTime              @map("created_at") @default(now())
-  updatedAt            DateTime@map("updated_at") 
+  createdAt             DateTime              @default(now()) @map("created_at")
+  updatedAt             DateTime              @map("updated_at")
   obligaciones_fiscales obligaciones_fiscales @relation(fields: [obligacion_id], references: [id], onDelete: Cascade)
 
   @@index([calendario_id])
@@ -338,8 +335,8 @@ model fiscal_periods {
 
   @@unique([year, label])
   @@index([closed_by], map: "fiscal_periods_closed_by_fkey")
-  @@index([year, kind, status])
-  @@index([status, starts_at])
+  @@index([status, starts_at], map: "idx_status_starts_at")
+  @@index([year, kind, status], map: "idx_year_kind_status")
 }
 
 model impuestos {
@@ -347,8 +344,8 @@ model impuestos {
   nombre                String                  @db.VarChar(100)
   modelo                String                  @unique @db.VarChar(10)
   descripcion           String?                 @db.Text
-  createdAt            DateTime                @map("created_at") @default(now())
-  updatedAt            DateTime@map("updated_at") 
+  createdAt             DateTime                @default(now()) @map("created_at")
+  updatedAt             DateTime                @map("updated_at")
   activo                Boolean                 @default(true)
   obligaciones_fiscales obligaciones_fiscales[]
 
@@ -371,12 +368,12 @@ model job_runs {
 
 model manual_attachments {
   id            String   @id @db.VarChar(36)
-  manualId     String   @map("manual_id") @db.VarChar(36)
-  fileName     String   @map("file_name") @db.VarChar(255)
+  manualId      String   @map("manual_id") @db.VarChar(36)
+  fileName      String   @map("file_name") @db.VarChar(255)
   original_name String   @db.VarChar(255)
-  filePath     String   @map("file_path") @db.Text
+  filePath      String   @map("file_path") @db.Text
   file_type     String   @db.VarChar(100)
-  fileSize     Int@map("file_size") 
+  fileSize      Int      @map("file_size")
   uploaded_by   String   @db.VarChar(36)
   uploaded_at   DateTime @default(now())
   manuals       manuals  @relation(fields: [manualId], references: [id], onDelete: Cascade)
@@ -386,14 +383,14 @@ model manual_attachments {
 
 model manual_versions {
   id             String   @id @db.VarChar(36)
-  manualId      String   @map("manual_id") @db.VarChar(36)
-  versionNumber Int@map("version_number") 
+  manualId       String   @map("manual_id") @db.VarChar(36)
+  versionNumber  Int      @map("version_number")
   titulo         String   @db.Text
   contenido_html String   @db.Text
   etiquetas      String?  @db.Text
   categoria      String?
-  createdBy     String   @map("created_by") @db.VarChar(36)
-  createdAt     DateTime @map("created_at") @default(now())
+  createdBy      String   @map("created_by") @db.VarChar(36)
+  createdAt      DateTime @default(now()) @map("created_at")
   manuals        manuals  @relation(fields: [manualId], references: [id], onDelete: Cascade)
 
   @@unique([manualId, versionNumber])
@@ -430,7 +427,7 @@ model notificaciones {
   enviada     Boolean             @default(true)
   asunto      String?             @db.VarChar(500)
   mensaje     String?             @db.Text
-  createdAt  DateTime            @map("created_at") @default(now())
+  createdAt   DateTime            @default(now()) @map("created_at")
   clients     clients             @relation(fields: [cliente_id], references: [id], onDelete: Cascade)
 
   @@index([cliente_id])
@@ -490,8 +487,8 @@ model obligaciones_fiscales {
   periodicidad     obligaciones_fiscales_periodicidad
   fecha_inicio     DateTime
   fecha_fin        DateTime?
-  createdAt       DateTime                           @map("created_at") @default(now())
-  updatedAt       DateTime@map("updated_at") 
+  createdAt        DateTime                           @default(now()) @map("created_at")
+  updatedAt        DateTime                           @map("updated_at")
   activo           Boolean                            @default(true)
   dia_vencimiento  Int?
   fecha_asignacion DateTime                           @default(now())
@@ -511,7 +508,7 @@ model permissions {
   resource         String             @db.VarChar(50)
   action           String             @db.VarChar(50)
   description      String?            @db.Text
-  createdAt       DateTime           @map("created_at") @default(now())
+  createdAt        DateTime           @default(now()) @map("created_at")
   role_permissions role_permissions[]
 
   @@unique([resource, action])
@@ -531,12 +528,12 @@ model price_catalog {
 }
 
 model role_permissions {
-  id            String      @id @db.VarChar(36)
+  id           String      @id @db.VarChar(36)
   roleId       String      @map("role_id") @db.VarChar(36)
   permissionId String      @map("permission_id") @db.VarChar(36)
-  createdAt    DateTime    @map("created_at") @default(now())
-  permissions   permissions @relation(fields: [permissionId], references: [id], onDelete: Cascade)
-  roles         roles       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  createdAt    DateTime    @default(now()) @map("created_at")
+  permissions  permissions @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  roles        roles       @relation(fields: [roleId], references: [id], onDelete: Cascade)
 
   @@unique([roleId, permissionId])
   @@index([permissionId])
@@ -548,14 +545,14 @@ model roles {
   name             String             @unique @db.VarChar(100)
   description      String?            @db.Text
   is_system        Boolean            @default(false)
-  color            String?            @db.VarChar(7) @default("#6366f1") // Color para UI
-  icon             String?            @db.VarChar(50) @default("shield") // Lucide icon name
+  color            String?            @default("#6366f1") @db.VarChar(7)
+  icon             String?            @default("shield") @db.VarChar(50)
   can_create_users Boolean            @default(false) @map("can_create_users")
   can_delete_users Boolean            @default(false) @map("can_delete_users")
   can_manage_roles Boolean            @default(false) @map("can_manage_roles")
   is_active        Boolean            @default(true) @map("is_active")
   created_by       String?            @map("created_by") @db.VarChar(36)
-  createdAt        DateTime           @map("created_at") @default(now())
+  createdAt        DateTime           @default(now()) @map("created_at")
   updatedAt        DateTime           @map("updated_at")
   role_permissions role_permissions[]
   users            users[]
@@ -583,29 +580,29 @@ model scheduled_notifications {
 }
 
 model sessions {
-  id            String    @id @db.VarChar(36)
+  id           String    @id @db.VarChar(36)
   userId       String    @map("user_id") @db.VarChar(36)
-  ip            String    @db.VarChar(45)
-  isp           String?
-  asn           String?   @db.VarChar(100)
-  country       String?   @db.VarChar(100)
-  region        String?   @db.VarChar(100)
-  city          String?   @db.VarChar(100)
-  latitude      Float?
-  longitude     Float?
-  isVpn         Boolean?
-  vpnScore      Float?
-  user_agent    String    @db.Text
-  device_type   String?   @db.VarChar(50)
-  platform      String?   @db.VarChar(100)
-  last_seen_at  DateTime  @default(now())
-  createdAt    DateTime  @map("created_at") @default(now())
-  socket_id     String?
-  ended_at      DateTime?
-  suspicious    Boolean?  @default(false)
-  expiresAt    DateTime?@map("expires_at") 
-  refreshToken String?   @map("refresh_token") @unique @db.VarChar(500)
-  users         users     @relation(fields: [userId], references: [id])
+  ip           String    @db.VarChar(45)
+  isp          String?
+  asn          String?   @db.VarChar(100)
+  country      String?   @db.VarChar(100)
+  region       String?   @db.VarChar(100)
+  city         String?   @db.VarChar(100)
+  latitude     Float?
+  longitude    Float?
+  isVpn        Boolean?
+  vpnScore     Float?
+  user_agent   String    @db.Text
+  device_type  String?   @db.VarChar(50)
+  platform     String?   @db.VarChar(100)
+  last_seen_at DateTime  @default(now())
+  createdAt    DateTime  @default(now()) @map("created_at")
+  socket_id    String?
+  ended_at     DateTime?
+  suspicious   Boolean?  @default(false)
+  expiresAt    DateTime? @map("expires_at")
+  refreshToken String?   @unique @map("refresh_token") @db.VarChar(500)
+  users        users     @relation(fields: [userId], references: [id])
 
   @@index([ip])
   @@index([last_seen_at])
@@ -651,9 +648,9 @@ model storage_configs {
   username           String?              @db.VarChar(200)
   encrypted_password String?              @db.Text
   base_path          String               @default("/uploads") @db.VarChar(1000)
-  isActive          Boolean              @map("is_active") @default(false)
-  createdAt         DateTime             @map("created_at") @default(now())
-  updatedAt         DateTime@map("updated_at") 
+  isActive           Boolean              @default(false) @map("is_active")
+  createdAt          DateTime             @default(now()) @map("created_at")
+  updatedAt          DateTime             @map("updated_at")
 
   @@index([isActive])
   @@index([type])
@@ -668,8 +665,8 @@ model system_backups {
   files_size    BigInt                @default(0)
   status        system_backups_status @default(CREATING)
   error_message String?               @db.Text
-  createdBy    String?               @map("created_by") @db.VarChar(36)
-  createdAt    DateTime              @map("created_at") @default(now())
+  createdBy     String?               @map("created_by") @db.VarChar(36)
+  createdAt     DateTime              @default(now()) @map("created_at")
   completed_at  DateTime?
   users         users?                @relation(fields: [createdBy], references: [id])
 
@@ -684,13 +681,13 @@ model system_config {
   value       String   @db.Text
   description String?  @db.Text
   is_editable Boolean  @default(true)
-  createdAt  DateTime @map("created_at") @default(now())
-  updatedAt  DateTime@map("updated_at") 
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @map("updated_at")
 }
 
 model system_settings {
-  id                   String   @id @db.VarChar(36)
-  registrationEnabled Boolean  @map("registration_enabled") @default(true)
+  id                  String   @id @db.VarChar(36)
+  registrationEnabled Boolean  @default(true) @map("registration_enabled")
   updatedAt           DateTime @map("updated_at")
 }
 
@@ -703,7 +700,7 @@ model system_updates {
   backup_id     String?               @db.VarChar(36)
   error_message String?               @db.Text
   initiated_by  String?               @db.VarChar(36)
-  createdAt    DateTime              @map("created_at") @default(now())
+  createdAt     DateTime              @default(now()) @map("created_at")
   completed_at  DateTime?
   users         users?                @relation(fields: [initiated_by], references: [id])
 
@@ -714,12 +711,12 @@ model system_updates {
 
 model task_activities {
   id          String   @id @db.VarChar(36)
-  taskId     String   @map("task_id") @db.VarChar(36)
-  userId     String   @map("user_id") @db.VarChar(36)
+  taskId      String   @map("task_id") @db.VarChar(36)
+  userId      String   @map("user_id") @db.VarChar(36)
   accion      String   @db.VarChar(100)
   descripcion String   @db.Text
   metadata    String?  @db.Text
-  createdAt  DateTime @map("created_at") @default(now())
+  createdAt   DateTime @default(now()) @map("created_at")
   tasks       tasks    @relation(fields: [taskId], references: [id], onDelete: Cascade)
   users       users    @relation(fields: [userId], references: [id])
 
@@ -730,13 +727,13 @@ model task_activities {
 
 model task_attachments {
   id            String   @id @db.VarChar(36)
-  taskId       String   @map("task_id") @db.VarChar(36)
-  userId       String   @map("user_id") @db.VarChar(36)
-  fileName     String   @map("file_name") @db.VarChar(255)
+  taskId        String   @map("task_id") @db.VarChar(36)
+  userId        String   @map("user_id") @db.VarChar(36)
+  fileName      String   @map("file_name") @db.VarChar(255)
   original_name String   @db.VarChar(255)
-  filePath     String   @map("file_path") @db.Text
+  filePath      String   @map("file_path") @db.Text
   file_type     String   @db.VarChar(100)
-  fileSize     Int@map("file_size") 
+  fileSize      Int      @map("file_size")
   uploaded_at   DateTime @default(now())
   tasks         tasks    @relation(fields: [taskId], references: [id], onDelete: Cascade)
   users         users    @relation(fields: [userId], references: [id])
@@ -746,14 +743,14 @@ model task_attachments {
 }
 
 model task_comments {
-  id         String   @id @db.VarChar(36)
+  id        String   @id @db.VarChar(36)
   taskId    String   @map("task_id") @db.VarChar(36)
   userId    String   @map("user_id") @db.VarChar(36)
-  contenido  String   @db.Text
-  createdAt DateTime @map("created_at") @default(now())
-  updatedAt DateTime@map("updated_at") 
-  tasks      tasks    @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  users      users    @relation(fields: [userId], references: [id])
+  contenido String   @db.Text
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @map("updated_at")
+  tasks     tasks    @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  users     users    @relation(fields: [userId], references: [id])
 
   @@index([createdAt])
   @@index([taskId])
@@ -762,8 +759,8 @@ model task_comments {
 
 model task_time_entries {
   id          String    @id @db.VarChar(36)
-  taskId     String    @map("task_id") @db.VarChar(36)
-  userId     String    @map("user_id") @db.VarChar(36)
+  taskId      String    @map("task_id") @db.VarChar(36)
+  userId      String    @map("user_id") @db.VarChar(36)
   descripcion String?   @db.Text
   minutos     Int
   fecha       DateTime  @default(now())
@@ -822,15 +819,15 @@ model tax_calendar {
   modelCode     String              @db.VarChar(20)
   period        String              @db.VarChar(20)
   year          Int
-  startDate    DateTime@map("start_date")
-  endDate      DateTime@map("end_date")
+  startDate     DateTime            @map("start_date")
+  endDate       DateTime            @map("end_date")
   status        tax_calendar_status @default(PENDIENTE)
   days_to_start Int?
   days_to_end   Int?
   active        Boolean             @default(true)
+  createdAt     DateTime            @default(now()) @map("created_at")
+  updatedAt     DateTime            @map("updated_at")
   locked        Boolean             @default(false)
-  createdAt    DateTime            @map("created_at") @default(now())
-  updatedAt    DateTime@map("updated_at")
 
   @@unique([modelCode, period, year])
   @@index([modelCode])
@@ -862,12 +859,12 @@ model tax_models {
 model tax_models_config {
   code                   String                   @id @db.VarChar(20)
   name                   String
-  allowedTypes          String                   @map("allowed_types") @db.LongText
-  allowedPeriods        String                   @map("allowed_periods") @db.LongText
+  allowedTypes           String                   @map("allowed_types") @db.LongText
+  allowedPeriods         String                   @map("allowed_periods") @db.LongText
   labels                 String?                  @db.LongText
-  isActive              Boolean                  @map("is_active") @default(true)
-  createdAt             DateTime                 @map("created_at") @default(now())
-  updatedAt             DateTime@map("updated_at") 
+  isActive               Boolean                  @default(true) @map("is_active")
+  createdAt              DateTime                 @default(now()) @map("created_at")
+  updatedAt              DateTime                 @map("updated_at")
   client_tax_assignments client_tax_assignments[]
 }
 
@@ -890,15 +887,18 @@ model users {
   username                String                    @unique
   email                   String                    @unique
   password                String                    @db.Text
-  createdAt              DateTime                  @map("created_at") @default(now())
-  roleId                 String?                   @map("role_id") @db.VarChar(36)
-  isActive               Boolean                   @map("is_active") @default(true)
-  is_owner               Boolean                   @map("is_owner") @default(false)
+  createdAt               DateTime                  @default(now()) @map("created_at")
+  roleId                  String?                   @map("role_id") @db.VarChar(36)
+  isActive                Boolean                   @default(true) @map("is_active")
+  is_owner                Boolean                   @default(false) @map("is_owner")
   activity_logs           activity_logs[]
   audit_trail             audit_trail[]
   client_employees        client_employees[]
   client_tax_filings      client_tax_filings[]
   clients                 clients[]
+  signed_documents        document_signatures[]     @relation("document_signatures_signed_by")
+  document_versions       document_versions[]       @relation("document_versions_created_by")
+  created_documents       documents[]               @relation("documents_created_by")
   fiscal_periods          fiscal_periods[]
   manuals                 manuals[]
   notification_logs       notification_logs[]
@@ -914,12 +914,218 @@ model users {
   task_time_entries       task_time_entries[]
   tasks                   tasks[]
   roles                   roles?                    @relation(fields: [roleId], references: [id])
-  // Relaciones con documentos
-  created_documents       documents[]               @relation("documents_created_by")
-  signed_documents        document_signatures[]     @relation("document_signatures_signed_by")
-  document_versions       document_versions[]       @relation("document_versions_created_by")
 
   @@index([roleId])
+}
+
+model documents {
+  id               String                @id @default(cuid())
+  type             String
+  name             String
+  description      String?               @db.Text
+  template_id      String?
+  client_id        String?
+  created_by       String
+  file_path        String?
+  file_name        String?
+  file_size        Int?
+  file_type        String?
+  status           String                @default("draft")
+  signature_status String?               @default("unsigned")
+  signature_date   DateTime?
+  signed_by        String?
+  created_at       DateTime              @default(now())
+  updated_at       DateTime              @updatedAt
+  signatures       document_signatures[]
+  versions         document_versions[]
+  clients          clients?              @relation(fields: [client_id], references: [id])
+  users            users                 @relation("documents_created_by", fields: [created_by], references: [id])
+  template         document_templates?   @relation(fields: [template_id], references: [id])
+
+  @@index([client_id])
+  @@index([created_by])
+  @@index([template_id])
+  @@index([status])
+  @@index([type])
+  @@map("documents")
+}
+
+model document_templates {
+  id          String      @id @default(cuid())
+  type        String
+  name        String      @unique
+  description String?     @db.Text
+  content     String      @db.LongText
+  variables   String?     @db.LongText
+  is_active   Boolean     @default(true)
+  created_at  DateTime    @default(now())
+  updated_at  DateTime    @updatedAt
+  documents   documents[]
+
+  @@index([type])
+  @@index([is_active])
+  @@map("document_templates")
+}
+
+model document_signatures {
+  id             String    @id @default(cuid())
+  document_id    String
+  signed_by      String
+  signature_date DateTime  @default(now())
+  signature_type String
+  ip_address     String?
+  user_agent     String?   @db.Text
+  created_at     DateTime  @default(now())
+  documents      documents @relation(fields: [document_id], references: [id], onDelete: Cascade)
+  users          users     @relation("document_signatures_signed_by", fields: [signed_by], references: [id])
+
+  @@index([document_id])
+  @@index([signed_by])
+  @@map("document_signatures")
+}
+
+model document_versions {
+  id          String    @id @default(cuid())
+  document_id String
+  version     Int
+  content     String    @db.LongText
+  created_by  String
+  created_at  DateTime  @default(now())
+  users       users     @relation("document_versions_created_by", fields: [created_by], references: [id])
+  documents   documents @relation(fields: [document_id], references: [id], onDelete: Cascade)
+
+  @@unique([document_id, version])
+  @@index([document_id])
+  @@index([created_by])
+  @@map("document_versions")
+}
+
+model gestoria_budget_configurations {
+  id                       String                              @id @default(cuid())
+  tipo                     gestoria_budget_configurations_tipo
+  nombre                   String
+  activo                   Boolean                             @default(true)
+  precioBasePorFactura     Decimal                             @db.Decimal(10, 2)
+  precioBasePorNomina      Decimal                             @db.Decimal(10, 2)
+  porcentajeRegimenGeneral Decimal                             @db.Decimal(5, 2)
+  porcentajeModulos        Decimal                             @db.Decimal(5, 2)
+  porcentajeEDN            Decimal                             @db.Decimal(5, 2)
+  recargoPeriodoMensual    Decimal                             @db.Decimal(5, 2)
+  minimoMensual            Decimal                             @db.Decimal(10, 2)
+  precioModelo303          Decimal                             @db.Decimal(10, 2)
+  precioModelo111          Decimal                             @db.Decimal(10, 2)
+  precioModelo115          Decimal                             @db.Decimal(10, 2)
+  precioModelo130          Decimal                             @db.Decimal(10, 2)
+  precioModelo100          Decimal                             @db.Decimal(10, 2)
+  precioModelo349          Decimal                             @db.Decimal(10, 2)
+  precioModelo347          Decimal                             @db.Decimal(10, 2)
+  precioCertificados       Decimal                             @db.Decimal(10, 2)
+  precioCensos             Decimal                             @db.Decimal(10, 2)
+  precioNotificaciones     Decimal                             @db.Decimal(10, 2)
+  precioEstadisticas       Decimal                             @db.Decimal(10, 2)
+  precioAyudas             Decimal                             @db.Decimal(10, 2)
+  nombreEmpresa            String
+  nifEmpresa               String
+  direccionEmpresa         String
+  telefonoEmpresa          String
+  emailEmpresa             String
+  logoPath                 String?
+  colorPrimario            String                              @default("#1e40af")
+  colorSecundario          String                              @default("#3b82f6")
+  fechaCreacion            DateTime                            @default(now())
+  fechaModificacion        DateTime                            @updatedAt
+  creadoPor                String
+  gestoria_budgets         gestoria_budgets[]
+
+  @@map("gestoria_budget_configurations")
+}
+
+model gestoria_budgets {
+  id                      String                                @id @default(cuid())
+  numero                  String                                @unique
+  tipoGestoria            gestoria_budgets_tipo_gestoria
+  estado                  gestoria_budgets_estado
+  nombreCliente           String
+  nifCif                  String
+  email                   String
+  telefono                String?
+  direccion               String?
+  personaContacto         String?
+  facturasMes             Int
+  nominasMes              Int                                   @default(0)
+  facturacion             Decimal                               @db.Decimal(12, 2)
+  sistemaTributacion      String
+  periodoDeclaraciones    String
+  modelo303               Boolean                               @default(false)
+  modelo111               Boolean                               @default(false)
+  modelo115               Boolean                               @default(false)
+  modelo130               Boolean                               @default(false)
+  modelo100               Boolean                               @default(false)
+  modelo349               Boolean                               @default(false)
+  modelo347               Boolean                               @default(false)
+  solicitudCertificados   Boolean                               @default(false)
+  censosAEAT              Boolean                               @default(false)
+  recepcionNotificaciones Boolean                               @default(false)
+  estadisticasINE         Boolean                               @default(false)
+  solicitudAyudas         Boolean                               @default(false)
+  conLaboralSocial        Boolean                               @default(false)
+  totalContabilidad       Decimal                               @db.Decimal(12, 2)
+  totalLaboral            Decimal                               @default(0.00) @db.Decimal(12, 2)
+  aplicaDescuento         Boolean                               @default(false)
+  tipoDescuento           String?
+  valorDescuento          Decimal?                              @db.Decimal(10, 2)
+  descuentoCalculado      Decimal                               @default(0.00) @db.Decimal(10, 2)
+  totalFinal              Decimal                               @db.Decimal(12, 2)
+  fechaCreacion           DateTime                              @default(now())
+  fechaEnvio              DateTime?
+  fechaAceptacion         DateTime?
+  fechaRechazo            DateTime?
+  motivoRechazo           String?                               @db.Text
+  creadoPor               String
+  modificadoPor           String?
+  clienteId               String?
+  configId                String
+  pdfPath                 String?
+  serviciosAdicionales    gestoria_budget_additional_services[]
+  eventos                 gestoria_budget_statistics_events[]
+  configuracion           gestoria_budget_configurations        @relation(fields: [configId], references: [id])
+
+  @@index([estado])
+  @@index([tipoGestoria])
+  @@index([nifCif])
+  @@index([fechaCreacion])
+  @@index([clienteId])
+  @@index([configId], map: "gestoria_budgets_configId_fkey")
+  @@map("gestoria_budgets")
+}
+
+model gestoria_budget_additional_services {
+  id           String                                            @id @default(cuid())
+  budgetId     String
+  nombre       String
+  descripcion  String?
+  precio       Decimal                                           @db.Decimal(10, 2)
+  tipoServicio gestoria_budget_additional_services_tipo_servicio
+  incluido     Boolean                                           @default(true)
+  budget       gestoria_budgets                                  @relation(fields: [budgetId], references: [id], onDelete: Cascade)
+
+  @@index([budgetId])
+  @@map("gestoria_budget_additional_services")
+}
+
+model gestoria_budget_statistics_events {
+  id       String                                   @id @default(cuid())
+  budgetId String
+  evento   gestoria_budget_statistics_events_evento
+  fecha    DateTime                                 @default(now())
+  userId   String?
+  metadata String?                                  @db.Text
+  budget   gestoria_budgets                         @relation(fields: [budgetId], references: [id], onDelete: Cascade)
+
+  @@index([budgetId])
+  @@index([evento])
+  @@index([fecha])
+  @@map("gestoria_budget_statistics_events")
 }
 
 enum storage_configs_type {
@@ -957,11 +1163,6 @@ enum clients_tipo {
   AUTONOMO
   EMPRESA
   PARTICULAR
-}
-
-enum clients_tipo_gestoria {
-  OFICIAL
-  ONLINE
 }
 
 enum client_tax_assignments_periodicidad {
@@ -1050,13 +1251,6 @@ enum tasks_visibilidad {
   PERSONAL
 }
 
-enum fiscal_periods_kind {
-  QUARTERLY
-  MONTHLY
-  ANNUAL
-  SPECIAL
-}
-
 enum fiscal_periods_status {
   OPEN
   CLOSED
@@ -1073,262 +1267,6 @@ enum budgets_status {
   ACCEPTED
   ARCHIVED
 }
-
-// ============ DOCUMENTOS MODULE ============
-
-model documents {
-  id                String                    @id @default(cuid())
-  type              String                    // "payment_receipt", "data_protection", "banking_domiciliation", "other"
-  name              String
-  description       String?                   @db.Text
-  template_id       String?
-  client_id         String?
-  created_by        String
-  file_path         String?
-  file_name         String?
-  file_size         Int?
-  file_type         String?
-  status            String                    @default("draft") // "draft", "pending_signature", "signed", "active", "archived", "cancelled"
-  signature_status  String?                   @default("unsigned") // "unsigned", "signed"
-  signature_date    DateTime?
-  signed_by         String?
-  created_at        DateTime                  @default(now())
-  updated_at        DateTime                  @updatedAt
-
-  // Relaciones
-  clients           clients?                  @relation(fields: [client_id], references: [id])
-  users             users                     @relation("documents_created_by", fields: [created_by], references: [id])
-  template          document_templates?      @relation(fields: [template_id], references: [id])
-  signatures        document_signatures[]
-  versions          document_versions[]
-
-  @@index([client_id])
-  @@index([created_by])
-  @@index([template_id])
-  @@index([status])
-  @@index([type])
-  @@map("documents")
-}
-
-model document_templates {
-  id                String                    @id @default(cuid())
-  type              String                    // "payment_receipt", "data_protection", "banking_domiciliation"
-  name              String                    @unique
-  description       String?                   @db.Text
-  content           String                    @db.LongText
-  variables         Json?
-  is_active         Boolean                   @default(true)
-  created_at        DateTime                  @default(now())
-  updated_at        DateTime                  @updatedAt
-
-  // Relaciones
-  documents         documents[]
-
-  @@index([type])
-  @@index([is_active])
-  @@map("document_templates")
-}
-
-model document_signatures {
-  id                String                    @id @default(cuid())
-  document_id       String
-  signed_by         String                    // ID del usuario que firma
-  signature_date    DateTime                  @default(now())
-  signature_type    String                    // "digital", "electronic", "manual"
-  ip_address        String?
-  user_agent        String?                   @db.Text
-  created_at        DateTime                  @default(now())
-
-  // Relaciones
-  documents         documents                 @relation(fields: [document_id], references: [id], onDelete: Cascade)
-  users             users                     @relation("document_signatures_signed_by", fields: [signed_by], references: [id])
-
-  @@index([document_id])
-  @@index([signed_by])
-  @@map("document_signatures")
-}
-
-model document_versions {
-  id                String                    @id @default(cuid())
-  document_id       String
-  version           Int
-  content           String                    @db.LongText
-  created_by        String
-  created_at        DateTime                  @default(now())
-
-  // Relaciones
-  documents         documents                 @relation(fields: [document_id], references: [id], onDelete: Cascade)
-  users             users                     @relation("document_versions_created_by", fields: [created_by], references: [id])
-
-  @@unique([document_id, version])
-  @@index([document_id])
-  @@index([created_by])
-  @@map("document_versions")
-}
-
-// ============ SISTEMA DE PRESUPUESTOS GESTORÍAS ============
-
-model gestoria_budget_configurations {
-  id                          String   @id @default(cuid())
-  tipo                        gestoria_budget_configurations_tipo   // 'OFICIAL' | 'ONLINE'
-  nombre                      String
-  activo                      Boolean  @default(true)
-  
-  // Precios base
-  precioBasePorFactura        Decimal  @db.Decimal(10, 2)
-  precioBasePorNomina         Decimal  @db.Decimal(10, 2)
-  
-  // Porcentajes sistema tributario
-  porcentajeRegimenGeneral    Decimal  @db.Decimal(5, 2)
-  porcentajeModulos           Decimal  @db.Decimal(5, 2)
-  porcentajeEDN               Decimal  @db.Decimal(5, 2)
-  
-  // Recargos período
-  recargoPeriodoMensual       Decimal  @db.Decimal(5, 2)
-  minimoMensual               Decimal  @db.Decimal(10, 2)
-  
-  // Precios modelos
-  precioModelo303             Decimal  @db.Decimal(10, 2)
-  precioModelo111             Decimal  @db.Decimal(10, 2)
-  precioModelo115             Decimal  @db.Decimal(10, 2)
-  precioModelo130             Decimal  @db.Decimal(10, 2)
-  precioModelo100             Decimal  @db.Decimal(10, 2)
-  precioModelo349             Decimal  @db.Decimal(10, 2)
-  precioModelo347             Decimal  @db.Decimal(10, 2)
-  
-  // Servicios adicionales fijos
-  precioCertificados          Decimal  @db.Decimal(10, 2)
-  precioCensos                Decimal  @db.Decimal(10, 2)
-  precioNotificaciones        Decimal  @db.Decimal(10, 2)
-  precioEstadisticas          Decimal  @db.Decimal(10, 2)
-  precioAyudas                Decimal  @db.Decimal(10, 2)
-  
-  // Datos de empresa
-  nombreEmpresa               String
-  nifEmpresa                  String
-  direccionEmpresa            String
-  telefonoEmpresa             String
-  emailEmpresa                String
-  logoPath                    String?
-  colorPrimario               String   @default("#1e40af")
-  colorSecundario             String   @default("#3b82f6")
-  
-  fechaCreacion               DateTime @default(now())
-  fechaModificacion           DateTime @updatedAt
-  creadoPor                   String
-  
-  gestoria_budgets            gestoria_budgets[]
-  
-  @@map("gestoria_budget_configurations")
-}
-
-model gestoria_budgets {
-  id                          String   @id @default(cuid())
-  numero                      String   @unique  // PRE-2025-001
-  tipoGestoria                gestoria_budgets_tipo_gestoria   // 'OFICIAL' | 'ONLINE'
-  tipoPresupuesto             gestoria_budget_tipo_presupuesto @default(AUTONOMO) // AUTONOMO, PYME, EMPRESA, etc.
-  estado                      gestoria_budgets_estado   // 'BORRADOR' | 'ENVIADO' | 'ACEPTADO' | 'RECHAZADO' | 'FACTURADO'
-  manualOverride              Boolean  @default(false)  // Si true, los cálculos fueron editados manualmente
-  
-  // Datos del cliente potencial
-  nombreCliente               String
-  nifCif                      String
-  email                       String
-  telefono                    String?
-  direccion                   String?
-  personaContacto             String?
-  
-  // Datos del presupuesto
-  facturasMes                 Int
-  nominasMes                  Int      @default(0)
-  facturacion                 Decimal  @db.Decimal(12, 2)
-  sistemaTributacion          String
-  periodoDeclaraciones        String
-  
-  // Modelos incluidos
-  modelo303                   Boolean  @default(false)
-  modelo111                   Boolean  @default(false)
-  modelo115                   Boolean  @default(false)
-  modelo130                   Boolean  @default(false)
-  modelo100                   Boolean  @default(false)
-  modelo349                   Boolean  @default(false)
-  modelo347                   Boolean  @default(false)
-  
-  // Servicios adicionales fijos
-  solicitudCertificados       Boolean  @default(false)
-  censosAEAT                  Boolean  @default(false)
-  recepcionNotificaciones     Boolean  @default(false)
-  estadisticasINE             Boolean  @default(false)
-  solicitudAyudas             Boolean  @default(false)
-  conLaboralSocial            Boolean  @default(false)
-  
-  // Cálculos
-  totalContabilidad           Decimal  @db.Decimal(12, 2)
-  totalLaboral                Decimal  @db.Decimal(12, 2) @default(0)
-  aplicaDescuento             Boolean  @default(false)
-  tipoDescuento               String?  // 'PORCENTAJE' | 'FIJO'
-  valorDescuento              Decimal? @db.Decimal(10, 2)
-  descuentoCalculado          Decimal  @db.Decimal(10, 2) @default(0)
-  totalFinal                  Decimal  @db.Decimal(12, 2)
-  
-  // Tracking
-  fechaCreacion               DateTime @default(now())
-  fechaEnvio                  DateTime?
-  fechaAceptacion             DateTime?
-  fechaRechazo                DateTime?
-  motivoRechazo               String?  @db.Text
-  creadoPor                   String
-  modificadoPor               String?
-  
-  // Relaciones
-  clienteId                   String?
-  configId                    String
-  configuracion               gestoria_budget_configurations @relation(fields: [configId], references: [id])
-  serviciosAdicionales        gestoria_budget_additional_services[]
-  eventos                     gestoria_budget_statistics_events[]
-  
-  pdfPath                     String?  // Ruta al PDF generado
-  
-  @@index([estado])
-  @@index([tipoGestoria])
-  @@index([nifCif])
-  @@index([fechaCreacion])
-  @@index([clienteId])
-  @@map("gestoria_budgets")
-}
-
-model gestoria_budget_additional_services {
-  id                          String   @id @default(cuid())
-  budgetId                    String
-  budget                      gestoria_budgets  @relation(fields: [budgetId], references: [id], onDelete: Cascade)
-  
-  nombre                      String
-  descripcion                 String?
-  precio                      Decimal  @db.Decimal(10, 2)
-  tipoServicio                gestoria_budget_additional_services_tipo_servicio   // 'MENSUAL' | 'PUNTUAL'
-  incluido                    Boolean  @default(true)
-  
-  @@index([budgetId])
-  @@map("gestoria_budget_additional_services")
-}
-
-model gestoria_budget_statistics_events {
-  id                          String   @id @default(cuid())
-  budgetId                    String
-  budget                      gestoria_budgets  @relation(fields: [budgetId], references: [id], onDelete: Cascade)
-  
-  evento                      gestoria_budget_statistics_events_evento   // 'CREADO' | 'ENVIADO' | 'ACEPTADO' | 'RECHAZADO' | 'CONVERTIDO'
-  fecha                       DateTime @default(now())
-  userId                      String?
-  metadata                    String?  @db.Text // JSON con info adicional
-  
-  @@index([budgetId])
-  @@index([evento])
-  @@index([fecha])
-  @@map("gestoria_budget_statistics_events")
-}
-
-// Enums para el sistema de presupuestos de gestorías
 
 enum gestoria_budget_configurations_tipo {
   OFICIAL
@@ -1361,139 +1299,151 @@ enum gestoria_budget_statistics_events_evento {
   CONVERTIDO
 }
 
-// ============================================================================
-// SISTEMA DE PRESUPUESTOS DINÁMICO (BASU PORT)
-// Sistema completamente flexible de tramos y precios configurables
-// ============================================================================
-
-enum gestoria_budget_tipo_presupuesto {
-  AUTONOMO
-  PYME
-  EMPRESA
-  LABORAL
-  HERENCIA
-  RENTAS
-  OTROS
+enum fiscal_periods_kind {
+  QUARTERLY
+  ANNUAL
+  SPECIAL
 }
 
-// Configuración principal para presupuestos de Autónomos
-model gestoria_budget_autonomo_config {
-  id                          String   @id @default(cuid())
-  nombre                      String   @default("Configuración Autónomos")
-  activo                      Boolean  @default(true)
-  
-  // Porcentajes de ajuste por características del cliente
-  porcentajePeriodoMensual    Decimal  @db.Decimal(5, 2) @default(20.00)  // +20% si es mensual
-  porcentajeEDN               Decimal  @db.Decimal(5, 2) @default(10.00)  // +10% estimación directa normal
-  porcentajeModulos           Decimal  @db.Decimal(5, 2) @default(-10.00) // -10% régimen módulos
-  
-  // Mínimos
-  minimoMensual               Decimal  @db.Decimal(10, 2) @default(50.00)
-  
-  // Metadata
-  fechaCreacion               DateTime @default(now())
-  fechaModificacion           DateTime @updatedAt
-  creadoPor                   String
-  modificadoPor               String?
-  
-  // Relaciones con tramos dinámicos
-  tramosFacturas              gestoria_budget_invoice_tiers[]
-  tramosNominas               gestoria_budget_payroll_tiers[]
-  tramosFacturacionAnual      gestoria_budget_annual_billing_tiers[]
-  preciosModelosFiscales      gestoria_budget_fiscal_model_pricing[]
-  preciosServiciosAdicionales gestoria_budget_additional_service_pricing[]
-  
-  @@map("gestoria_budget_autonomo_config")
+enum clients_tipo_gestoria {
+  OFICIAL
+  ONLINE
 }
 
-// Tramos de precios según número de facturas mensuales (DINÁMICO)
-model gestoria_budget_invoice_tiers {
-  id                          String   @id @default(cuid())
-  configId                    String
-  config                      gestoria_budget_autonomo_config @relation(fields: [configId], references: [id], onDelete: Cascade)
-  
-  orden                       Int      // Para mantener el orden visual (1, 2, 3...)
-  minFacturas                 Int      // Ej: 0, 26, 51, 101, 151
-  maxFacturas                 Int?     // Ej: 25, 50, 100, 150, null (null = infinito)
-  precio                      Decimal  @db.Decimal(10, 2)
-  etiqueta                    String?  // Ej: "Hasta 25 facturas", "De 26 a 50"
-  
-  @@unique([configId, orden])
-  @@index([configId])
-  @@map("gestoria_budget_invoice_tiers")
-}
 
-// Tramos de precios según número de nóminas mensuales (DINÁMICO)
-model gestoria_budget_payroll_tiers {
-  id                          String   @id @default(cuid())
-  configId                    String
-  config                      gestoria_budget_autonomo_config @relation(fields: [configId], references: [id], onDelete: Cascade)
-  
-  orden                       Int
-  minNominas                  Int      // Ej: 0, 11, 21, 31, 41, 51
-  maxNominas                  Int?     // Ej: 10, 20, 30, 40, 50, null
-  precio                      Decimal  @db.Decimal(10, 2)
-  etiqueta                    String?  // Ej: "Hasta 10 nóminas", "De 11 a 20"
-  
-  @@unique([configId, orden])
-  @@index([configId])
-  @@map("gestoria_budget_payroll_tiers")
-}
+// *** WARNING ***
+// 
+// These fields were enriched with `@map` information taken from the previous Prisma schema:
+//   - Model: "activity_logs", field: "usuarioId"
+//   - Model: "audit_trail", field: "usuarioId"
+//   - Model: "audit_trail", field: "registroId"
+//   - Model: "audit_trail", field: "valorAnterior"
+//   - Model: "audit_trail", field: "valorNuevo"
+//   - Model: "audit_trail", field: "requestId"
+//   - Model: "budget_email_logs", field: "budgetId"
+//   - Model: "budget_email_logs", field: "createdAt"
+//   - Model: "budget_items", field: "budgetId"
+//   - Model: "budget_items", field: "unitPrice"
+//   - Model: "budget_items", field: "vatPct"
+//   - Model: "budget_items", field: "isManuallyEdited"
+//   - Model: "budget_items", field: "createdAt"
+//   - Model: "budget_items", field: "updatedAt"
+//   - Model: "budget_parameters", field: "budgetType"
+//   - Model: "budget_parameters", field: "paramKey"
+//   - Model: "budget_parameters", field: "paramLabel"
+//   - Model: "budget_parameters", field: "paramValue"
+//   - Model: "budget_parameters", field: "minRange"
+//   - Model: "budget_parameters", field: "maxRange"
+//   - Model: "budget_parameters", field: "isActive"
+//   - Model: "budget_parameters", field: "createdAt"
+//   - Model: "budget_parameters", field: "updatedAt"
+//   - Model: "budget_pdfs", field: "budgetId"
+//   - Model: "budget_pdfs", field: "createdAt"
+//   - Model: "budget_templates", field: "createdAt"
+//   - Model: "budget_templates", field: "updatedAt"
+//   - Model: "budgets", field: "createdAt"
+//   - Model: "budgets", field: "updatedAt"
+//   - Model: "calendario_aeat", field: "createdAt"
+//   - Model: "calendario_aeat", field: "updatedAt"
+//   - Model: "client_employees", field: "clientId"
+//   - Model: "client_employees", field: "userId"
+//   - Model: "client_tax", field: "clientId"
+//   - Model: "client_tax_assignments", field: "clientId"
+//   - Model: "client_tax_assignments", field: "taxModelCode"
+//   - Model: "client_tax_assignments", field: "startDate"
+//   - Model: "client_tax_assignments", field: "endDate"
+//   - Model: "client_tax_assignments", field: "activeFlag"
+//   - Model: "client_tax_assignments", field: "createdAt"
+//   - Model: "client_tax_assignments", field: "updatedAt"
+//   - Model: "client_tax_filings", field: "clientId"
+//   - Model: "client_tax_filings", field: "taxModelCode"
+//   - Model: "client_tax_filings", field: "periodId"
+//   - Model: "client_tax_filings", field: "presentedAt"
+//   - Model: "client_tax_filings", field: "assigneeId"
+//   - Model: "client_tax_requirements", field: "clientId"
+//   - Model: "client_tax_requirements", field: "taxModelCode"
+//   - Model: "clients", field: "razonSocial"
+//   - Model: "clients", field: "nifCif"
+//   - Model: "clients", field: "fechaAlta"
+//   - Model: "clients", field: "responsableAsignado"
+//   - Model: "clients", field: "isActive"
+//   - Model: "clients", field: "fechaBaja"
+//   - Model: "declaraciones", field: "createdAt"
+//   - Model: "declaraciones", field: "updatedAt"
+//   - Model: "impuestos", field: "createdAt"
+//   - Model: "impuestos", field: "updatedAt"
+//   - Model: "manual_attachments", field: "manualId"
+//   - Model: "manual_attachments", field: "fileName"
+//   - Model: "manual_attachments", field: "filePath"
+//   - Model: "manual_attachments", field: "fileSize"
+//   - Model: "manual_versions", field: "manualId"
+//   - Model: "manual_versions", field: "versionNumber"
+//   - Model: "manual_versions", field: "createdBy"
+//   - Model: "manual_versions", field: "createdAt"
+//   - Model: "notificaciones", field: "createdAt"
+//   - Model: "obligaciones_fiscales", field: "createdAt"
+//   - Model: "obligaciones_fiscales", field: "updatedAt"
+//   - Model: "permissions", field: "createdAt"
+//   - Model: "role_permissions", field: "roleId"
+//   - Model: "role_permissions", field: "permissionId"
+//   - Model: "role_permissions", field: "createdAt"
+//   - Model: "roles", field: "can_create_users"
+//   - Model: "roles", field: "can_delete_users"
+//   - Model: "roles", field: "can_manage_roles"
+//   - Model: "roles", field: "is_active"
+//   - Model: "roles", field: "created_by"
+//   - Model: "roles", field: "createdAt"
+//   - Model: "roles", field: "updatedAt"
+//   - Model: "sessions", field: "userId"
+//   - Model: "sessions", field: "createdAt"
+//   - Model: "sessions", field: "expiresAt"
+//   - Model: "sessions", field: "refreshToken"
+//   - Model: "storage_configs", field: "isActive"
+//   - Model: "storage_configs", field: "createdAt"
+//   - Model: "storage_configs", field: "updatedAt"
+//   - Model: "system_backups", field: "createdBy"
+//   - Model: "system_backups", field: "createdAt"
+//   - Model: "system_config", field: "createdAt"
+//   - Model: "system_config", field: "updatedAt"
+//   - Model: "system_settings", field: "registrationEnabled"
+//   - Model: "system_settings", field: "updatedAt"
+//   - Model: "system_updates", field: "createdAt"
+//   - Model: "task_activities", field: "taskId"
+//   - Model: "task_activities", field: "userId"
+//   - Model: "task_activities", field: "createdAt"
+//   - Model: "task_attachments", field: "taskId"
+//   - Model: "task_attachments", field: "userId"
+//   - Model: "task_attachments", field: "fileName"
+//   - Model: "task_attachments", field: "filePath"
+//   - Model: "task_attachments", field: "fileSize"
+//   - Model: "task_comments", field: "taskId"
+//   - Model: "task_comments", field: "userId"
+//   - Model: "task_comments", field: "createdAt"
+//   - Model: "task_comments", field: "updatedAt"
+//   - Model: "task_time_entries", field: "taskId"
+//   - Model: "task_time_entries", field: "userId"
+//   - Model: "tax_calendar", field: "startDate"
+//   - Model: "tax_calendar", field: "endDate"
+//   - Model: "tax_calendar", field: "createdAt"
+//   - Model: "tax_calendar", field: "updatedAt"
+//   - Model: "tax_models_config", field: "allowedTypes"
+//   - Model: "tax_models_config", field: "allowedPeriods"
+//   - Model: "tax_models_config", field: "isActive"
+//   - Model: "tax_models_config", field: "createdAt"
+//   - Model: "tax_models_config", field: "updatedAt"
+//   - Model: "users", field: "createdAt"
+//   - Model: "users", field: "roleId"
+//   - Model: "users", field: "isActive"
+//   - Model: "users", field: "is_owner"
+// 
+// These models were enriched with `@@map` information taken from the previous Prisma schema:
+//   - "document_signatures"
+//   - "document_templates"
+//   - "document_versions"
+//   - "documents"
+//   - "gestoria_budget_additional_services"
+//   - "gestoria_budget_configurations"
+//   - "gestoria_budget_statistics_events"
+//   - "gestoria_budgets"
+// 
 
-// Tramos de multiplicadores según facturación anual (DINÁMICO)
-model gestoria_budget_annual_billing_tiers {
-  id                          String   @id @default(cuid())
-  configId                    String
-  config                      gestoria_budget_autonomo_config @relation(fields: [configId], references: [id], onDelete: Cascade)
-  
-  orden                       Int
-  minFacturacion              Decimal  @db.Decimal(12, 2) // Ej: 0, 50000, 100000
-  maxFacturacion              Decimal? @db.Decimal(12, 2) // Ej: 49999.99, 99999.99, null
-  multiplicador               Decimal  @db.Decimal(4, 2)  // Ej: 1.00, 1.10, 1.15, 1.40
-  etiqueta                    String?  // Ej: "Hasta 50.000€", "De 50k a 100k"
-  
-  @@unique([configId, orden])
-  @@index([configId])
-  @@map("gestoria_budget_annual_billing_tiers")
-}
-
-// Precios de modelos fiscales (DINÁMICO - permite añadir nuevos modelos)
-model gestoria_budget_fiscal_model_pricing {
-  id                          String   @id @default(cuid())
-  configId                    String
-  config                      gestoria_budget_autonomo_config @relation(fields: [configId], references: [id], onDelete: Cascade)
-  
-  codigoModelo                String   // "303", "111", "115", "130", "100", "349", "347"
-  nombreModelo                String   // "IVA Trimestral", "IRPF Trabajadores"
-  precio                      Decimal  @db.Decimal(10, 2)
-  activo                      Boolean  @default(true)
-  orden                       Int      @default(0)
-  
-  @@unique([configId, codigoModelo])
-  @@index([configId])
-  @@map("gestoria_budget_fiscal_model_pricing")
-}
-
-// Precios de servicios adicionales mensuales (DINÁMICO)
-model gestoria_budget_additional_service_pricing {
-  id                          String   @id @default(cuid())
-  configId                    String
-  config                      gestoria_budget_autonomo_config @relation(fields: [configId], references: [id], onDelete: Cascade)
-  
-  codigo                      String   // "irpf_alquileres", "iva_intracomunitario", etc.
-  nombre                      String   // "IRPF Alquileres", "IVA Intracomunitario"
-  descripcion                 String?  @db.Text
-  precio                      Decimal  @db.Decimal(10, 2)
-  tipoServicio                gestoria_budget_additional_service_pricing_tipo // MENSUAL, PUNTUAL
-  activo                      Boolean  @default(true)
-  orden                       Int      @default(0)
-  
-  @@unique([configId, codigo])
-  @@index([configId])
-  @@map("gestoria_budget_additional_service_pricing")
-}
-
-enum gestoria_budget_additional_service_pricing_tipo {
-  MENSUAL
-  PUNTUAL
-}
