@@ -10,13 +10,13 @@ import { Settings, Save } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function ConfiguracionPrecios() {
-  const [selectedTipo, setSelectedTipo] = useState<'OFICIAL' | 'ONLINE'>('OFICIAL');
+  const [selectedTipo, setSelectedTipo] = useState<'ASESORIA_LA_LLAVE' | 'GESTORIA_ONLINE'>('ASESORIA_LA_LLAVE');
   
-  const { data: configOficial } = useActiveConfig('OFICIAL');
-  const { data: configOnline } = useActiveConfig('ONLINE');
+  const { data: configOficial } = useActiveConfig('ASESORIA_LA_LLAVE');
+  const { data: configOnline } = useActiveConfig('GESTORIA_ONLINE');
   const updateMutation = useUpdateConfig();
   
-  const config = selectedTipo === 'OFICIAL' ? configOficial : configOnline;
+  const config = selectedTipo === 'ASESORIA_LA_LLAVE' ? configOficial : configOnline;
   
   const [formData, setFormData] = useState<any>({});
   
@@ -66,11 +66,11 @@ export default function ConfiguracionPrecios() {
       
       <Tabs value={selectedTipo} onValueChange={(v: any) => setSelectedTipo(v)}>
         <TabsList className="grid w-full grid-cols-2">
-          <TabsTrigger value="OFICIAL">
+          <TabsTrigger value="ASESORIA_LA_LLAVE">
             OFICIAL
             {configOficial && <Badge className="ml-2" variant="default">Activo</Badge>}
           </TabsTrigger>
-          <TabsTrigger value="ONLINE">
+          <TabsTrigger value="GESTORIA_ONLINE">
             ONLINE
             {configOnline && <Badge className="ml-2" variant="outline">Activo</Badge>}
           </TabsTrigger>

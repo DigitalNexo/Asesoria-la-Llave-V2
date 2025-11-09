@@ -117,7 +117,7 @@ export class GestoriaBudgetEmailService {
     const pdfBuffer = await gestoriaBudgetPDFService.generatePDF(pdfData);
     
     // Preparar email
-    const companyName = budget.tipoGestoria === 'OFICIAL' ? 
+    const companyName = budget.tipoGestoria === 'ASESORIA_LA_LLAVE' ? 
       config.nombreEmpresa : 
       config.nombreEmpresa;
     
@@ -344,7 +344,7 @@ export class GestoriaBudgetEmailService {
    * Construir HTML del email
    */
   private buildEmailHTML(budget: any, config: any, customMessage?: string): string {
-    const companyName = budget.tipoGestoria === 'OFICIAL' ? 
+    const companyName = budget.tipoGestoria === 'ASESORIA_LA_LLAVE' ? 
       config.nombreEmpresa : 
       config.nombreEmpresa;
     

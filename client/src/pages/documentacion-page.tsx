@@ -3,7 +3,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { FileText, Settings, Palette } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import Presupuestos from '@/pages/documentacion/presupuestos';
-import ParametrosPresupuestos from '@/pages/documentacion/presupuestos/ParametrosPresupuestos';
+// NUEVO: Sistema dinámico de parámetros (FASE 4 - OFICIAL/ONLINE)
+import ParametrosPresupuestosNuevo from '@/pages/presupuestos/parametros';
 import BudgetTemplatesManager from '@/pages/documentacion/presupuestos/BudgetTemplatesManager';
 
 export default function DocumentacionPage() {
@@ -63,7 +64,7 @@ export default function DocumentacionPage() {
         {isAdmin && (
           <>
             <TabsContent value="parametros" className="mt-6">
-              <ParametrosPresupuestos />
+              <ParametrosPresupuestosNuevo />
             </TabsContent>
 
             <TabsContent value="plantillas" className="mt-6">

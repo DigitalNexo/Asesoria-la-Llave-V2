@@ -28,21 +28,25 @@ import ManualEditor from "@/pages/manual-editor";
 import Admin from "@/pages/admin";
 import Auditoria from "@/pages/auditoria";
 import Notificaciones from "@/pages/notificaciones";
-import Presupuestos from "@/pages/documentacion/presupuestos";
-import PresupuestoFormNew from "@/pages/documentacion/presupuestos/PresupuestoFormNew";
-import PresupuestoView from "@/pages/documentacion/presupuestos/PresupuestoView";
-import PresupuestoEdit from "@/pages/documentacion/presupuestos/PresupuestoEdit";
-import PublicBudgetAccept from "@/pages/documentacion/presupuestos/PublicBudgetAccept";
-import ParametrosPresupuestos from "@/pages/documentacion/presupuestos/ParametrosPresupuestos";
-import BudgetTemplatesManager from "@/pages/documentacion/presupuestos/BudgetTemplatesManager";
 import DocumentacionMenu from "@/pages/documentacion-menu";
 import DocumentacionPage from "@/pages/documentacion-page";
 import Documentos from "@/pages/documentos";
+// Documentos module
+import DocumentosIndex from "@/pages/documentacion/documentos/index";
+import RecibosPage from "@/pages/documentacion/documentos/recibos";
+import ProteccionDatosPage from "@/pages/documentacion/documentos/proteccion-datos";
+import DomiciliacionPage from "@/pages/documentacion/documentos/domiciliacion";
+import PlantillasPage from "@/pages/documentacion/documentos/plantillas";
+// Admin pages
+import GitHubUpdatesPage from "@/pages/admin/github-updates";
 // Presupuestos Gestoría
 import PresupuestosLista from "@/pages/presupuestos/PresupuestosLista";
 import PresupuestoNuevo from "@/pages/presupuestos/PresupuestoNuevo";
+import PresupuestoAutonomoNuevo from "@/pages/presupuestos/PresupuestoAutonomoNuevo";
 import PresupuestoDetalle from "@/pages/presupuestos/PresupuestoDetalle";
 import ConfiguracionPrecios from "@/pages/presupuestos/ConfiguracionPrecios";
+import ParametrosPresupuestos from "@/pages/presupuestos/parametros";
+import PublicBudgetAccept from "@/pages/presupuestos/PublicBudgetAccept";
 
 function ConnectionIndicator() {
   const { connected, onlineUsers } = useWebSocket();
@@ -138,26 +142,30 @@ function Router() {
               <Route path="/notificaciones" component={Notificaciones} />
               {/* Documentación - Main menu para elegir entre Presupuestos y Documentos */}
               <Route path="/documentacion" component={DocumentacionMenu} />
+              
+              {/* DOCUMENTOS - Nuevo sistema */}
+              <Route path="/documentacion/documentos" component={DocumentosIndex} />
+              <Route path="/documentacion/documentos/recibos" component={RecibosPage} />
+              <Route path="/documentacion/documentos/proteccion-datos" component={ProteccionDatosPage} />
+              <Route path="/documentacion/documentos/domiciliacion" component={DomiciliacionPage} />
+              <Route path="/documentacion/documentos/plantillas" component={PlantillasPage} />
+              {/* Documentos - Main page with tabs (todos, recibos, protección, bancaria, subir) - LEGACY */}
+              <Route path="/documentos" component={Documentos} />
+              {/* Subrutas de documentos - LEGACY */}
+              <Route path="/documentos/:rest*" component={Documentos} />
+              
+              {/* PRESUPUESTOS - Página principal con 3 tabs (Presupuestos, Parámetros, Plantillas) */}
               <Route path="/documentacion/presupuestos" component={DocumentacionPage} />
-              {/* Subrutas de presupuestos */}
-              <Route path="/documentacion/presupuestos/:rest*" component={DocumentacionPage} />
-              {/* Documentos - Main page with tabs (todos, recibos, protección, bancaria, subir) */}
-              <Route path="/documentacion/documentos" component={Documentos} />
-              {/* Subrutas de documentos */}
-              <Route path="/documentacion/documentos/:rest*" component={Documentos} />
-              {/* Rutas específicas de presupuestos (sin tabs) */}
-              <Route path="/documentacion/presupuestos/nuevo" component={PresupuestoFormNew} />
-              <Route path="/documentacion/presupuestos/:id/editar" component={PresupuestoEdit} />
-              <Route path="/documentacion/presupuestos/:id/ver" component={PresupuestoView} />
-              <Route path="/documentacion/presupuestos/:id" component={PresupuestoView} />
-              {/* Presupuestos Gestoría - Sistema completo OFICIAL/ONLINE */}
-              <Route path="/presupuestos" component={PresupuestosLista} />
-              <Route path="/presupuestos/nuevo" component={PresupuestoNuevo} />
-              <Route path="/presupuestos/configuracion" component={ConfiguracionPrecios} />
-              <Route path="/presupuestos/:id" component={PresupuestoDetalle} />
-              <Route path="/presupuestos/:id/editar" component={PresupuestoNuevo} />
+              <Route path="/documentacion/presupuestos/parametros" component={DocumentacionPage} />
+              <Route path="/documentacion/presupuestos/plantillas" component={DocumentacionPage} />
+              {/* Subrutas específicas de presupuestos (nuevo, editar, ver) */}
+              <Route path="/documentacion/presupuestos/nuevo" component={PresupuestoNuevo} />
+              <Route path="/documentacion/presupuestos/nuevo-autonomo" component={PresupuestoAutonomoNuevo} />
+              <Route path="/documentacion/presupuestos/:id/editar" component={PresupuestoNuevo} />
+              <Route path="/documentacion/presupuestos/:id" component={PresupuestoDetalle} />
               {/* Admin main path plus wildcard to support nested admin routes and direct /admin navigation */}
               <Route path="/admin" component={() => ((user as any)?.roleName === "Administrador" ? <Admin /> : <Redirect to="/" />)} />
+              <Route path="/admin/github-updates" component={() => ((user as any)?.roleName === "Administrador" ? <GitHubUpdatesPage /> : <Redirect to="/" />)} />
               <Route path="/admin/:rest*">
                 {(user as any)?.roleName === "Administrador" ? <Admin /> : <Redirect to="/" />}
               </Route>

@@ -7,7 +7,7 @@ import { Router, Response } from 'express';
 import prisma from './prisma-client';
 import { authenticateToken, AuthRequest } from './middleware/auth';
 import { clearParametersCache as clearPymeCache } from './services/budgets/calculatePyme';
-import { clearParametersCache as clearAutonomoCache } from './services/budgets/calculateAutonomo';
+import { clearConfigCache as clearAutonomoCache } from './services/budgets/calculateAutonomo';
 import { clearParametersCache as clearRentaCache } from './services/budgets/calculateRenta';
 import { clearParametersCache as clearHerenciasCache } from './services/budgets/calculateHerencias';
 

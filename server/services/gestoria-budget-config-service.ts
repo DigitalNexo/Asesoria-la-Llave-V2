@@ -4,7 +4,7 @@ const prisma = new PrismaClient();
 
 export interface GestoriaBudgetConfig {
   id: string;
-  tipo: 'OFICIAL' | 'ONLINE';
+  tipo: 'ASESORIA_LA_LLAVE' | 'GESTORIA_ONLINE';
   nombre: string;
   activo: boolean;
   
@@ -53,7 +53,7 @@ export interface GestoriaBudgetConfig {
 }
 
 export interface CreateConfigInput {
-  tipo: 'OFICIAL' | 'ONLINE';
+  tipo: 'ASESORIA_LA_LLAVE' | 'GESTORIA_ONLINE';
   nombre: string;
   
   // Precios base
@@ -111,7 +111,7 @@ export class GestoriaBudgetConfigService {
    * Obtener todas las configuraciones
    */
   async getAllConfigs(filters?: {
-    tipo?: 'OFICIAL' | 'ONLINE';
+    tipo?: 'ASESORIA_LA_LLAVE' | 'GESTORIA_ONLINE';
     activo?: boolean;
   }): Promise<GestoriaBudgetConfig[]> {
     const where: Prisma.gestoria_budget_configurationsWhereInput = {};
@@ -138,7 +138,7 @@ export class GestoriaBudgetConfigService {
   /**
    * Obtener configuración activa por tipo
    */
-  async getActiveConfig(tipo: 'OFICIAL' | 'ONLINE'): Promise<GestoriaBudgetConfig | null> {
+  async getActiveConfig(tipo: 'ASESORIA_LA_LLAVE' | 'GESTORIA_ONLINE'): Promise<GestoriaBudgetConfig | null> {
     const config = await prisma.gestoria_budget_configurations.findFirst({
       where: {
         tipo,
@@ -297,7 +297,7 @@ export class GestoriaBudgetConfigService {
   /**
    * Desactivar configuraciones anteriores del mismo tipo
    */
-  private async deactivatePreviousConfigs(tipo: 'OFICIAL' | 'ONLINE', exceptId?: string): Promise<void> {
+  private async deactivatePreviousConfigs(tipo: 'ASESORIA_LA_LLAVE' | 'GESTORIA_ONLINE', exceptId?: string): Promise<void> {
     const where: Prisma.gestoria_budget_configurationsWhereInput = {
       tipo,
       activo: true

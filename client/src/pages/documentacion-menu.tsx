@@ -34,13 +34,13 @@ export default function DocumentacionMenu() {
           <CardContent>
             <div className="space-y-2 mb-4">
               <p className="text-sm text-gray-600">
-                ✓ Plantillas personalizables
+                ✓ Sistema OFICIAL/ONLINE
+              </p>
+              <p className="text-sm text-gray-600">
+                ✓ Cálculo automático con tramos
               </p>
               <p className="text-sm text-gray-600">
                 ✓ Parámetros configurables
-              </p>
-              <p className="text-sm text-gray-600">
-                ✓ Historial completo
               </p>
             </div>
             <Button className="w-full">

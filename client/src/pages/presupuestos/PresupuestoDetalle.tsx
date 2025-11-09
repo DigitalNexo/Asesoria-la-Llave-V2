@@ -1,4 +1,4 @@
-import { useParams, useNavigate } from 'react-router-dom';
+import { useRoute, useLocation } from 'wouter';
 import { 
   useGestoriaBudget, 
   useAcceptBudget, 
@@ -21,16 +21,29 @@ import { es } from 'date-fns/locale';
 import { toast } from 'sonner';
 import { useState } from 'react';
 
+// Helper seguro para formatear moneda
+function formatCurrency(value: string | number | null | undefined): string {
+  const num = Number(value);
+  if (isNaN(num) || value === null || value === undefined) {
+    return '0,00 €';
+  }
+  return num.toLocaleString('es-ES', { 
+    style: 'currency', 
+    currency: 'EUR' 
+  });
+}
+
 export default function PresupuestoDetalle() {
-  const { id } = useParams<{ id: string }>();
-  const navigate = useNavigate();
+  const [match, params] = useRoute<{ id: string }>('/documentacion/presupuestos/:id');
+  const [, setLocation] = useLocation();
+  const id = params?.id || '';
   
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
   const [convertDialogOpen, setConvertDialogOpen] = useState(false);
   const [motivoRechazo, setMotivoRechazo] = useState('');
   
-  const { data: budget, isLoading } = useGestoriaBudget(id!);
-  const { data: canConvert } = useCanConvertBudget(id!);
+  const { data: budget, isLoading } = useGestoriaBudget(id);
+  const { data: canConvert } = useCanConvertBudget(id);
   const acceptMutation = useAcceptBudget();
   const rejectMutation = useRejectBudget();
   const convertMutation = useConvertBudget();
@@ -49,14 +62,14 @@ export default function PresupuestoDetalle() {
     return (
       <div className="container mx-auto py-12 text-center">
         <h2 className="text-2xl font-bold mb-4">Presupuesto no encontrado</h2>
-        <Button onClick={() => navigate('/presupuestos')}>Volver a la lista</Button>
+        <Button onClick={() => setLocation('/documentacion/presupuestos')}>Volver a la lista</Button>
       </div>
     );
   }
   
   const handleAccept = async () => {
     try {
-      await acceptMutation.mutateAsync(id!);
+      await acceptMutation.mutateAsync(id);
       toast.success('Presupuesto aceptado');
     } catch (error: any) {
       toast.error(error.message);
@@ -69,7 +82,7 @@ export default function PresupuestoDetalle() {
       return;
     }
     try {
-      await rejectMutation.mutateAsync({ id: id!, motivoRechazo });
+      await rejectMutation.mutateAsync({ id, motivoRechazo });
       toast.success('Presupuesto rechazado');
       setRejectDialogOpen(false);
     } catch (error: any) {
@@ -79,9 +92,9 @@ export default function PresupuestoDetalle() {
   
   const handleConvert = async () => {
     try {
-      const result = await convertMutation.mutateAsync({ id: id! });
+      const result = await convertMutation.mutateAsync({ id });
       toast.success('Cliente creado exitosamente');
-      navigate(`/clientes/${result.clientId}`);
+      setLocation(`/clientes/${result.clientId}`);
     } catch (error: any) {
       toast.error(error.message);
     }
@@ -89,7 +102,7 @@ export default function PresupuestoDetalle() {
   
   const handleSend = async () => {
     try {
-      await sendMutation.mutateAsync({ id: id! });
+      await sendMutation.mutateAsync({ id });
       toast.success('Presupuesto enviado');
     } catch (error: any) {
       toast.error(error.message);
@@ -112,7 +125,7 @@ export default function PresupuestoDetalle() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <Button variant="ghost" size="sm" onClick={() => navigate('/presupuestos')}>
+          <Button variant="ghost" size="sm" onClick={() => setLocation('/documentacion/presupuestos')}>
             <ArrowLeft className="w-4 h-4 mr-2" />
             Volver
           </Button>
@@ -125,8 +138,8 @@ export default function PresupuestoDetalle() {
         </div>
         <div className="flex gap-2">
           {getEstadoBadge(budget.estado)}
-          <Badge variant={budget.tipoGestoria === 'OFICIAL' ? 'default' : 'outline'}>
-            {budget.tipoGestoria}
+          <Badge variant={budget.tipoGestoria === 'ASESORIA_LA_LLAVE' ? 'default' : 'outline'}>
+            {budget.tipoGestoria === 'ASESORIA_LA_LLAVE' ? 'Asesoría La Llave' : 'Gestoría Online'}
           </Badge>
         </div>
       </div>
@@ -148,7 +161,7 @@ export default function PresupuestoDetalle() {
                 <Mail className="w-4 h-4 mr-2" />
                 {sendMutation.isPending ? 'Enviando...' : 'Enviar por Email'}
               </Button>
-              <Button variant="outline" onClick={() => navigate(`/presupuestos/${id}/editar`)}>
+              <Button variant="outline" onClick={() => setLocation(`/documentacion/presupuestos/${id}/editar`)}>
                 <Edit className="w-4 h-4 mr-2" />
                 Editar
               </Button>
@@ -232,7 +245,7 @@ export default function PresupuestoDetalle() {
             <div>
               <Label className="text-muted-foreground">Facturación Anual</Label>
               <p className="font-medium">
-                {budget.facturacion.toLocaleString('es-ES', { style: 'currency', currency: 'EUR' })}
+                {formatCurrency(budget.facturacion)}
               </p>
             </div>
             <div>
@@ -301,14 +314,14 @@ export default function PresupuestoDetalle() {
           <div className="flex justify-between">
             <span>Contabilidad:</span>
             <span className="font-medium">
-              {budget.totalContabilidad.toLocaleString('es-ES', { style: 'currency', currency: 'EUR' })}
+              {formatCurrency(budget.totalContabilidad)}
             </span>
           </div>
           {budget.totalLaboral > 0 && (
             <div className="flex justify-between">
               <span>Laboral:</span>
               <span className="font-medium">
-                {budget.totalLaboral.toLocaleString('es-ES', { style: 'currency', currency: 'EUR' })}
+                {formatCurrency(budget.totalLaboral)}
               </span>
             </div>
           )}
@@ -316,14 +329,14 @@ export default function PresupuestoDetalle() {
           <div className="flex justify-between">
             <span>Subtotal:</span>
             <span className="font-medium">
-              {budget.subtotal.toLocaleString('es-ES', { style: 'currency', currency: 'EUR' })}
+              {formatCurrency(budget.subtotal)}
             </span>
           </div>
           {budget.aplicaDescuento && budget.descuentoCalculado > 0 && (
             <div className="flex justify-between text-green-600">
               <span>Descuento ({budget.tipoDescuento === 'PORCENTAJE' ? `${budget.valorDescuento}%` : 'Fijo'}):</span>
               <span className="font-medium">
-                -{budget.descuentoCalculado.toLocaleString('es-ES', { style: 'currency', currency: 'EUR' })}
+                -{formatCurrency(budget.descuentoCalculado)}
               </span>
             </div>
           )}
@@ -331,7 +344,7 @@ export default function PresupuestoDetalle() {
           <div className="flex justify-between text-xl font-bold">
             <span>Total Final:</span>
             <span className="text-primary">
-              {budget.totalFinal.toLocaleString('es-ES', { style: 'currency', currency: 'EUR' })}
+              {formatCurrency(budget.totalFinal)}
             </span>
           </div>
         </CardContent>

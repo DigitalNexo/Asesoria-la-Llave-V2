@@ -1,12 +1,17 @@
 import puppeteer from 'puppeteer';
 import { gestoriaBudgetConfigService } from './gestoria-budget-config-service';
+import { PrismaClient } from '@prisma/client';
+
+const prisma = new PrismaClient();
+
+type BudgetType = 'PYME' | 'AUTONOMO' | 'RENTA' | 'HERENCIAS';
 
 export interface BudgetPDFData {
   // Presupuesto
   numero: string;
   fecha: Date;
   fechaValidez: Date;
-  tipo: 'OFICIAL' | 'ONLINE';
+  tipo: 'ASESORIA_LA_LLAVE' | 'GESTORIA_ONLINE';
   
   // Cliente
   nombreCompleto: string;
@@ -81,21 +86,43 @@ export class GestoriaBudgetPDFService {
       throw new Error(`No hay configuración activa para ${data.tipo}`);
     }
     
-    // Generar HTML completo
-    const html = this.generateHTML(data, config);
+    // SIEMPRE usar plantilla personalizada de la BD
+    const template = await this.getTemplate(data.tipo, 'AUTONOMO'); // Por ahora solo AUTONOMO
+    
+    if (!template) {
+      throw new Error(
+        `❌ No existe una plantilla activa para generar el PDF.\n` +
+        `Por favor, crea una plantilla en la sección de "Plantillas de Presupuestos".\n` +
+        `Tipo: AUTONOMO | Empresa: ${data.tipo === 'ASESORIA_LA_LLAVE' ? 'LA_LLAVE' : 'GESTORIA_ONLINE'}`
+      );
+    }
+    
+    // Generar HTML usando la plantilla de la BD
+    const html = this.generateHTMLFromTemplate(data, config, template);
     
     // Generar PDF con Puppeteer
     const browser = await puppeteer.launch({
       headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas',
+        '--no-first-run',
+        '--no-zygote',
+        '--single-process',
+        '--disable-gpu'
+      ],
+      timeout: 60000
     });
     
     try {
       const page = await browser.newPage();
       
-      // Cargar HTML
+      // Cargar HTML con timeout aumentado
       await page.setContent(html, {
-        waitUntil: 'networkidle0'
+        waitUntil: 'load',
+        timeout: 60000
       });
       
       // Generar PDF
@@ -115,6 +142,202 @@ export class GestoriaBudgetPDFService {
     } finally {
       await browser.close();
     }
+  }
+  
+  /**
+   * Buscar plantilla personalizada en la BD
+   */
+  private async getTemplate(
+    tipo: 'ASESORIA_LA_LLAVE' | 'GESTORIA_ONLINE',
+    budgetType: BudgetType = 'AUTONOMO'
+  ): Promise<any | null> {
+    try {
+      const companyBrand = tipo === 'ASESORIA_LA_LLAVE' ? 'LA_LLAVE' : 'GESTORIA_ONLINE';
+      
+      const template = await prisma.budget_templates.findFirst({
+        where: {
+          type: budgetType,
+          companyBrand: companyBrand,
+          isDefault: true,
+          isActive: true
+        },
+        orderBy: {
+          updatedAt: 'desc'
+        }
+      });
+      
+      return template;
+    } catch (error) {
+      console.error('Error al buscar plantilla:', error);
+      return null;
+    }
+  }
+  
+  /**
+   * Generar HTML usando plantilla de BD
+   */
+  private generateHTMLFromTemplate(data: BudgetPDFData, config: any, template: any): string {
+    // Preparar variables para reemplazar en la plantilla
+    const variables = this.prepareTemplateVariables(data, config);
+    
+    // Reemplazar variables en el HTML
+    let html = this.replaceVariables(template.htmlContent, variables);
+    
+    // Agregar CSS personalizado si existe
+    if (template.customCss) {
+      // Si el HTML ya tiene <style>, agregamos el CSS dentro
+      if (html.includes('<style>')) {
+        html = html.replace('</style>', `\n${template.customCss}\n</style>`);
+      } else {
+        // Si no, lo agregamos en el head o al inicio
+        html = `<style>${template.customCss}</style>\n${html}`;
+      }
+    }
+    
+    // Envolver en estructura HTML si no la tiene
+    if (!html.toLowerCase().includes('<!doctype') && !html.toLowerCase().includes('<html')) {
+      html = `
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Presupuesto ${data.numero}</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; padding: 0; }
+  </style>
+</head>
+<body>
+  ${html}
+</body>
+</html>`;
+    }
+    
+    return html;
+  }
+  
+  /**
+   * Preparar variables para la plantilla
+   */
+  private prepareTemplateVariables(data: BudgetPDFData, config: any): Record<string, string> {
+    const formatCurrency = (value: number) => 
+      value.toLocaleString('es-ES', { style: 'currency', currency: 'EUR' });
+    
+    const formatDate = (date: Date) => 
+      date.toLocaleDateString('es-ES', { year: 'numeric', month: 'long', day: 'numeric' });
+    
+    const formatDateShort = (date: Date) =>
+      date.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    
+    // Construir tabla de servicios de contabilidad (SIN PRECIOS INDIVIDUALES)
+    const serviciosContabilidadHTML = data.serviciosContabilidad
+      .map(s => `<tr><td>${s.concepto}</td></tr>`)
+      .join('');
+    
+    // Construir tabla de servicios laborales (SIN PRECIOS INDIVIDUALES)
+    const serviciosLaboralesHTML = data.serviciosLaborales
+      .map(s => `<tr><td>${s.concepto}</td></tr>`)
+      .join('');
+    
+    // Construir tabla de servicios adicionales (SIN PRECIOS INDIVIDUALES)
+    const serviciosAdicionalesHTML = data.serviciosAdicionales
+      .map(s => `<tr><td>${s.nombre}</td><td>${s.tipoServicio === 'MENSUAL' ? 'Mensual' : 'Puntual'}</td></tr>`)
+      .join('');
+    
+    // Calcular IVA y subtotal
+    const iva = data.totalFinal * 0.21 / 1.21;
+    const subtotalSinIva = data.totalFinal - iva;
+    
+    return {
+      // Presupuesto - Variables en MAYÚSCULAS (formato antiguo)
+      '{{NUMERO}}': data.numero,
+      '{{FECHA}}': formatDate(data.fecha),
+      '{{FECHA_VALIDEZ}}': formatDate(data.fechaValidez),
+      '{{TIPO}}': data.tipo === 'ASESORIA_LA_LLAVE' ? 'Asesoría La Llave' : 'Gestoría Online',
+      
+      // Presupuesto - Variables en minúsculas (formato nuevo)
+      '{{codigo}}': data.numero,
+      '{{fecha}}': formatDateShort(data.fecha),
+      '{{empresa}}': data.tipo === 'ASESORIA_LA_LLAVE' ? 'Asesoría La Llave' : 'Gestoría Online',
+      
+      // Cliente - MAYÚSCULAS
+      '{{NOMBRE_CLIENTE}}': data.nombreCompleto,
+      '{{CIF_NIF}}': data.cifNif || '',
+      '{{EMAIL}}': data.email || '',
+      '{{TELEFONO}}': data.telefono || '',
+      '{{DIRECCION}}': data.direccion || '',
+      '{{CODIGO_POSTAL}}': data.codigoPostal || '',
+      '{{CIUDAD}}': data.ciudad || '',
+      '{{PROVINCIA}}': data.provincia || '',
+      
+      // Cliente - minúsculas
+      '{{nombre_contacto}}': data.nombreCompleto,
+      '{{email}}': data.email || '',
+      '{{telefono}}': data.telefono || '',
+      '{{direccion}}': data.direccion || '',
+      
+      // Negocio - MAYÚSCULAS
+      '{{ACTIVIDAD}}': data.actividadEmpresarial || '',
+      '{{FACTURACION}}': formatCurrency(data.facturacion),
+      '{{FACTURAS_MES}}': data.facturasMes.toString(),
+      '{{NOMINAS_MES}}': data.nominasMes?.toString() || '0',
+      '{{SISTEMA_TRIBUTACION}}': data.sistemaTributacion,
+      '{{PERIODO_DECLARACIONES}}': data.periodoDeclaraciones,
+      
+      // Negocio - minúsculas
+      '{{actividad}}': data.actividadEmpresarial || '',
+      '{{facturacion_anual}}': formatCurrency(data.facturacion),
+      '{{num_facturas}}': data.facturasMes.toString(),
+      '{{sistema_tributacion}}': data.sistemaTributacion,
+      '{{nominas_mes}}': data.nominasMes?.toString() || '0',
+      
+      // Servicios (SIN PRECIOS INDIVIDUALES)
+      '{{SERVICIOS_CONTABILIDAD}}': serviciosContabilidadHTML || '<tr><td>No aplica</td></tr>',
+      '{{SERVICIOS_LABORALES}}': serviciosLaboralesHTML || '<tr><td>No aplica</td></tr>',
+      '{{SERVICIOS_ADICIONALES}}': serviciosAdicionalesHTML || '<tr><td>No aplica</td></tr>',
+      
+      // Totales - MAYÚSCULAS
+      '{{TOTAL_CONTABILIDAD}}': formatCurrency(data.totalContabilidad),
+      '{{TOTAL_LABORAL}}': formatCurrency(data.totalLaboral),
+      '{{SUBTOTAL}}': formatCurrency(data.subtotal),
+      '{{DESCUENTO}}': formatCurrency(data.descuentoCalculado),
+      '{{TOTAL_FINAL}}': formatCurrency(data.totalFinal),
+      
+      // Totales - minúsculas
+      '{{subtotal}}': formatCurrency(subtotalSinIva),
+      '{{iva}}': formatCurrency(iva),
+      '{{total}}': formatCurrency(data.totalFinal),
+      
+      // Descuento
+      '{{TIENE_DESCUENTO}}': data.aplicaDescuento ? 'Sí' : 'No',
+      '{{TIPO_DESCUENTO}}': data.tipoDescuento || '',
+      '{{VALOR_DESCUENTO}}': data.valorDescuento?.toString() || '0',
+      '{{MOTIVO_DESCUENTO}}': data.motivoDescuento || '',
+      
+      // Observaciones
+      '{{OBSERVACIONES}}': data.observaciones || '',
+      '{{observaciones}}': data.observaciones || '',
+      
+      // Branding
+      '{{COLOR_PRIMARIO}}': config.colorPrimario || '#2563eb',
+      '{{COLOR_SECUNDARIO}}': config.colorSecundario || '#1e40af',
+      '{{LOGO_URL}}': config.logoUrl || '',
+      '{{NOMBRE_EMPRESA}}': config.nombre || data.tipo
+    };
+  }
+  
+  /**
+   * Reemplazar variables en el template
+   */
+  private replaceVariables(html: string, variables: Record<string, string>): string {
+    let result = html;
+    
+    for (const [key, value] of Object.entries(variables)) {
+      const regex = new RegExp(key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
+      result = result.replace(regex, value || '');
+    }
+    
+    return result;
   }
   
   /**
@@ -474,7 +697,7 @@ export class GestoriaBudgetPDFService {
    * Generar página de portada
    */
   private generateCoverPage(data: BudgetPDFData, config: any): string {
-    const companyName = data.tipo === 'OFICIAL' ? 
+    const companyName = data.tipo === 'ASESORIA_LA_LLAVE' ? 
       config.nombreEmpresaOficial : 
       config.nombreEmpresaOnline;
     
@@ -523,7 +746,7 @@ export class GestoriaBudgetPDFService {
    * Generar página de servicios
    */
   private generateServicesPage(data: BudgetPDFData, config: any): string {
-    const companyName = data.tipo === 'OFICIAL' ? 
+    const companyName = data.tipo === 'ASESORIA_LA_LLAVE' ? 
       config.nombreEmpresaOficial : 
       config.nombreEmpresaOnline;
     
@@ -540,10 +763,8 @@ export class GestoriaBudgetPDFService {
         <table class="services-table">
           <thead>
             <tr>
-              <th style="width: 50%;">Concepto</th>
+              <th style="width: 85%;">Concepto</th>
               <th style="width: 15%;" class="text-center">Cantidad</th>
-              <th style="width: 17.5%;" class="text-right">Precio Unit.</th>
-              <th style="width: 17.5%;" class="text-right">Total</th>
             </tr>
           </thead>
           <tbody>
@@ -551,12 +772,10 @@ export class GestoriaBudgetPDFService {
               <tr>
                 <td>${s.concepto}</td>
                 <td class="text-center">${s.cantidad || '-'}</td>
-                <td class="text-right">${this.formatCurrency(s.precio)}</td>
-                <td class="text-right">${this.formatCurrency(s.total)}</td>
               </tr>
             `).join('')}
             <tr class="subtotal-row">
-              <td colspan="3" class="text-right">Subtotal Contabilidad:</td>
+              <td class="text-right">Subtotal Contabilidad:</td>
               <td class="text-right">${this.formatCurrency(data.totalContabilidad)}</td>
             </tr>
           </tbody>
@@ -571,10 +790,8 @@ export class GestoriaBudgetPDFService {
         <table class="services-table">
           <thead>
             <tr>
-              <th style="width: 50%;">Concepto</th>
+              <th style="width: 85%;">Concepto</th>
               <th style="width: 15%;" class="text-center">Cantidad</th>
-              <th style="width: 17.5%;" class="text-right">Precio Unit.</th>
-              <th style="width: 17.5%;" class="text-right">Total</th>
             </tr>
           </thead>
           <tbody>
@@ -582,12 +799,10 @@ export class GestoriaBudgetPDFService {
               <tr>
                 <td>${s.concepto}</td>
                 <td class="text-center">${s.cantidad || '-'}</td>
-                <td class="text-right">${this.formatCurrency(s.precio)}</td>
-                <td class="text-right">${this.formatCurrency(s.total)}</td>
               </tr>
             `).join('')}
             <tr class="subtotal-row">
-              <td colspan="3" class="text-right">Subtotal Laboral:</td>
+              <td class="text-right">Subtotal Laboral:</td>
               <td class="text-right">${this.formatCurrency(data.totalLaboral)}</td>
             </tr>
           </tbody>
@@ -602,9 +817,8 @@ export class GestoriaBudgetPDFService {
         <table class="services-table">
           <thead>
             <tr>
-              <th style="width: 60%;">Concepto</th>
+              <th style="width: 80%;">Concepto</th>
               <th style="width: 20%;" class="text-center">Tipo</th>
-              <th style="width: 20%;" class="text-right">Precio</th>
             </tr>
           </thead>
           <tbody>
@@ -614,7 +828,6 @@ export class GestoriaBudgetPDFService {
                 <td class="text-center">
                   <span class="badge">${s.tipoServicio === 'MENSUAL' ? 'Mensual' : 'Puntual'}</span>
                 </td>
-                <td class="text-right">${this.formatCurrency(s.precio)}</td>
               </tr>
             `).join('')}
           </tbody>
@@ -631,7 +844,7 @@ export class GestoriaBudgetPDFService {
    * Generar página de resumen y términos
    */
   private generateSummaryPage(data: BudgetPDFData, config: any): string {
-    const companyName = data.tipo === 'OFICIAL' ? 
+    const companyName = data.tipo === 'ASESORIA_LA_LLAVE' ? 
       config.nombreEmpresaOficial : 
       config.nombreEmpresaOnline;
     

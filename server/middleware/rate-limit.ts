@@ -56,7 +56,7 @@ export const registerLimiter = rateLimit({
  */
 export const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutos
-  max: 100, // Máximo 100 requests por IP en 15 minutos
+  max: 1000, // Máximo 1000 requests por IP en 15 minutos (permite cálculos en tiempo real)
   message: {
     error: 'Demasiadas solicitudes. Por favor, inténtalo de nuevo más tarde.'
   },
@@ -88,6 +88,28 @@ export const strictLimiter = rateLimit({
     res.status(429).json({
       error: 'Límite de operaciones excedido. Por favor, inténtalo de nuevo en 1 hora.',
       retryAfter: Math.ceil(60 * 60)
+    });
+  }
+});
+
+/**
+ * SEGURIDAD: Rate limiting para cálculos de presupuestos
+ * Permite más requests para cálculos en tiempo real
+ */
+export const budgetCalculationLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000, // 1 minuto
+  max: 120, // Máximo 120 requests por minuto (2 por segundo)
+  message: {
+    error: 'Demasiados cálculos. Por favor, espera un momento.'
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: false,
+  handler: (req, res) => {
+    console.warn(`[SECURITY] Rate limit de cálculos excedido desde IP: ${req.ip}`);
+    res.status(429).json({
+      error: 'Demasiados cálculos. Por favor, espera un momento.',
+      retryAfter: 60
     });
   }
 });

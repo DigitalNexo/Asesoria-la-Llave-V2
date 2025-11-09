@@ -34,7 +34,8 @@ import gestoriaBudgetsRouter from './routes/gestoria-budgets';
 import { generateClientsTemplate, processClientsImport } from './services/clients-import';
 import budgetParametersRouter from './budget-parameters';
 import budgetTemplatesRouter from './budget-templates';
-import { documentsRouter } from './documents';
+import documentsRouter from './routes/documents.routes';
+import githubUpdatesRouter from './routes/github-updates.routes';
 import { checkForUpdates, getCurrentVersion } from "./services/version-service.js";
 import { createSystemBackup, listBackups, restoreFromBackup } from "./services/backup-service-wrapper";
 import { performSystemUpdate, verifyGitSetup, getUpdateHistory } from "./services/update-service-wrapper";
@@ -311,8 +312,12 @@ export async function registerRoutes(app: Express, options?: { skipDbInit?: bool
 
   // SEGURIDAD: Rate limiting general para todos los endpoints /api/*
   // Excluye /api/health para permitir health checks ilimitados
+  // Excluye /gestoria-budgets/calculate que tiene su propio rate limiter más permisivo
   app.use('/api', (req, res, next) => {
     if (req.path === '/health' || req.path === '/api/health') {
+      return next();
+    }
+    if (req.path === '/gestoria-budgets/calculate') {
       return next();
     }
     return apiLimiter(req, res, next);
@@ -2296,8 +2301,10 @@ export async function registerRoutes(app: Express, options?: { skipDbInit?: bool
   app.use('/api/gestoria-budgets', gestoriaBudgetsRouter);
   app.use('/api/budget-parameters', budgetParametersRouter);
   app.use('/api/budget-templates', budgetTemplatesRouter);
-  // Documents routes
+  // Documents routes (incluye recibos, protección de datos, domiciliación bancaria y plantillas)
   app.use('/api/documents', authenticateToken, documentsRouter);
+  // GitHub updates routes (webhook y gestión de actualizaciones)
+  app.use('/api/system/github', githubUpdatesRouter);
   app.get(
     "/api/admin/smtp-accounts",
     authenticateToken,
@@ -2417,18 +2424,72 @@ export async function registerRoutes(app: Express, options?: { skipDbInit?: bool
       try {
         const { host, port, user, password } = req.body;
         
-        // Use top-level imported nodemailer to avoid dynamic require/import issues
-        const transporter = nodemailer.createTransport({
+        if (!host || !port || !user || !password) {
+          return res.status(400).json({ 
+            success: false, 
+            error: "Faltan parámetros requeridos (host, port, user, password)" 
+          });
+        }
+
+        console.log(`🔍 Probando conexión SMTP a ${host}:${port} con usuario ${user}`);
+        
+        // Configuración del transporter
+        const transportConfig = {
           host,
           port: parseInt(port),
-          secure: parseInt(port) === 465,
-          auth: { user, pass: password },
-        });
+          secure: parseInt(port) === 465, // true para 465, false para otros puertos
+          auth: { 
+            user, 
+            pass: password 
+          },
+          // Timeouts más largos para evitar errores prematuros
+          connectionTimeout: 10000, // 10 segundos
+          greetingTimeout: 10000,
+          socketTimeout: 10000,
+        };
 
+        console.log('📧 Configuración SMTP:', { ...transportConfig, auth: { user, pass: '***' } });
+        
+        // Use top-level imported nodemailer to avoid dynamic require/import issues
+        const transporter = nodemailer.createTransport(transportConfig);
+
+        // Verificar conexión
         await transporter.verify();
-        res.json({ success: true, message: "Conexión SMTP exitosa" });
+        
+        console.log('✅ Conexión SMTP exitosa');
+        res.json({ 
+          success: true, 
+          message: "Conexión SMTP exitosa. El servidor está configurado correctamente." 
+        });
       } catch (error: any) {
-        res.status(500).json({ success: false, error: error.message });
+        console.error('❌ Error al probar conexión SMTP:', {
+          message: error.message,
+          code: error.code,
+          command: error.command,
+          response: error.response,
+          responseCode: error.responseCode,
+        });
+        
+        // Mensajes de error más descriptivos
+        let errorMessage = error.message || 'Error desconocido al conectar con el servidor SMTP';
+        
+        if (error.code === 'ECONNREFUSED') {
+          errorMessage = `No se pudo conectar al servidor ${req.body.host}:${req.body.port}. Verifica el host y puerto.`;
+        } else if (error.code === 'ENOTFOUND') {
+          errorMessage = `El servidor ${req.body.host} no existe o no se puede resolver. Verifica el host.`;
+        } else if (error.code === 'ETIMEDOUT') {
+          errorMessage = `Tiempo de espera agotado al conectar con ${req.body.host}:${req.body.port}.`;
+        } else if (error.responseCode === 535 || error.message.includes('Invalid login')) {
+          errorMessage = 'Usuario o contraseña incorrectos.';
+        } else if (error.responseCode === 454) {
+          errorMessage = 'Autenticación fallida. Verifica que las credenciales sean correctas.';
+        }
+        
+        res.status(500).json({ 
+          success: false, 
+          error: errorMessage,
+          details: process.env.NODE_ENV === 'development' ? error.message : undefined
+        });
       }
     }
   );

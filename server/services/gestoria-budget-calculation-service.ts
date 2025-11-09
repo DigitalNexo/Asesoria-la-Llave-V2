@@ -72,7 +72,7 @@ export class GestoriaBudgetCalculationService {
    */
   async calculate(
     input: BudgetCalculationInput,
-    tipoGestoria: 'OFICIAL' | 'ONLINE'
+    tipoGestoria: 'ASESORIA_LA_LLAVE' | 'GESTORIA_ONLINE'
   ): Promise<BudgetCalculationResult> {
     
     // Obtener configuración activa

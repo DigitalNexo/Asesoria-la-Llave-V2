@@ -44,6 +44,621 @@ var init_prisma_client = __esm({
   }
 });
 
+// server/services/budgets/calculateAutonomo.ts
+var calculateAutonomo_exports = {};
+__export(calculateAutonomo_exports, {
+  calculateAutonomo: () => calculateAutonomo,
+  clearConfigCache: () => clearConfigCache,
+  getConfiguracionActual: () => getConfiguracionActual
+});
+async function getConfiguracion() {
+  const now = Date.now();
+  if (configCache && now - cacheTimestamp2 < CACHE_DURATION2) {
+    return configCache;
+  }
+  const config = await prisma_client_default.gestoria_budget_autonomo_config.findFirst({
+    where: { activo: true },
+    include: {
+      tramosFacturas: {
+        orderBy: { orden: "asc" }
+      },
+      tramosNominas: {
+        orderBy: { orden: "asc" }
+      },
+      tramosFacturacionAnual: {
+        orderBy: { orden: "asc" }
+      },
+      preciosModelosFiscales: {
+        where: { activo: true },
+        orderBy: { orden: "asc" }
+      },
+      preciosServiciosAdicionales: {
+        where: { activo: true },
+        orderBy: { orden: "asc" }
+      }
+    }
+  });
+  if (!config) {
+    throw new Error("No se encontr\xF3 configuraci\xF3n activa para presupuestos de Aut\xF3nomos");
+  }
+  configCache = {
+    id: config.id,
+    porcentajePeriodoMensual: Number(config.porcentajePeriodoMensual),
+    porcentajeEDN: Number(config.porcentajeEDN),
+    porcentajeModulos: Number(config.porcentajeModulos),
+    minimoMensual: Number(config.minimoMensual),
+    tramosFacturas: config.tramosFacturas.map((t) => ({
+      orden: t.orden,
+      minFacturas: t.minFacturas,
+      maxFacturas: t.maxFacturas,
+      precio: Number(t.precio),
+      etiqueta: t.etiqueta
+    })),
+    tramosNominas: config.tramosNominas.map((t) => ({
+      orden: t.orden,
+      minNominas: t.minNominas,
+      maxNominas: t.maxNominas,
+      precio: Number(t.precio),
+      etiqueta: t.etiqueta
+    })),
+    tramosFacturacionAnual: config.tramosFacturacionAnual.map((t) => ({
+      orden: t.orden,
+      minFacturacion: Number(t.minFacturacion),
+      maxFacturacion: t.maxFacturacion ? Number(t.maxFacturacion) : null,
+      multiplicador: Number(t.multiplicador),
+      etiqueta: t.etiqueta
+    })),
+    preciosModelosFiscales: config.preciosModelosFiscales.map((m) => ({
+      codigoModelo: m.codigoModelo,
+      nombreModelo: m.nombreModelo,
+      precio: Number(m.precio),
+      activo: m.activo
+    })),
+    preciosServiciosAdicionales: config.preciosServiciosAdicionales.map((s) => ({
+      codigo: s.codigo,
+      nombre: s.nombre,
+      precio: Number(s.precio),
+      tipoServicio: s.tipoServicio,
+      activo: s.activo
+    }))
+  };
+  cacheTimestamp2 = now;
+  return configCache;
+}
+function getPrecioBaseFacturas(facturasMes, tramos) {
+  for (const tramo of tramos) {
+    const dentroDelMin = facturasMes >= tramo.minFacturas;
+    const dentroDelMax = tramo.maxFacturas === null || facturasMes <= tramo.maxFacturas;
+    if (dentroDelMin && dentroDelMax) {
+      return tramo.precio;
+    }
+  }
+  return tramos[tramos.length - 1]?.precio || 45;
+}
+function getPrecioNomina2(nominasMes, tramos) {
+  for (const tramo of tramos) {
+    const dentroDelMin = nominasMes >= tramo.minNominas;
+    const dentroDelMax = tramo.maxNominas === null || nominasMes <= tramo.maxNominas;
+    if (dentroDelMin && dentroDelMax) {
+      return tramo.precio;
+    }
+  }
+  return tramos[tramos.length - 1]?.precio || 10;
+}
+function getMultiplicadorFacturacion2(facturacion, tramos) {
+  for (const tramo of tramos) {
+    const dentroDelMin = facturacion >= tramo.minFacturacion;
+    const dentroDelMax = tramo.maxFacturacion === null || facturacion <= tramo.maxFacturacion;
+    if (dentroDelMin && dentroDelMax) {
+      return tramo.multiplicador;
+    }
+  }
+  return tramos[tramos.length - 1]?.multiplicador || 1;
+}
+function getPrecioModelo(codigo, modelos) {
+  const modelo = modelos.find((m) => m.codigoModelo === codigo);
+  return modelo?.precio || 0;
+}
+function getPrecioServicio(codigo, servicios) {
+  const servicio = servicios.find((s) => s.codigo === codigo);
+  return servicio?.precio || 0;
+}
+async function calculateAutonomo(input) {
+  const items = [];
+  let position = 1;
+  const config = await getConfiguracion();
+  const precioBase = getPrecioBaseFacturas(input.facturasMes, config.tramosFacturas);
+  const tramoFacturas = config.tramosFacturas.find((t) => {
+    const dentro = input.facturasMes >= t.minFacturas && (t.maxFacturas === null || input.facturasMes <= t.maxFacturas);
+    return dentro;
+  });
+  items.push({
+    concept: `Contabilidad - ${tramoFacturas?.etiqueta || `${input.facturasMes} facturas`}`,
+    category: "BASE_CONTABILIDAD",
+    position: position++,
+    quantity: 1,
+    unitPrice: precioBase,
+    vatPct: 21,
+    subtotal: precioBase,
+    total: precioBase * 1.21
+  });
+  let totalContabilidad = precioBase;
+  const modelosIVA = [
+    { codigo: "303", nombre: "Modelo 303 - IVA Trimestral", field: "modelo303" },
+    { codigo: "349", nombre: "Modelo 349 - Operaciones Intracomunitarias", field: "modelo349" },
+    { codigo: "347", nombre: "Modelo 347 - Operaciones Terceras Personas", field: "modelo347" }
+  ];
+  modelosIVA.forEach(({ codigo, nombre, field }) => {
+    if (input[field]) {
+      const precio = getPrecioModelo(codigo, config.preciosModelosFiscales);
+      if (precio > 0) {
+        items.push({
+          concept: nombre,
+          category: `MODELO_${codigo}`,
+          position: position++,
+          quantity: 1,
+          unitPrice: precio,
+          vatPct: 21,
+          subtotal: precio,
+          total: precio * 1.21
+        });
+        totalContabilidad += precio;
+      }
+    }
+  });
+  const modelosIRPF = [
+    { codigo: "111", nombre: "Modelo 111 - IRPF Trabajadores", field: "modelo111" },
+    { codigo: "115", nombre: "Modelo 115 - IRPF Alquileres", field: "modelo115" },
+    { codigo: "130", nombre: "Modelo 130 - IRPF Actividades Econ\xF3micas", field: "modelo130" },
+    { codigo: "100", nombre: "Modelo 100 - Declaraci\xF3n Renta Anual", field: "modelo100" }
+  ];
+  modelosIRPF.forEach(({ codigo, nombre, field }) => {
+    if (input[field]) {
+      const precio = getPrecioModelo(codigo, config.preciosModelosFiscales);
+      if (precio > 0) {
+        items.push({
+          concept: nombre,
+          category: `MODELO_${codigo}`,
+          position: position++,
+          quantity: 1,
+          unitPrice: precio,
+          vatPct: 21,
+          subtotal: precio,
+          total: precio * 1.21
+        });
+        totalContabilidad += precio;
+      }
+    }
+  });
+  const serviciosMap = [
+    { codigo: "solicitud_certificados", nombre: "Solicitud de Certificados", field: "solicitudCertificados" },
+    { codigo: "censos_aeat", nombre: "Gesti\xF3n de Censos AEAT", field: "censosAEAT" },
+    { codigo: "gestion_notificaciones", nombre: "Gesti\xF3n de Notificaciones", field: "recepcionNotificaciones" },
+    { codigo: "estadisticas_ine", nombre: "Estad\xEDsticas INE", field: "estadisticasINE" },
+    { codigo: "solicitud_ayudas", nombre: "Solicitud de Ayudas", field: "solicitudAyudas" }
+  ];
+  serviciosMap.forEach(({ codigo, nombre, field }) => {
+    if (input[field]) {
+      const precio = getPrecioServicio(codigo, config.preciosServiciosAdicionales);
+      if (precio > 0) {
+        items.push({
+          concept: nombre,
+          category: `SERVICIO_${codigo.toUpperCase()}`,
+          position: position++,
+          quantity: 1,
+          unitPrice: precio,
+          vatPct: 21,
+          subtotal: precio,
+          total: precio * 1.21
+        });
+        totalContabilidad += precio;
+      }
+    }
+  });
+  const multiplicador = getMultiplicadorFacturacion2(input.facturacion, config.tramosFacturacionAnual);
+  if (multiplicador > 1) {
+    const incremento = totalContabilidad * (multiplicador - 1);
+    const tramoFact = config.tramosFacturacionAnual.find((t) => {
+      const dentro = input.facturacion >= t.minFacturacion && (t.maxFacturacion === null || input.facturacion <= t.maxFacturacion);
+      return dentro;
+    });
+    items.push({
+      concept: `Recargo por facturaci\xF3n anual - ${tramoFact?.etiqueta || `${input.facturacion.toLocaleString()}\u20AC`} (${multiplicador.toFixed(2)}x)`,
+      category: "RECARGO_FACTURACION",
+      position: position++,
+      quantity: 1,
+      unitPrice: incremento,
+      vatPct: 21,
+      subtotal: incremento,
+      total: incremento * 1.21
+    });
+    totalContabilidad += incremento;
+  }
+  let totalLaboral = 0;
+  if (input.nominasMes > 0 && input.conLaboralSocial) {
+    const precioNomina = getPrecioNomina2(input.nominasMes, config.tramosNominas);
+    const totalNominas = input.nominasMes * precioNomina;
+    const tramoNom = config.tramosNominas.find((t) => {
+      const dentro = input.nominasMes >= t.minNominas && (t.maxNominas === null || input.nominasMes <= t.maxNominas);
+      return dentro;
+    });
+    items.push({
+      concept: `Laboral/SS - ${tramoNom?.etiqueta || `${input.nominasMes} n\xF3minas`} (${input.nominasMes} x ${precioNomina.toFixed(2)}\u20AC)`,
+      category: "NOMINAS",
+      position: position++,
+      quantity: input.nominasMes,
+      unitPrice: precioNomina,
+      vatPct: 21,
+      subtotal: totalNominas,
+      total: totalNominas * 1.21
+    });
+    totalLaboral = totalNominas;
+  }
+  if (input.periodo === "MENSUAL") {
+    const ajusteMensual = totalContabilidad * (config.porcentajePeriodoMensual / 100);
+    items.push({
+      concept: `Recargo por liquidaciones mensuales (+${config.porcentajePeriodoMensual.toFixed(0)}%)`,
+      category: "RECARGO_MENSUAL",
+      position: position++,
+      quantity: 1,
+      unitPrice: ajusteMensual,
+      vatPct: 21,
+      subtotal: ajusteMensual,
+      total: ajusteMensual * 1.21
+    });
+    totalContabilidad += ajusteMensual;
+  }
+  if (input.sistemaTributacion === "ESN") {
+    const ajusteEDN = totalContabilidad * (config.porcentajeEDN / 100);
+    items.push({
+      concept: `Recargo por Estimaci\xF3n Directa Normal (+${config.porcentajeEDN.toFixed(0)}%)`,
+      category: "RECARGO_EDN",
+      position: position++,
+      quantity: 1,
+      unitPrice: ajusteEDN,
+      vatPct: 21,
+      subtotal: ajusteEDN,
+      total: ajusteEDN * 1.21
+    });
+    totalContabilidad += ajusteEDN;
+  } else if (input.sistemaTributacion === "MODULOS") {
+    const ajusteModulos = totalContabilidad * (Math.abs(config.porcentajeModulos) / 100);
+    items.push({
+      concept: `Descuento por R\xE9gimen de M\xF3dulos (${config.porcentajeModulos.toFixed(0)}%)`,
+      category: "DESCUENTO_MODULOS",
+      position: position++,
+      quantity: 1,
+      unitPrice: -ajusteModulos,
+      vatPct: 21,
+      subtotal: -ajusteModulos,
+      total: -ajusteModulos * 1.21
+    });
+    totalContabilidad -= ajusteModulos;
+  }
+  let totalServiciosMensuales = 0;
+  const serviciosMensuales = config.preciosServiciosAdicionales.filter(
+    (s) => s.tipoServicio === "MENSUAL" && s.activo
+  );
+  let totalBase = totalContabilidad + totalLaboral + totalServiciosMensuales;
+  if (input.aplicaDescuento && input.valorDescuento) {
+    const tipoDescuento = input.tipoDescuento || "PORCENTAJE";
+    let descuento = 0;
+    if (tipoDescuento === "PORCENTAJE") {
+      descuento = totalBase * (input.valorDescuento / 100);
+      items.push({
+        concept: `Descuento aplicado (-${input.valorDescuento}%)`,
+        category: "DESCUENTO",
+        position: position++,
+        quantity: 1,
+        unitPrice: -descuento,
+        vatPct: 21,
+        subtotal: -descuento,
+        total: -descuento * 1.21
+      });
+    } else {
+      descuento = input.valorDescuento;
+      items.push({
+        concept: `Descuento aplicado (-${descuento.toFixed(2)}\u20AC)`,
+        category: "DESCUENTO",
+        position: position++,
+        quantity: 1,
+        unitPrice: -descuento,
+        vatPct: 21,
+        subtotal: -descuento,
+        total: -descuento * 1.21
+      });
+    }
+    totalBase -= descuento;
+  }
+  if (totalBase < 0) {
+    totalBase = 0;
+  }
+  if (input.periodo === "MENSUAL" && totalBase < config.minimoMensual) {
+    const ajusteMinimo = config.minimoMensual - totalBase;
+    items.push({
+      concept: `Ajuste m\xEDnimo mensual (${config.minimoMensual.toFixed(2)}\u20AC)`,
+      category: "MINIMO_MENSUAL",
+      position: position++,
+      quantity: 1,
+      unitPrice: ajusteMinimo,
+      vatPct: 21,
+      subtotal: ajusteMinimo,
+      total: ajusteMinimo * 1.21
+    });
+    totalBase = config.minimoMensual;
+  }
+  const subtotal = items.reduce((sum, item) => sum + item.subtotal, 0);
+  const vatTotal = items.reduce((sum, item) => sum + item.subtotal * (item.vatPct / 100), 0);
+  const total = subtotal + vatTotal;
+  return {
+    items,
+    subtotal: Math.round(subtotal * 100) / 100,
+    vatTotal: Math.round(vatTotal * 100) / 100,
+    total: Math.round(total * 100) / 100
+  };
+}
+function clearConfigCache() {
+  configCache = null;
+  cacheTimestamp2 = 0;
+}
+async function getConfiguracionActual() {
+  return await getConfiguracion();
+}
+var configCache, cacheTimestamp2, CACHE_DURATION2;
+var init_calculateAutonomo = __esm({
+  "server/services/budgets/calculateAutonomo.ts"() {
+    init_prisma_client();
+    configCache = null;
+    cacheTimestamp2 = 0;
+    CACHE_DURATION2 = 5 * 60 * 1e3;
+  }
+});
+
+// server/services/git-update.service.ts
+var git_update_service_exports = {};
+__export(git_update_service_exports, {
+  checkForUpdates: () => checkForUpdates,
+  executeGitUpdate: () => executeGitUpdate
+});
+import { PrismaClient as PrismaClient12 } from "@prisma/client";
+import { exec } from "child_process";
+import { promisify } from "util";
+async function executeGitUpdate(updateId) {
+  let logs = "";
+  const addLog = (message) => {
+    const timestamp = (/* @__PURE__ */ new Date()).toISOString();
+    logs += `[${timestamp}] ${message}
+`;
+    console.log(message);
+  };
+  try {
+    addLog("=== INICIO DE ACTUALIZACI\xD3N DESDE GITHUB ===");
+    const update = await prisma12.system_updates.findUnique({
+      where: { id: updateId }
+    });
+    if (!update) {
+      throw new Error(`Update ${updateId} not found`);
+    }
+    if (!update.commit_hash) {
+      throw new Error("Update does not have a commit hash");
+    }
+    addLog(`Commit: ${update.commit_hash.substring(0, 7)}`);
+    addLog(`Mensaje: ${update.commit_message}`);
+    addLog(`Autor: ${update.commit_author}`);
+    addLog("");
+    await prisma12.system_updates.update({
+      where: { id: updateId },
+      data: {
+        status: "APPLYING",
+        logs
+      }
+    });
+    addLog("\u{1F4E1} Obteniendo cambios desde GitHub...");
+    try {
+      const fetchResult = await execAsync("git fetch origin", { cwd: PROJECT_PATH });
+      if (fetchResult.stdout) addLog(fetchResult.stdout.trim());
+      if (fetchResult.stderr) addLog(fetchResult.stderr.trim());
+      addLog("\u2705 Fetch completado");
+    } catch (error) {
+      addLog(`\u274C Error en git fetch: ${error.message}`);
+      throw error;
+    }
+    addLog("");
+    addLog(`\u{1F50D} Verificando commit ${update.commit_hash.substring(0, 7)}...`);
+    try {
+      await execAsync(`git cat-file -t ${update.commit_hash}`, { cwd: PROJECT_PATH });
+      addLog("\u2705 Commit encontrado");
+    } catch (error) {
+      addLog(`\u274C Commit no encontrado: ${error.message}`);
+      throw new Error("Commit not found in repository");
+    }
+    addLog("");
+    addLog("\u{1F4BE} Obteniendo commit actual...");
+    let previousCommit = "";
+    try {
+      const { stdout } = await execAsync("git rev-parse HEAD", { cwd: PROJECT_PATH });
+      previousCommit = stdout.trim();
+      addLog(`Commit actual: ${previousCommit.substring(0, 7)}`);
+    } catch (error) {
+      addLog(`\u26A0\uFE0F  No se pudo obtener commit actual: ${error.message}`);
+    }
+    addLog("");
+    addLog(`\u{1F504} Aplicando commit ${update.commit_hash.substring(0, 7)}...`);
+    try {
+      const branch = update.branch || "main";
+      const { stdout: currentBranch } = await execAsync("git rev-parse --abbrev-ref HEAD", { cwd: PROJECT_PATH });
+      if (currentBranch.trim() === branch) {
+        const pullResult = await execAsync(`git pull origin ${branch}`, { cwd: PROJECT_PATH });
+        if (pullResult.stdout) addLog(pullResult.stdout.trim());
+        if (pullResult.stderr) addLog(pullResult.stderr.trim());
+      } else {
+        await execAsync(`git checkout ${branch}`, { cwd: PROJECT_PATH });
+        const pullResult = await execAsync(`git pull origin ${branch}`, { cwd: PROJECT_PATH });
+        if (pullResult.stdout) addLog(pullResult.stdout.trim());
+        if (pullResult.stderr) addLog(pullResult.stderr.trim());
+      }
+      addLog("\u2705 C\xF3digo actualizado");
+    } catch (error) {
+      addLog(`\u274C Error en git pull: ${error.message}`);
+      throw error;
+    }
+    addLog("");
+    addLog("\u{1F4E6} Instalando dependencias...");
+    try {
+      const installResult = await execAsync("npm install", {
+        cwd: PROJECT_PATH,
+        env: { ...process.env, NODE_ENV: "production" }
+      });
+      if (installResult.stdout) addLog(installResult.stdout.split("\n").slice(-5).join("\n"));
+      if (installResult.stderr) addLog(installResult.stderr.split("\n").slice(-5).join("\n"));
+      addLog("\u2705 Dependencias instaladas");
+    } catch (error) {
+      addLog(`\u274C Error instalando dependencias: ${error.message}`);
+      throw error;
+    }
+    addLog("");
+    addLog("\u{1F528} Compilando proyecto...");
+    try {
+      const buildResult = await execAsync("npm run build", {
+        cwd: PROJECT_PATH,
+        env: { ...process.env, NODE_ENV: "production" }
+      });
+      if (buildResult.stdout) addLog(buildResult.stdout.split("\n").slice(-10).join("\n"));
+      if (buildResult.stderr) addLog(buildResult.stderr.split("\n").slice(-10).join("\n"));
+      addLog("\u2705 Build completado");
+    } catch (error) {
+      addLog(`\u274C Error en build: ${error.message}`);
+      throw error;
+    }
+    addLog("");
+    addLog("\u{1F504} Reiniciando servicio systemd...");
+    try {
+      const restartResult = await execAsync(`sudo systemctl restart ${SYSTEMD_SERVICE}`);
+      if (restartResult.stdout) addLog(restartResult.stdout.trim());
+      if (restartResult.stderr) addLog(restartResult.stderr.trim());
+      addLog("\u2705 Servicio reiniciado");
+    } catch (error) {
+      addLog(`\u274C Error reiniciando servicio: ${error.message}`);
+      throw error;
+    }
+    addLog("");
+    addLog("\u{1F50D} Verificando estado del servicio...");
+    try {
+      const statusResult = await execAsync(`sudo systemctl status ${SYSTEMD_SERVICE}`);
+      const isActive = statusResult.stdout.includes("active (running)");
+      if (isActive) {
+        addLog("\u2705 Servicio funcionando correctamente");
+      } else {
+        addLog("\u26A0\uFE0F  El servicio no est\xE1 activo");
+      }
+    } catch (error) {
+      if (error.stdout && error.stdout.includes("active (running)")) {
+        addLog("\u2705 Servicio funcionando correctamente");
+      } else {
+        addLog(`\u26A0\uFE0F  No se pudo verificar estado: ${error.message}`);
+      }
+    }
+    addLog("");
+    addLog("=== ACTUALIZACI\xD3N COMPLETADA EXITOSAMENTE ===");
+    await prisma12.system_updates.update({
+      where: { id: updateId },
+      data: {
+        status: "COMPLETED",
+        completed_at: /* @__PURE__ */ new Date(),
+        logs,
+        error_message: null
+      }
+    });
+    const config = await prisma12.system_update_config.findFirst();
+    if (config) {
+      await prisma12.system_update_config.update({
+        where: { id: config.id },
+        data: {
+          currentCommitHash: update.commit_hash,
+          lastCheckedAt: /* @__PURE__ */ new Date()
+        }
+      });
+    }
+  } catch (error) {
+    const errorMessage = error.message || "Unknown error";
+    addLog("");
+    addLog("=== ERROR EN LA ACTUALIZACI\xD3N ===");
+    addLog(`\u274C ${errorMessage}`);
+    if (error.stack) {
+      addLog("Stack trace:");
+      addLog(error.stack);
+    }
+    await prisma12.system_updates.update({
+      where: { id: updateId },
+      data: {
+        status: "FAILED",
+        completed_at: /* @__PURE__ */ new Date(),
+        logs,
+        error_message: errorMessage
+      }
+    });
+    throw error;
+  }
+}
+async function checkForUpdates() {
+  try {
+    const config = await prisma12.system_update_config.findFirst();
+    if (!config || !config.githubRepo) {
+      console.log("No GitHub config found");
+      return;
+    }
+    console.log(`Checking for updates in ${config.githubRepo}...`);
+    const { stdout: currentCommit } = await execAsync("git rev-parse HEAD", { cwd: PROJECT_PATH });
+    const currentHash = currentCommit.trim();
+    await execAsync("git fetch origin", { cwd: PROJECT_PATH });
+    const branch = config.githubBranch || "main";
+    const { stdout: remoteCommit } = await execAsync(`git rev-parse origin/${branch}`, { cwd: PROJECT_PATH });
+    const remoteHash = remoteCommit.trim();
+    if (currentHash === remoteHash) {
+      console.log("Already up to date");
+      return;
+    }
+    console.log(`New commit available: ${remoteHash.substring(0, 7)}`);
+    const { stdout: commitInfo } = await execAsync(
+      `git log ${remoteHash} -1 --pretty=format:"%an|%aI|%s"`,
+      { cwd: PROJECT_PATH }
+    );
+    const [author, date, message] = commitInfo.split("|");
+    const existingUpdate = await prisma12.system_updates.findFirst({
+      where: { commit_hash: remoteHash }
+    });
+    if (!existingUpdate) {
+      const { v4: uuidv42 } = __require("uuid");
+      await prisma12.system_updates.create({
+        data: {
+          id: uuidv42(),
+          update_type: "GITHUB",
+          commit_hash: remoteHash,
+          commit_message: message,
+          commit_author: author,
+          commit_date: new Date(date),
+          branch,
+          status: "PENDING",
+          logs: "Update detected manually\n"
+        }
+      });
+      console.log("Update record created");
+    }
+  } catch (error) {
+    console.error("Error checking for updates:", error.message);
+    throw error;
+  }
+}
+var execAsync, prisma12, PROJECT_PATH, SYSTEMD_SERVICE;
+var init_git_update_service = __esm({
+  "server/services/git-update.service.ts"() {
+    execAsync = promisify(exec);
+    prisma12 = new PrismaClient12();
+    PROJECT_PATH = "/root/www/Asesoria-la-Llave-V2";
+    SYSTEMD_SERVICE = "asesoria-llave.service";
+  }
+});
+
 // server/services/reports-service.ts
 var reports_service_exports = {};
 __export(reports_service_exports, {
@@ -999,7 +1614,7 @@ var init_goals_service = __esm({
 });
 
 // server/index.ts
-import express8 from "express";
+import express9 from "express";
 
 // server/routes.ts
 import { createServer } from "http";
@@ -4011,7 +4626,7 @@ var PrismaStorage = class {
 var prismaStorage = new PrismaStorage();
 
 // server/routes.ts
-import { PrismaClient as PrismaClient13 } from "@prisma/client";
+import { PrismaClient as PrismaClient16 } from "@prisma/client";
 import bcrypt from "bcrypt";
 import jwt3 from "jsonwebtoken";
 import { randomUUID as randomUUID8 } from "crypto";
@@ -4162,8 +4777,8 @@ function validateZod(schema) {
 
 // server/routes.ts
 import multer3 from "multer";
-import path12 from "path";
-import fs9 from "fs";
+import path13 from "path";
+import fs10 from "fs";
 
 // server/email.ts
 import nodemailer from "nodemailer";
@@ -4260,31 +4875,31 @@ async function sendTaxReminderEmail(clientTax, daysUntilDue) {
     console.error("Error sending tax reminder email:", error);
   }
 }
-async function checkAndSendReminders(storage) {
+async function checkAndSendReminders(storage2) {
   const now = /* @__PURE__ */ new Date();
-  const tasks = await storage.getAllTasks();
+  const tasks = await storage2.getAllTasks();
   for (const task of tasks) {
     if (task.fechaVencimiento && task.estado !== "COMPLETADA" && task.asignadoA) {
       const dueDate = new Date(task.fechaVencimiento);
       const daysUntilDue = Math.ceil((dueDate.getTime() - now.getTime()) / (1e3 * 60 * 60 * 24));
       if (daysUntilDue === 3) {
-        const assignedUser = await storage.getUser(task.asignadoA);
+        const assignedUser = await storage2.getUser(task.asignadoA);
         if (assignedUser) {
           await sendTaskReminderEmail({ ...task, assignedUser }, daysUntilDue);
         }
       }
     }
   }
-  const clientTaxes = await storage.getAllClientTax();
+  const clientTaxes = await storage2.getAllClientTax();
   for (const clientTax of clientTaxes) {
     if (clientTax.estado !== "REALIZADO") {
-      const taxPeriod = await storage.getTaxPeriod(clientTax.taxPeriodId);
+      const taxPeriod = await storage2.getTaxPeriod(clientTax.taxPeriodId);
       if (taxPeriod?.finPresentacion) {
         const dueDate = new Date(taxPeriod.finPresentacion);
         const daysUntilDue = Math.ceil((dueDate.getTime() - now.getTime()) / (1e3 * 60 * 60 * 24));
         if (daysUntilDue === 7) {
-          const client = await storage.getClient(clientTax.clientId);
-          const taxModel = await storage.getTaxModel(taxPeriod.modeloId);
+          const client = await storage2.getClient(clientTax.clientId);
+          const taxModel = await storage2.getTaxModel(taxPeriod.modeloId);
           if (client) {
             await sendTaxReminderEmail({
               ...clientTax,
@@ -5584,256 +6199,18 @@ function clearParametersCache() {
   cacheTimestamp = 0;
 }
 
-// server/services/budgets/calculateAutonomo.ts
-init_prisma_client();
-var parametersCache2 = null;
-var cacheTimestamp2 = 0;
-var CACHE_DURATION2 = 5 * 60 * 1e3;
-async function getParameters2() {
-  const now = Date.now();
-  if (parametersCache2 && now - cacheTimestamp2 < CACHE_DURATION2) {
-    return parametersCache2;
-  }
-  const params = await prisma_client_default.budget_parameters.findMany({
-    where: {
-      budgetType: "AUTONOMO",
-      isActive: true
-    }
-  });
-  const paramsMap = /* @__PURE__ */ new Map();
-  params.forEach((param) => {
-    const key = param.paramKey;
-    if (!paramsMap.has(key)) {
-      paramsMap.set(key, []);
-    }
-    paramsMap.get(key).push(param);
-  });
-  parametersCache2 = paramsMap;
-  cacheTimestamp2 = now;
-  return paramsMap;
-}
-var PRECIOS_BASE_FACTURAS = {
-  25: 45,
-  50: 55,
-  100: 80,
-  150: 100,
-  200: 125
-};
-var MULTIPLICADORES_FACTURACION = [
-  { max: 5e4, multiplicador: 1 },
-  { max: 1e5, multiplicador: 1.1 },
-  { max: 15e4, multiplicador: 1.15 },
-  { max: 2e5, multiplicador: 1.2 },
-  { max: 25e4, multiplicador: 1.25 },
-  { max: 3e5, multiplicador: 1.3 },
-  { max: Infinity, multiplicador: 1.4 }
-];
-function getPrecioBaseFacturas(facturasMes, params) {
-  const facturasParams = params.get("FACTURAS_MES") || [];
-  for (const param of facturasParams) {
-    if (param.minRange !== null && param.maxRange !== null) {
-      if (facturasMes >= param.minRange && facturasMes <= param.maxRange) {
-        return Number(param.paramValue);
-      }
-    }
-  }
-  if (facturasMes <= 25) return PRECIOS_BASE_FACTURAS[25];
-  if (facturasMes <= 50) return PRECIOS_BASE_FACTURAS[50];
-  if (facturasMes <= 100) return PRECIOS_BASE_FACTURAS[100];
-  if (facturasMes <= 150) return PRECIOS_BASE_FACTURAS[150];
-  return PRECIOS_BASE_FACTURAS[200];
-}
-function getPrecioNomina2(cantidad, params) {
-  const tramos = params.get("TRAMO_NOMINAS") || [];
-  for (const tramo of tramos) {
-    if (tramo.minRange !== null && tramo.maxRange !== null) {
-      if (cantidad >= tramo.minRange && cantidad <= tramo.maxRange) {
-        return Number(tramo.paramValue);
-      }
-    }
-  }
-  return 10;
-}
-function getMultiplicadorFacturacion2(facturacion) {
-  const tramo = MULTIPLICADORES_FACTURACION.find((t) => facturacion <= t.max);
-  return tramo ? tramo.multiplicador : 1.4;
-}
-async function calculateAutonomo(input) {
-  const items = [];
-  let position = 1;
-  const params = await getParameters2();
-  const precioBase = getPrecioBaseFacturas(input.facturasMes, params);
-  items.push({
-    concept: `Contabilidad - Hasta ${input.facturasMes} facturas/mes (${precioBase}\u20AC/mes)`,
-    category: "BASE_CONTABILIDAD",
-    position: position++,
-    quantity: 1,
-    unitPrice: precioBase,
-    vatPct: 21,
-    subtotal: precioBase,
-    total: precioBase * 1.21
-  });
-  let totalContabilidad = precioBase;
-  const extrasConfig = [
-    { key: "IMPUESTO_111", label: "Modelo 111 (Retenciones IRPF)", enabled: input.irpfAlquileres, default: 10 },
-    { key: "IMPUESTO_115", label: "Modelo 115 (Retenciones alquileres)", enabled: input.irpfAlquileres, default: 10 },
-    { key: "IMPUESTO_303", label: "Modelo 303 (IVA Intracomunitario)", enabled: input.ivaIntracomunitario, default: 10 }
-  ];
-  extrasConfig.forEach((extra) => {
-    if (extra.enabled) {
-      const extraParam = params.get(extra.key)?.[0];
-      const precio = extraParam ? Number(extraParam.paramValue) : extra.default;
-      items.push({
-        concept: extra.label,
-        category: extra.key,
-        position: position++,
-        quantity: 1,
-        unitPrice: precio,
-        vatPct: 21,
-        subtotal: precio,
-        total: precio * 1.21
-      });
-      totalContabilidad += precio;
-    }
-  });
-  if (input.notificaciones) {
-    items.push({
-      concept: "Notificaciones",
-      category: "EXTRA_NOTIFICACIONES",
-      position: position++,
-      quantity: 1,
-      unitPrice: 5,
-      vatPct: 21,
-      subtotal: 5,
-      total: 5 * 1.21
-    });
-    totalContabilidad += 5;
-  }
-  if (input.estadisticasINE) {
-    items.push({
-      concept: "Estad\xEDsticas INE",
-      category: "EXTRA_INE",
-      position: position++,
-      quantity: 1,
-      unitPrice: 5,
-      vatPct: 21,
-      subtotal: 5,
-      total: 5 * 1.21
-    });
-    totalContabilidad += 5;
-  }
-  const multiplicador = getMultiplicadorFacturacion2(input.facturacion);
-  if (multiplicador > 1) {
-    const incremento = totalContabilidad * (multiplicador - 1);
-    items.push({
-      concept: `Recargo por facturaci\xF3n (${input.facturacion.toLocaleString()}\u20AC) - ${((multiplicador - 1) * 100).toFixed(0)}%`,
-      category: "RECARGO_FACTURACION",
-      position: position++,
-      quantity: 1,
-      unitPrice: incremento,
-      vatPct: 21,
-      subtotal: incremento,
-      total: incremento * 1.21
-    });
-    totalContabilidad += incremento;
-  }
-  let totalLaboral = 0;
-  if (input.nominasMes > 0) {
-    const precioNomina = getPrecioNomina2(input.nominasMes, params);
-    const totalNominas = input.nominasMes * precioNomina;
-    items.push({
-      concept: `N\xF3minas (${input.nominasMes} x ${precioNomina}\u20AC)`,
-      category: "NOMINAS",
-      position: position++,
-      quantity: input.nominasMes,
-      unitPrice: precioNomina,
-      vatPct: 21,
-      subtotal: totalNominas,
-      total: totalNominas * 1.21
-    });
-    totalLaboral = totalNominas;
-  }
-  let totalBase = totalContabilidad + totalLaboral;
-  if (input.periodo === "MENSUAL") {
-    const mensualidad = Math.max(totalBase * 0.2, 10);
-    items.push({
-      concept: "Recargo por liquidaciones mensuales",
-      category: "RECARGO_MENSUALIDAD",
-      position: position++,
-      quantity: 1,
-      unitPrice: mensualidad,
-      vatPct: 21,
-      subtotal: mensualidad,
-      total: mensualidad * 1.21
-    });
-    totalBase += mensualidad;
-    totalContabilidad += mensualidad;
-  }
-  if (input.sistemaTributacion === "ESN") {
-    const recargo = totalBase * 0.1;
-    items.push({
-      concept: "Recargo por Estimaci\xF3n Simplificada Neta (+10%)",
-      category: "RECARGO_ESN",
-      position: position++,
-      quantity: 1,
-      unitPrice: recargo,
-      vatPct: 21,
-      subtotal: recargo,
-      total: recargo * 1.21
-    });
-    totalBase += recargo;
-  } else if (input.sistemaTributacion === "MODULOS") {
-    const descuento = totalBase * 0.1;
-    items.push({
-      concept: "Descuento por M\xF3dulos (-10%)",
-      category: "DESCUENTO_MODULOS",
-      position: position++,
-      quantity: 1,
-      unitPrice: -descuento,
-      vatPct: 21,
-      subtotal: -descuento,
-      total: -descuento * 1.21
-    });
-    totalBase -= descuento;
-  }
-  if (input.emprendedor) {
-    const descuento = totalBase * 0.2;
-    items.push({
-      concept: "Descuento Emprendedor (-20%)",
-      category: "DESCUENTO_EMPRENDEDOR",
-      position: position++,
-      quantity: 1,
-      unitPrice: -descuento,
-      vatPct: 21,
-      subtotal: -descuento,
-      total: -descuento * 1.21
-    });
-    totalBase -= descuento;
-  }
-  const subtotal = items.reduce((sum, item) => sum + item.subtotal, 0);
-  const vatTotal = items.reduce((sum, item) => sum + item.subtotal * (item.vatPct / 100), 0);
-  const total = subtotal + vatTotal;
-  return {
-    items,
-    subtotal: Math.round(subtotal * 100) / 100,
-    vatTotal: Math.round(vatTotal * 100) / 100,
-    total: Math.round(total * 100) / 100
-  };
-}
-function clearParametersCache2() {
-  parametersCache2 = null;
-  cacheTimestamp2 = 0;
-}
+// server/services/budgets/index.ts
+init_calculateAutonomo();
 
 // server/services/budgets/calculateRenta.ts
 init_prisma_client();
-var parametersCache3 = null;
+var parametersCache2 = null;
 var cacheTimestamp3 = 0;
 var CACHE_DURATION3 = 5 * 60 * 1e3;
-async function getParameters3() {
+async function getParameters2() {
   const now = Date.now();
-  if (parametersCache3 && now - cacheTimestamp3 < CACHE_DURATION3) {
-    return parametersCache3;
+  if (parametersCache2 && now - cacheTimestamp3 < CACHE_DURATION3) {
+    return parametersCache2;
   }
   const params = await prisma_client_default.budget_parameters.findMany({
     where: {
@@ -5845,7 +6222,7 @@ async function getParameters3() {
   params.forEach((param) => {
     paramsMap.set(param.paramKey, param);
   });
-  parametersCache3 = paramsMap;
+  parametersCache2 = paramsMap;
   cacheTimestamp3 = now;
   return paramsMap;
 }
@@ -5857,7 +6234,7 @@ var PRECIOS_BASE = {
 async function calculateRenta(input) {
   const items = [];
   let position = 1;
-  const params = await getParameters3();
+  const params = await getParameters2();
   let precioBase = 40;
   let conceptoBase = "Declaraci\xF3n Individual/Otros";
   if (input.unidadFamiliar === "MATRIMONIO") {
@@ -5958,20 +6335,20 @@ async function calculateRenta(input) {
     total: Math.round(total * 100) / 100
   };
 }
-function clearParametersCache3() {
-  parametersCache3 = null;
+function clearParametersCache2() {
+  parametersCache2 = null;
   cacheTimestamp3 = 0;
 }
 
 // server/services/budgets/calculateHerencias.ts
 init_prisma_client();
-var parametersCache4 = null;
+var parametersCache3 = null;
 var cacheTimestamp4 = 0;
 var CACHE_DURATION4 = 5 * 60 * 1e3;
-async function getParameters4() {
+async function getParameters3() {
   const now = Date.now();
-  if (parametersCache4 && now - cacheTimestamp4 < CACHE_DURATION4) {
-    return parametersCache4;
+  if (parametersCache3 && now - cacheTimestamp4 < CACHE_DURATION4) {
+    return parametersCache3;
   }
   const params = await prisma_client_default.budget_parameters.findMany({
     where: {
@@ -5983,7 +6360,7 @@ async function getParameters4() {
   params.forEach((param) => {
     paramsMap.set(param.paramKey, param);
   });
-  parametersCache4 = paramsMap;
+  parametersCache3 = paramsMap;
   cacheTimestamp4 = now;
   return paramsMap;
 }
@@ -6016,7 +6393,7 @@ async function calculateHerencias(input) {
   }
   const items = [];
   let position = 1;
-  const params = await getParameters4();
+  const params = await getParameters3();
   if (input.herederos > 0) {
     const param = params.get("INMUEBLE_HEREDERO");
     const precio = param ? Number(param.paramValue) : PRECIOS_UNITARIOS.HEREDERO;
@@ -6196,8 +6573,8 @@ async function calculateHerencias(input) {
     total: Math.round(total * 100) / 100
   };
 }
-function clearParametersCache4() {
-  parametersCache4 = null;
+function clearParametersCache3() {
+  parametersCache3 = null;
   cacheTimestamp4 = 0;
 }
 
@@ -7668,7 +8045,7 @@ var GestoriaBudgetService = class {
         // Negocio
         facturacion: input.facturacion,
         facturasMes: input.facturasMes,
-        nominasMes: input.nominasMes || null,
+        nominasMes: input.nominasMes || 0,
         sistemaTributacion: input.sistemaTributacion,
         periodoDeclaraciones: input.periodoDeclaraciones,
         // Modelos
@@ -7698,8 +8075,13 @@ var GestoriaBudgetService = class {
         totalFinal: calculation.totalFinal,
         // Metadata
         creadoPor: input.creadoPor,
-        configId: input.configId,
-        fechaCreacion: /* @__PURE__ */ new Date()
+        fechaCreacion: /* @__PURE__ */ new Date(),
+        // Relación con configuración
+        configuracion: {
+          connect: {
+            id: input.configId
+          }
+        }
       }
     });
     if (input.serviciosAdicionales && input.serviciosAdicionales.length > 0) {
@@ -7713,7 +8095,7 @@ var GestoriaBudgetService = class {
         }))
       });
     }
-    await this.logStatisticsEvent("CREATED", budget.id, budget.tipoGestoria);
+    await this.logStatisticsEvent("CREADO", budget.id, budget.tipoGestoria);
     return budget;
   }
   /**
@@ -7828,8 +8210,7 @@ var GestoriaBudgetService = class {
       where: { id },
       data: {
         ...this.buildUpdateData(input),
-        ...updatedTotals,
-        fechaModificacion: /* @__PURE__ */ new Date()
+        ...updatedTotals
       },
       include: {
         serviciosAdicionales: true
@@ -7867,7 +8248,7 @@ var GestoriaBudgetService = class {
         fechaAceptacion: /* @__PURE__ */ new Date()
       }
     });
-    await this.logStatisticsEvent("ACCEPTED", id, budget.tipoGestoria);
+    await this.logStatisticsEvent("ACEPTADO", id, budget.tipoGestoria);
     return updated;
   }
   /**
@@ -7886,7 +8267,7 @@ var GestoriaBudgetService = class {
         motivoRechazo: motivoRechazo || null
       }
     });
-    await this.logStatisticsEvent("REJECTED", id, budget.tipoGestoria);
+    await this.logStatisticsEvent("RECHAZADO", id, budget.tipoGestoria);
     return updated;
   }
   /**
@@ -8010,15 +8391,12 @@ var GestoriaBudgetService = class {
   buildUpdateData(input) {
     const data = {};
     const simpleFields = [
-      "nombreCompleto",
-      "cifNif",
+      "nombreCliente",
+      "nifCif",
       "email",
       "telefono",
       "direccion",
-      "codigoPostal",
-      "ciudad",
-      "provincia",
-      "actividadEmpresarial",
+      "personaContacto",
       "facturacion",
       "facturasMes",
       "nominasMes",
@@ -8040,10 +8418,9 @@ var GestoriaBudgetService = class {
       "aplicaDescuento",
       "tipoDescuento",
       "valorDescuento",
-      "motivoDescuento",
-      "observaciones",
       "estado",
-      "motivoRechazo"
+      "motivoRechazo",
+      "tipoGestoria"
     ];
     for (const field of simpleFields) {
       if (field in input) {
@@ -8053,13 +8430,14 @@ var GestoriaBudgetService = class {
     return data;
   }
   async logStatisticsEvent(evento, budgetId, tipoGestoria, userId) {
+    const data = {
+      budgetId,
+      evento,
+      fecha: /* @__PURE__ */ new Date()
+    };
+    if (userId) data.userId = userId;
     await prisma8.gestoria_budget_statistics_events.create({
-      data: {
-        budgetId,
-        tipoGestoria,
-        evento,
-        fecha: /* @__PURE__ */ new Date()
-      }
+      data
     });
   }
 };
@@ -8067,10 +8445,12 @@ var gestoriaBudgetService = new GestoriaBudgetService();
 
 // server/services/gestoria-budget-email-service.ts
 import nodemailer4 from "nodemailer";
-import { PrismaClient as PrismaClient9 } from "@prisma/client";
+import { PrismaClient as PrismaClient10 } from "@prisma/client";
 
 // server/services/gestoria-budget-pdf-service.ts
 import puppeteer2 from "puppeteer";
+import { PrismaClient as PrismaClient9 } from "@prisma/client";
+var prisma9 = new PrismaClient9();
 var GestoriaBudgetPDFService = class {
   /**
    * Generar PDF del presupuesto
@@ -8080,15 +8460,34 @@ var GestoriaBudgetPDFService = class {
     if (!config) {
       throw new Error(`No hay configuraci\xF3n activa para ${data.tipo}`);
     }
-    const html = this.generateHTML(data, config);
+    const template = await this.getTemplate(data.tipo, "AUTONOMO");
+    if (!template) {
+      throw new Error(
+        `\u274C No existe una plantilla activa para generar el PDF.
+Por favor, crea una plantilla en la secci\xF3n de "Plantillas de Presupuestos".
+Tipo: AUTONOMO | Empresa: ${data.tipo === "ASESORIA_LA_LLAVE" ? "LA_LLAVE" : "GESTORIA_ONLINE"}`
+      );
+    }
+    const html = this.generateHTMLFromTemplate(data, config, template);
     const browser = await puppeteer2.launch({
       headless: true,
-      args: ["--no-sandbox", "--disable-setuid-sandbox"]
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-accelerated-2d-canvas",
+        "--no-first-run",
+        "--no-zygote",
+        "--single-process",
+        "--disable-gpu"
+      ],
+      timeout: 6e4
     });
     try {
       const page = await browser.newPage();
       await page.setContent(html, {
-        waitUntil: "networkidle0"
+        waitUntil: "load",
+        timeout: 6e4
       });
       const pdf = await page.pdf({
         format: "A4",
@@ -8104,6 +8503,153 @@ var GestoriaBudgetPDFService = class {
     } finally {
       await browser.close();
     }
+  }
+  /**
+   * Buscar plantilla personalizada en la BD
+   */
+  async getTemplate(tipo, budgetType = "AUTONOMO") {
+    try {
+      const companyBrand = tipo === "ASESORIA_LA_LLAVE" ? "LA_LLAVE" : "GESTORIA_ONLINE";
+      const template = await prisma9.budget_templates.findFirst({
+        where: {
+          type: budgetType,
+          companyBrand,
+          isDefault: true,
+          isActive: true
+        },
+        orderBy: {
+          updatedAt: "desc"
+        }
+      });
+      return template;
+    } catch (error) {
+      console.error("Error al buscar plantilla:", error);
+      return null;
+    }
+  }
+  /**
+   * Generar HTML usando plantilla de BD
+   */
+  generateHTMLFromTemplate(data, config, template) {
+    const variables = this.prepareTemplateVariables(data, config);
+    let html = this.replaceVariables(template.htmlContent, variables);
+    if (template.customCss) {
+      if (html.includes("<style>")) {
+        html = html.replace("</style>", `
+${template.customCss}
+</style>`);
+      } else {
+        html = `<style>${template.customCss}</style>
+${html}`;
+      }
+    }
+    if (!html.toLowerCase().includes("<!doctype") && !html.toLowerCase().includes("<html")) {
+      html = `
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Presupuesto ${data.numero}</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; padding: 0; }
+  </style>
+</head>
+<body>
+  ${html}
+</body>
+</html>`;
+    }
+    return html;
+  }
+  /**
+   * Preparar variables para la plantilla
+   */
+  prepareTemplateVariables(data, config) {
+    const formatCurrency2 = (value) => value.toLocaleString("es-ES", { style: "currency", currency: "EUR" });
+    const formatDate2 = (date) => date.toLocaleDateString("es-ES", { year: "numeric", month: "long", day: "numeric" });
+    const formatDateShort = (date) => date.toLocaleDateString("es-ES", { day: "2-digit", month: "2-digit", year: "numeric" });
+    const serviciosContabilidadHTML = data.serviciosContabilidad.map((s) => `<tr><td>${s.concepto}</td></tr>`).join("");
+    const serviciosLaboralesHTML = data.serviciosLaborales.map((s) => `<tr><td>${s.concepto}</td></tr>`).join("");
+    const serviciosAdicionalesHTML = data.serviciosAdicionales.map((s) => `<tr><td>${s.nombre}</td><td>${s.tipoServicio === "MENSUAL" ? "Mensual" : "Puntual"}</td></tr>`).join("");
+    const iva = data.totalFinal * 0.21 / 1.21;
+    const subtotalSinIva = data.totalFinal - iva;
+    return {
+      // Presupuesto - Variables en MAYÚSCULAS (formato antiguo)
+      "{{NUMERO}}": data.numero,
+      "{{FECHA}}": formatDate2(data.fecha),
+      "{{FECHA_VALIDEZ}}": formatDate2(data.fechaValidez),
+      "{{TIPO}}": data.tipo === "ASESORIA_LA_LLAVE" ? "Asesor\xEDa La Llave" : "Gestor\xEDa Online",
+      // Presupuesto - Variables en minúsculas (formato nuevo)
+      "{{codigo}}": data.numero,
+      "{{fecha}}": formatDateShort(data.fecha),
+      "{{empresa}}": data.tipo === "ASESORIA_LA_LLAVE" ? "Asesor\xEDa La Llave" : "Gestor\xEDa Online",
+      // Cliente - MAYÚSCULAS
+      "{{NOMBRE_CLIENTE}}": data.nombreCompleto,
+      "{{CIF_NIF}}": data.cifNif || "",
+      "{{EMAIL}}": data.email || "",
+      "{{TELEFONO}}": data.telefono || "",
+      "{{DIRECCION}}": data.direccion || "",
+      "{{CODIGO_POSTAL}}": data.codigoPostal || "",
+      "{{CIUDAD}}": data.ciudad || "",
+      "{{PROVINCIA}}": data.provincia || "",
+      // Cliente - minúsculas
+      "{{nombre_contacto}}": data.nombreCompleto,
+      "{{email}}": data.email || "",
+      "{{telefono}}": data.telefono || "",
+      "{{direccion}}": data.direccion || "",
+      // Negocio - MAYÚSCULAS
+      "{{ACTIVIDAD}}": data.actividadEmpresarial || "",
+      "{{FACTURACION}}": formatCurrency2(data.facturacion),
+      "{{FACTURAS_MES}}": data.facturasMes.toString(),
+      "{{NOMINAS_MES}}": data.nominasMes?.toString() || "0",
+      "{{SISTEMA_TRIBUTACION}}": data.sistemaTributacion,
+      "{{PERIODO_DECLARACIONES}}": data.periodoDeclaraciones,
+      // Negocio - minúsculas
+      "{{actividad}}": data.actividadEmpresarial || "",
+      "{{facturacion_anual}}": formatCurrency2(data.facturacion),
+      "{{num_facturas}}": data.facturasMes.toString(),
+      "{{sistema_tributacion}}": data.sistemaTributacion,
+      "{{nominas_mes}}": data.nominasMes?.toString() || "0",
+      // Servicios (SIN PRECIOS INDIVIDUALES)
+      "{{SERVICIOS_CONTABILIDAD}}": serviciosContabilidadHTML || "<tr><td>No aplica</td></tr>",
+      "{{SERVICIOS_LABORALES}}": serviciosLaboralesHTML || "<tr><td>No aplica</td></tr>",
+      "{{SERVICIOS_ADICIONALES}}": serviciosAdicionalesHTML || "<tr><td>No aplica</td></tr>",
+      // Totales - MAYÚSCULAS
+      "{{TOTAL_CONTABILIDAD}}": formatCurrency2(data.totalContabilidad),
+      "{{TOTAL_LABORAL}}": formatCurrency2(data.totalLaboral),
+      "{{SUBTOTAL}}": formatCurrency2(data.subtotal),
+      "{{DESCUENTO}}": formatCurrency2(data.descuentoCalculado),
+      "{{TOTAL_FINAL}}": formatCurrency2(data.totalFinal),
+      // Totales - minúsculas
+      "{{subtotal}}": formatCurrency2(subtotalSinIva),
+      "{{iva}}": formatCurrency2(iva),
+      "{{total}}": formatCurrency2(data.totalFinal),
+      // Descuento
+      "{{TIENE_DESCUENTO}}": data.aplicaDescuento ? "S\xED" : "No",
+      "{{TIPO_DESCUENTO}}": data.tipoDescuento || "",
+      "{{VALOR_DESCUENTO}}": data.valorDescuento?.toString() || "0",
+      "{{MOTIVO_DESCUENTO}}": data.motivoDescuento || "",
+      // Observaciones
+      "{{OBSERVACIONES}}": data.observaciones || "",
+      "{{observaciones}}": data.observaciones || "",
+      // Branding
+      "{{COLOR_PRIMARIO}}": config.colorPrimario || "#2563eb",
+      "{{COLOR_SECUNDARIO}}": config.colorSecundario || "#1e40af",
+      "{{LOGO_URL}}": config.logoUrl || "",
+      "{{NOMBRE_EMPRESA}}": config.nombre || data.tipo
+    };
+  }
+  /**
+   * Reemplazar variables en el template
+   */
+  replaceVariables(html, variables) {
+    let result = html;
+    for (const [key, value] of Object.entries(variables)) {
+      const regex = new RegExp(key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g");
+      result = result.replace(regex, value || "");
+    }
+    return result;
   }
   /**
    * Generar HTML completo del PDF
@@ -8459,7 +9005,7 @@ var GestoriaBudgetPDFService = class {
    * Generar página de portada
    */
   generateCoverPage(data, config) {
-    const companyName = data.tipo === "OFICIAL" ? config.nombreEmpresaOficial : config.nombreEmpresaOnline;
+    const companyName = data.tipo === "ASESORIA_LA_LLAVE" ? config.nombreEmpresaOficial : config.nombreEmpresaOnline;
     return `
     <div class="page cover-page">
       <div class="cover-header">
@@ -8504,7 +9050,7 @@ var GestoriaBudgetPDFService = class {
    * Generar página de servicios
    */
   generateServicesPage(data, config) {
-    const companyName = data.tipo === "OFICIAL" ? config.nombreEmpresaOficial : config.nombreEmpresaOnline;
+    const companyName = data.tipo === "ASESORIA_LA_LLAVE" ? config.nombreEmpresaOficial : config.nombreEmpresaOnline;
     return `
     <div class="page">
       ${this.generatePageHeader(data, config, companyName)}
@@ -8518,10 +9064,8 @@ var GestoriaBudgetPDFService = class {
         <table class="services-table">
           <thead>
             <tr>
-              <th style="width: 50%;">Concepto</th>
+              <th style="width: 85%;">Concepto</th>
               <th style="width: 15%;" class="text-center">Cantidad</th>
-              <th style="width: 17.5%;" class="text-right">Precio Unit.</th>
-              <th style="width: 17.5%;" class="text-right">Total</th>
             </tr>
           </thead>
           <tbody>
@@ -8529,12 +9073,10 @@ var GestoriaBudgetPDFService = class {
               <tr>
                 <td>${s.concepto}</td>
                 <td class="text-center">${s.cantidad || "-"}</td>
-                <td class="text-right">${this.formatCurrency(s.precio)}</td>
-                <td class="text-right">${this.formatCurrency(s.total)}</td>
               </tr>
             `).join("")}
             <tr class="subtotal-row">
-              <td colspan="3" class="text-right">Subtotal Contabilidad:</td>
+              <td class="text-right">Subtotal Contabilidad:</td>
               <td class="text-right">${this.formatCurrency(data.totalContabilidad)}</td>
             </tr>
           </tbody>
@@ -8549,10 +9091,8 @@ var GestoriaBudgetPDFService = class {
         <table class="services-table">
           <thead>
             <tr>
-              <th style="width: 50%;">Concepto</th>
+              <th style="width: 85%;">Concepto</th>
               <th style="width: 15%;" class="text-center">Cantidad</th>
-              <th style="width: 17.5%;" class="text-right">Precio Unit.</th>
-              <th style="width: 17.5%;" class="text-right">Total</th>
             </tr>
           </thead>
           <tbody>
@@ -8560,12 +9100,10 @@ var GestoriaBudgetPDFService = class {
               <tr>
                 <td>${s.concepto}</td>
                 <td class="text-center">${s.cantidad || "-"}</td>
-                <td class="text-right">${this.formatCurrency(s.precio)}</td>
-                <td class="text-right">${this.formatCurrency(s.total)}</td>
               </tr>
             `).join("")}
             <tr class="subtotal-row">
-              <td colspan="3" class="text-right">Subtotal Laboral:</td>
+              <td class="text-right">Subtotal Laboral:</td>
               <td class="text-right">${this.formatCurrency(data.totalLaboral)}</td>
             </tr>
           </tbody>
@@ -8580,9 +9118,8 @@ var GestoriaBudgetPDFService = class {
         <table class="services-table">
           <thead>
             <tr>
-              <th style="width: 60%;">Concepto</th>
+              <th style="width: 80%;">Concepto</th>
               <th style="width: 20%;" class="text-center">Tipo</th>
-              <th style="width: 20%;" class="text-right">Precio</th>
             </tr>
           </thead>
           <tbody>
@@ -8592,7 +9129,6 @@ var GestoriaBudgetPDFService = class {
                 <td class="text-center">
                   <span class="badge">${s.tipoServicio === "MENSUAL" ? "Mensual" : "Puntual"}</span>
                 </td>
-                <td class="text-right">${this.formatCurrency(s.precio)}</td>
               </tr>
             `).join("")}
           </tbody>
@@ -8608,7 +9144,7 @@ var GestoriaBudgetPDFService = class {
    * Generar página de resumen y términos
    */
   generateSummaryPage(data, config) {
-    const companyName = data.tipo === "OFICIAL" ? config.nombreEmpresaOficial : config.nombreEmpresaOnline;
+    const companyName = data.tipo === "ASESORIA_LA_LLAVE" ? config.nombreEmpresaOficial : config.nombreEmpresaOnline;
     return `
     <div class="page">
       ${this.generatePageHeader(data, config, companyName)}
@@ -8777,7 +9313,7 @@ var GestoriaBudgetPDFService = class {
 var gestoriaBudgetPDFService = new GestoriaBudgetPDFService();
 
 // server/services/gestoria-budget-email-service.ts
-var prisma9 = new PrismaClient9();
+var prisma10 = new PrismaClient10();
 var GestoriaBudgetEmailService = class {
   constructor() {
     this.transporter = null;
@@ -8804,7 +9340,7 @@ var GestoriaBudgetEmailService = class {
    * Enviar presupuesto por email
    */
   async sendBudgetEmail(budgetId, options = {}) {
-    const budget = await prisma9.gestoria_budgets.findUnique({
+    const budget = await prisma10.gestoria_budgets.findUnique({
       where: { id: budgetId },
       include: {
         serviciosAdicionales: true
@@ -8855,7 +9391,7 @@ var GestoriaBudgetEmailService = class {
       observaciones: budget.direccion || void 0
     };
     const pdfBuffer = await gestoriaBudgetPDFService.generatePDF(pdfData);
-    const companyName = budget.tipoGestoria === "OFICIAL" ? config.nombreEmpresa : config.nombreEmpresa;
+    const companyName = budget.tipoGestoria === "ASESORIA_LA_LLAVE" ? config.nombreEmpresa : config.nombreEmpresa;
     const subject = options.subject || `Presupuesto ${budget.numero} - ${companyName}`;
     const htmlBody = this.buildEmailHTML(budget, config, options.customMessage);
     const transporter2 = await this.getTransporter();
@@ -8875,13 +9411,13 @@ var GestoriaBudgetEmailService = class {
     };
     await transporter2.sendMail(mailOptions);
     await this.logEmailSend(budgetId, options.to, options.cc);
-    await prisma9.gestoria_budgets.update({
+    await prisma10.gestoria_budgets.update({
       where: { id: budgetId },
       data: {
         fechaEnvio: /* @__PURE__ */ new Date()
       }
     });
-    await prisma9.gestoria_budget_statistics_events.create({
+    await prisma10.gestoria_budget_statistics_events.create({
       data: {
         budgetId,
         tipoGestoria: budget.tipoGestoria,
@@ -9036,7 +9572,7 @@ var GestoriaBudgetEmailService = class {
    * Construir HTML del email
    */
   buildEmailHTML(budget, config, customMessage) {
-    const companyName = budget.tipoGestoria === "OFICIAL" ? config.nombreEmpresa : config.nombreEmpresa;
+    const companyName = budget.tipoGestoria === "ASESORIA_LA_LLAVE" ? config.nombreEmpresa : config.nombreEmpresa;
     const primaryColor = config.colorPrimario || "#2563eb";
     return `
 <!DOCTYPE html>
@@ -9128,7 +9664,7 @@ var GestoriaBudgetEmailService = class {
    * Registrar envío de email en base de datos
    */
   async logEmailSend(budgetId, to, cc) {
-    await prisma9.budget_email_logs.create({
+    await prisma10.budget_email_logs.create({
       data: {
         budgetId,
         emailDestino: to,
@@ -9155,15 +9691,15 @@ var GestoriaBudgetEmailService = class {
 var gestoriaBudgetEmailService = new GestoriaBudgetEmailService();
 
 // server/services/gestoria-budget-conversion-service.ts
-import { PrismaClient as PrismaClient10 } from "@prisma/client";
-var prisma10 = new PrismaClient10();
+import { PrismaClient as PrismaClient11 } from "@prisma/client";
+var prisma11 = new PrismaClient11();
 var GestoriaBudgetConversionService = class {
   /**
    * Convertir un presupuesto aceptado a cliente
    */
   async convertToClient(budgetId, options = {}) {
     try {
-      const budget = await prisma10.gestoria_budgets.findUnique({
+      const budget = await prisma11.gestoria_budgets.findUnique({
         where: { id: budgetId },
         include: {
           serviciosAdicionales: true
@@ -9181,7 +9717,7 @@ var GestoriaBudgetConversionService = class {
       if (!budget.nifCif) {
         throw new Error("El presupuesto debe tener CIF/NIF para convertirlo a cliente");
       }
-      const existingClient = await prisma10.clients.findFirst({
+      const existingClient = await prisma11.clients.findFirst({
         where: {
           nifCif: budget.nifCif
         }
@@ -9189,7 +9725,7 @@ var GestoriaBudgetConversionService = class {
       if (existingClient) {
         throw new Error(`Ya existe un cliente con CIF/NIF ${budget.nifCif}`);
       }
-      const client = await prisma10.clients.create({
+      const client = await prisma11.clients.create({
         data: {
           id: `CLI-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
           razonSocial: budget.nombreCliente,
@@ -9207,13 +9743,13 @@ var GestoriaBudgetConversionService = class {
       });
       await this.createTaxAssignments(client.id, budget);
       await this.archiveBudgetPDF(budget, client.id);
-      await prisma10.gestoria_budgets.update({
+      await prisma11.gestoria_budgets.update({
         where: { id: budgetId },
         data: {
           clienteId: client.id
         }
       });
-      await prisma10.gestoria_budget_statistics_events.create({
+      await prisma11.gestoria_budget_statistics_events.create({
         data: {
           budgetId,
           evento: "CONVERTIDO",
@@ -9308,7 +9844,7 @@ var GestoriaBudgetConversionService = class {
       });
     }
     if (assignments.length > 0) {
-      await prisma10.client_tax_assignments.createMany({
+      await prisma11.client_tax_assignments.createMany({
         data: assignments
       });
     }
@@ -9318,14 +9854,15 @@ var GestoriaBudgetConversionService = class {
    */
   async archiveBudgetPDF(budget, clientId) {
     try {
-      await prisma10.documents.create({
+      await prisma11.documents.create({
         data: {
           id: `DOC-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-          clientId,
+          client_id: clientId,
+          created_by: "system",
           name: `Presupuesto ${budget.numero}`,
           type: "PRESUPUESTO",
-          upload_date: /* @__PURE__ */ new Date(),
-          file_path: budget.pdfPath || null
+          file_path: budget.pdfPath || null,
+          status: "active"
         }
       });
     } catch (error) {
@@ -9336,7 +9873,7 @@ var GestoriaBudgetConversionService = class {
    * Verificar si un presupuesto puede ser convertido a cliente
    */
   async canConvertToClient(budgetId) {
-    const budget = await prisma10.gestoria_budgets.findUnique({
+    const budget = await prisma11.gestoria_budgets.findUnique({
       where: { id: budgetId }
     });
     if (!budget) {
@@ -9351,7 +9888,7 @@ var GestoriaBudgetConversionService = class {
     if (!budget.nifCif) {
       return { canConvert: false, reason: "El presupuesto debe tener CIF/NIF" };
     }
-    const existingClient = await prisma10.clients.findFirst({
+    const existingClient = await prisma11.clients.findFirst({
       where: {
         nifCif: budget.nifCif
       }
@@ -9365,6 +9902,7 @@ var GestoriaBudgetConversionService = class {
 var gestoriaBudgetConversionService = new GestoriaBudgetConversionService();
 
 // server/routes/gestoria-budgets.ts
+init_prisma_client();
 var router5 = express5.Router();
 router5.get("/", async (req, res) => {
   try {
@@ -9533,10 +10071,24 @@ router5.post("/:id/accept", async (req, res) => {
   try {
     const id = req.params.id;
     const budget = await gestoriaBudgetService.acceptBudget(id);
+    let clientId = budget.clienteId;
+    if (!clientId) {
+      try {
+        const canConvert = await gestoriaBudgetConversionService.canConvertToClient(id);
+        if (canConvert.canConvert) {
+          clientId = await gestoriaBudgetConversionService.convertToClient(id, {
+            notifyClient: false
+            // No enviar notificación adicional
+          });
+        }
+      } catch (conversionError) {
+        console.warn(`No se pudo convertir autom\xE1ticamente presupuesto ${id} a cliente:`, conversionError);
+      }
+    }
     res.json({
       success: true,
-      data: budget,
-      message: "Presupuesto aceptado exitosamente"
+      data: { ...budget, clientId },
+      message: clientId ? "Presupuesto aceptado y cliente creado exitosamente" : "Presupuesto aceptado exitosamente"
     });
   } catch (error) {
     res.status(400).json({
@@ -9776,6 +10328,635 @@ router5.delete("/config/:id", async (req, res) => {
     res.json({
       success: true,
       message: "Configuraci\xF3n eliminada exitosamente"
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+router5.get("/config/autonomo", async (req, res) => {
+  try {
+    const { getConfiguracionActual: getConfiguracionActual2 } = await Promise.resolve().then(() => (init_calculateAutonomo(), calculateAutonomo_exports));
+    const config = await getConfiguracionActual2();
+    res.json({
+      success: true,
+      data: config
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+router5.put("/config/autonomo", async (req, res) => {
+  try {
+    const { porcentajePeriodoMensual, porcentajeEDN, porcentajeModulos, minimoMensual } = req.body;
+    const config = await prisma_client_default.gestoria_budget_autonomo_config.findFirst({
+      where: { activo: true }
+    });
+    if (!config) {
+      return res.status(404).json({
+        success: false,
+        message: "No se encontr\xF3 configuraci\xF3n activa"
+      });
+    }
+    const updated = await prisma_client_default.gestoria_budget_autonomo_config.update({
+      where: { id: config.id },
+      data: {
+        porcentajePeriodoMensual: porcentajePeriodoMensual !== void 0 ? porcentajePeriodoMensual : void 0,
+        porcentajeEDN: porcentajeEDN !== void 0 ? porcentajeEDN : void 0,
+        porcentajeModulos: porcentajeModulos !== void 0 ? porcentajeModulos : void 0,
+        minimoMensual: minimoMensual !== void 0 ? minimoMensual : void 0,
+        modificadoPor: req.body.userId || "system"
+      }
+    });
+    const { clearConfigCache: clearConfigCache2 } = await Promise.resolve().then(() => (init_calculateAutonomo(), calculateAutonomo_exports));
+    clearConfigCache2();
+    res.json({
+      success: true,
+      data: updated,
+      message: "Configuraci\xF3n actualizada exitosamente"
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+router5.get("/config/autonomo/invoice-tiers", async (req, res) => {
+  try {
+    const config = await prisma_client_default.gestoria_budget_autonomo_config.findFirst({
+      where: { activo: true },
+      include: {
+        tramosFacturas: {
+          orderBy: { orden: "asc" }
+        }
+      }
+    });
+    if (!config) {
+      return res.status(404).json({
+        success: false,
+        message: "No se encontr\xF3 configuraci\xF3n activa"
+      });
+    }
+    res.json({
+      success: true,
+      data: config.tramosFacturas
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+router5.post("/config/autonomo/invoice-tiers", async (req, res) => {
+  try {
+    const { orden, minFacturas, maxFacturas, precio, etiqueta } = req.body;
+    const config = await prisma_client_default.gestoria_budget_autonomo_config.findFirst({
+      where: { activo: true }
+    });
+    if (!config) {
+      return res.status(404).json({
+        success: false,
+        message: "No se encontr\xF3 configuraci\xF3n activa"
+      });
+    }
+    const tramo = await prisma_client_default.gestoria_budget_invoice_tiers.create({
+      data: {
+        configId: config.id,
+        orden,
+        minFacturas,
+        maxFacturas: maxFacturas || null,
+        precio,
+        etiqueta: etiqueta || null
+      }
+    });
+    const { clearConfigCache: clearConfigCache2 } = await Promise.resolve().then(() => (init_calculateAutonomo(), calculateAutonomo_exports));
+    clearConfigCache2();
+    res.status(201).json({
+      success: true,
+      data: tramo,
+      message: "Tramo de facturas creado exitosamente"
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+router5.put("/config/autonomo/invoice-tiers/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { orden, minFacturas, maxFacturas, precio, etiqueta } = req.body;
+    const tramo = await prisma_client_default.gestoria_budget_invoice_tiers.update({
+      where: { id },
+      data: {
+        orden: orden !== void 0 ? orden : void 0,
+        minFacturas: minFacturas !== void 0 ? minFacturas : void 0,
+        maxFacturas: maxFacturas !== void 0 ? maxFacturas || null : void 0,
+        precio: precio !== void 0 ? precio : void 0,
+        etiqueta: etiqueta !== void 0 ? etiqueta || null : void 0
+      }
+    });
+    const { clearConfigCache: clearConfigCache2 } = await Promise.resolve().then(() => (init_calculateAutonomo(), calculateAutonomo_exports));
+    clearConfigCache2();
+    res.json({
+      success: true,
+      data: tramo,
+      message: "Tramo de facturas actualizado exitosamente"
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+router5.delete("/config/autonomo/invoice-tiers/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    await prisma_client_default.gestoria_budget_invoice_tiers.delete({
+      where: { id }
+    });
+    const { clearConfigCache: clearConfigCache2 } = await Promise.resolve().then(() => (init_calculateAutonomo(), calculateAutonomo_exports));
+    clearConfigCache2();
+    res.json({
+      success: true,
+      message: "Tramo de facturas eliminado exitosamente"
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+router5.put("/config/autonomo/invoice-tiers/reorder", async (req, res) => {
+  try {
+    const { orders } = req.body;
+    await Promise.all(
+      orders.map(
+        (item) => prisma_client_default.gestoria_budget_invoice_tiers.update({
+          where: { id: item.id },
+          data: { orden: item.orden }
+        })
+      )
+    );
+    const { clearConfigCache: clearConfigCache2 } = await Promise.resolve().then(() => (init_calculateAutonomo(), calculateAutonomo_exports));
+    clearConfigCache2();
+    res.json({
+      success: true,
+      message: "Tramos reordenados exitosamente"
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+router5.get("/config/autonomo/payroll-tiers", async (req, res) => {
+  try {
+    const config = await prisma_client_default.gestoria_budget_autonomo_config.findFirst({
+      where: { activo: true },
+      include: {
+        tramosNominas: {
+          orderBy: { orden: "asc" }
+        }
+      }
+    });
+    if (!config) {
+      return res.status(404).json({
+        success: false,
+        message: "No se encontr\xF3 configuraci\xF3n activa"
+      });
+    }
+    res.json({
+      success: true,
+      data: config.tramosNominas
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+router5.post("/config/autonomo/payroll-tiers", async (req, res) => {
+  try {
+    const { orden, minNominas, maxNominas, precio, etiqueta } = req.body;
+    const config = await prisma_client_default.gestoria_budget_autonomo_config.findFirst({
+      where: { activo: true }
+    });
+    if (!config) {
+      return res.status(404).json({
+        success: false,
+        message: "No se encontr\xF3 configuraci\xF3n activa"
+      });
+    }
+    const tramo = await prisma_client_default.gestoria_budget_payroll_tiers.create({
+      data: {
+        configId: config.id,
+        orden,
+        minNominas,
+        maxNominas: maxNominas || null,
+        precio,
+        etiqueta: etiqueta || null
+      }
+    });
+    const { clearConfigCache: clearConfigCache2 } = await Promise.resolve().then(() => (init_calculateAutonomo(), calculateAutonomo_exports));
+    clearConfigCache2();
+    res.status(201).json({
+      success: true,
+      data: tramo,
+      message: "Tramo de n\xF3minas creado exitosamente"
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+router5.put("/config/autonomo/payroll-tiers/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { orden, minNominas, maxNominas, precio, etiqueta } = req.body;
+    const tramo = await prisma_client_default.gestoria_budget_payroll_tiers.update({
+      where: { id },
+      data: {
+        orden: orden !== void 0 ? orden : void 0,
+        minNominas: minNominas !== void 0 ? minNominas : void 0,
+        maxNominas: maxNominas !== void 0 ? maxNominas || null : void 0,
+        precio: precio !== void 0 ? precio : void 0,
+        etiqueta: etiqueta !== void 0 ? etiqueta || null : void 0
+      }
+    });
+    const { clearConfigCache: clearConfigCache2 } = await Promise.resolve().then(() => (init_calculateAutonomo(), calculateAutonomo_exports));
+    clearConfigCache2();
+    res.json({
+      success: true,
+      data: tramo,
+      message: "Tramo de n\xF3minas actualizado exitosamente"
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+router5.delete("/config/autonomo/payroll-tiers/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    await prisma_client_default.gestoria_budget_payroll_tiers.delete({
+      where: { id }
+    });
+    const { clearConfigCache: clearConfigCache2 } = await Promise.resolve().then(() => (init_calculateAutonomo(), calculateAutonomo_exports));
+    clearConfigCache2();
+    res.json({
+      success: true,
+      message: "Tramo de n\xF3minas eliminado exitosamente"
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+router5.get("/config/autonomo/billing-tiers", async (req, res) => {
+  try {
+    const config = await prisma_client_default.gestoria_budget_autonomo_config.findFirst({
+      where: { activo: true },
+      include: {
+        tramosFacturacionAnual: {
+          orderBy: { orden: "asc" }
+        }
+      }
+    });
+    if (!config) {
+      return res.status(404).json({
+        success: false,
+        message: "No se encontr\xF3 configuraci\xF3n activa"
+      });
+    }
+    res.json({
+      success: true,
+      data: config.tramosFacturacionAnual
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+router5.post("/config/autonomo/billing-tiers", async (req, res) => {
+  try {
+    const { orden, minFacturacion, maxFacturacion, multiplicador, etiqueta } = req.body;
+    const config = await prisma_client_default.gestoria_budget_autonomo_config.findFirst({
+      where: { activo: true }
+    });
+    if (!config) {
+      return res.status(404).json({
+        success: false,
+        message: "No se encontr\xF3 configuraci\xF3n activa"
+      });
+    }
+    const tramo = await prisma_client_default.gestoria_budget_annual_billing_tiers.create({
+      data: {
+        configId: config.id,
+        orden,
+        minFacturacion,
+        maxFacturacion: maxFacturacion || null,
+        multiplicador,
+        etiqueta: etiqueta || null
+      }
+    });
+    const { clearConfigCache: clearConfigCache2 } = await Promise.resolve().then(() => (init_calculateAutonomo(), calculateAutonomo_exports));
+    clearConfigCache2();
+    res.status(201).json({
+      success: true,
+      data: tramo,
+      message: "Tramo de facturaci\xF3n creado exitosamente"
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+router5.put("/config/autonomo/billing-tiers/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { orden, minFacturacion, maxFacturacion, multiplicador, etiqueta } = req.body;
+    const tramo = await prisma_client_default.gestoria_budget_annual_billing_tiers.update({
+      where: { id },
+      data: {
+        orden: orden !== void 0 ? orden : void 0,
+        minFacturacion: minFacturacion !== void 0 ? minFacturacion : void 0,
+        maxFacturacion: maxFacturacion !== void 0 ? maxFacturacion || null : void 0,
+        multiplicador: multiplicador !== void 0 ? multiplicador : void 0,
+        etiqueta: etiqueta !== void 0 ? etiqueta || null : void 0
+      }
+    });
+    const { clearConfigCache: clearConfigCache2 } = await Promise.resolve().then(() => (init_calculateAutonomo(), calculateAutonomo_exports));
+    clearConfigCache2();
+    res.json({
+      success: true,
+      data: tramo,
+      message: "Tramo de facturaci\xF3n actualizado exitosamente"
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+router5.delete("/config/autonomo/billing-tiers/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    await prisma_client_default.gestoria_budget_annual_billing_tiers.delete({
+      where: { id }
+    });
+    const { clearConfigCache: clearConfigCache2 } = await Promise.resolve().then(() => (init_calculateAutonomo(), calculateAutonomo_exports));
+    clearConfigCache2();
+    res.json({
+      success: true,
+      message: "Tramo de facturaci\xF3n eliminado exitosamente"
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+router5.get("/config/autonomo/fiscal-models", async (req, res) => {
+  try {
+    const config = await prisma_client_default.gestoria_budget_autonomo_config.findFirst({
+      where: { activo: true },
+      include: {
+        preciosModelosFiscales: {
+          orderBy: { orden: "asc" }
+        }
+      }
+    });
+    if (!config) {
+      return res.status(404).json({
+        success: false,
+        message: "No se encontr\xF3 configuraci\xF3n activa"
+      });
+    }
+    res.json({
+      success: true,
+      data: config.preciosModelosFiscales
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+router5.post("/config/autonomo/fiscal-models", async (req, res) => {
+  try {
+    const { codigoModelo, nombreModelo, precio, activo, orden } = req.body;
+    const config = await prisma_client_default.gestoria_budget_autonomo_config.findFirst({
+      where: { activo: true }
+    });
+    if (!config) {
+      return res.status(404).json({
+        success: false,
+        message: "No se encontr\xF3 configuraci\xF3n activa"
+      });
+    }
+    const modelo = await prisma_client_default.gestoria_budget_fiscal_model_pricing.create({
+      data: {
+        configId: config.id,
+        codigoModelo,
+        nombreModelo,
+        precio,
+        activo: activo !== void 0 ? activo : true,
+        orden: orden !== void 0 ? orden : 0
+      }
+    });
+    const { clearConfigCache: clearConfigCache2 } = await Promise.resolve().then(() => (init_calculateAutonomo(), calculateAutonomo_exports));
+    clearConfigCache2();
+    res.status(201).json({
+      success: true,
+      data: modelo,
+      message: "Modelo fiscal creado exitosamente"
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+router5.put("/config/autonomo/fiscal-models/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { codigoModelo, nombreModelo, precio, activo, orden } = req.body;
+    const modelo = await prisma_client_default.gestoria_budget_fiscal_model_pricing.update({
+      where: { id },
+      data: {
+        codigoModelo: codigoModelo !== void 0 ? codigoModelo : void 0,
+        nombreModelo: nombreModelo !== void 0 ? nombreModelo : void 0,
+        precio: precio !== void 0 ? precio : void 0,
+        activo: activo !== void 0 ? activo : void 0,
+        orden: orden !== void 0 ? orden : void 0
+      }
+    });
+    const { clearConfigCache: clearConfigCache2 } = await Promise.resolve().then(() => (init_calculateAutonomo(), calculateAutonomo_exports));
+    clearConfigCache2();
+    res.json({
+      success: true,
+      data: modelo,
+      message: "Modelo fiscal actualizado exitosamente"
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+router5.delete("/config/autonomo/fiscal-models/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    await prisma_client_default.gestoria_budget_fiscal_model_pricing.delete({
+      where: { id }
+    });
+    const { clearConfigCache: clearConfigCache2 } = await Promise.resolve().then(() => (init_calculateAutonomo(), calculateAutonomo_exports));
+    clearConfigCache2();
+    res.json({
+      success: true,
+      message: "Modelo fiscal eliminado exitosamente"
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+router5.get("/config/autonomo/services", async (req, res) => {
+  try {
+    const config = await prisma_client_default.gestoria_budget_autonomo_config.findFirst({
+      where: { activo: true },
+      include: {
+        preciosServiciosAdicionales: {
+          orderBy: { orden: "asc" }
+        }
+      }
+    });
+    if (!config) {
+      return res.status(404).json({
+        success: false,
+        message: "No se encontr\xF3 configuraci\xF3n activa"
+      });
+    }
+    res.json({
+      success: true,
+      data: config.preciosServiciosAdicionales
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+router5.post("/config/autonomo/services", async (req, res) => {
+  try {
+    const { codigo, nombre, descripcion, precio, tipoServicio, activo, orden } = req.body;
+    const config = await prisma_client_default.gestoria_budget_autonomo_config.findFirst({
+      where: { activo: true }
+    });
+    if (!config) {
+      return res.status(404).json({
+        success: false,
+        message: "No se encontr\xF3 configuraci\xF3n activa"
+      });
+    }
+    const servicio = await prisma_client_default.gestoria_budget_additional_service_pricing.create({
+      data: {
+        configId: config.id,
+        codigo,
+        nombre,
+        descripcion: descripcion || null,
+        precio,
+        tipoServicio,
+        activo: activo !== void 0 ? activo : true,
+        orden: orden !== void 0 ? orden : 0
+      }
+    });
+    const { clearConfigCache: clearConfigCache2 } = await Promise.resolve().then(() => (init_calculateAutonomo(), calculateAutonomo_exports));
+    clearConfigCache2();
+    res.status(201).json({
+      success: true,
+      data: servicio,
+      message: "Servicio adicional creado exitosamente"
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+router5.put("/config/autonomo/services/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { codigo, nombre, descripcion, precio, tipoServicio, activo, orden } = req.body;
+    const servicio = await prisma_client_default.gestoria_budget_additional_service_pricing.update({
+      where: { id },
+      data: {
+        codigo: codigo !== void 0 ? codigo : void 0,
+        nombre: nombre !== void 0 ? nombre : void 0,
+        descripcion: descripcion !== void 0 ? descripcion || null : void 0,
+        precio: precio !== void 0 ? precio : void 0,
+        tipoServicio: tipoServicio !== void 0 ? tipoServicio : void 0,
+        activo: activo !== void 0 ? activo : void 0,
+        orden: orden !== void 0 ? orden : void 0
+      }
+    });
+    const { clearConfigCache: clearConfigCache2 } = await Promise.resolve().then(() => (init_calculateAutonomo(), calculateAutonomo_exports));
+    clearConfigCache2();
+    res.json({
+      success: true,
+      data: servicio,
+      message: "Servicio adicional actualizado exitosamente"
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+router5.delete("/config/autonomo/services/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    await prisma_client_default.gestoria_budget_additional_service_pricing.delete({
+      where: { id }
+    });
+    const { clearConfigCache: clearConfigCache2 } = await Promise.resolve().then(() => (init_calculateAutonomo(), calculateAutonomo_exports));
+    clearConfigCache2();
+    res.json({
+      success: true,
+      message: "Servicio adicional eliminado exitosamente"
     });
   } catch (error) {
     res.status(400).json({
@@ -10098,6 +11279,7 @@ function parseActiveCell(value) {
 // server/budget-parameters.ts
 init_prisma_client();
 import { Router } from "express";
+init_calculateAutonomo();
 var router6 = Router();
 function ensureAdmin(req, res, next) {
   const roleName = req.user?.roleName;
@@ -10194,13 +11376,13 @@ router6.put("/:id", authenticateToken, ensureAdmin, async (req, res) => {
         clearParametersCache();
         break;
       case "AUTONOMO":
-        clearParametersCache2();
+        clearConfigCache();
         break;
       case "RENTA":
-        clearParametersCache3();
+        clearParametersCache2();
         break;
       case "HERENCIAS":
-        clearParametersCache4();
+        clearParametersCache3();
         break;
     }
     res.json({
@@ -10237,9 +11419,9 @@ router6.put("/bulk/update", authenticateToken, ensureAdmin, async (req, res) => 
     const successful = results.filter((r) => r !== null).length;
     console.log(`\u2705 Actualizaci\xF3n masiva: ${successful}/${updates.length} par\xE1metros (por ${req.user?.username})`);
     clearParametersCache();
+    clearConfigCache();
     clearParametersCache2();
     clearParametersCache3();
-    clearParametersCache4();
     res.json({
       updated: successful,
       total: updates.length
@@ -10485,797 +11667,986 @@ router7.post("/:id/set-default", async (req, res) => {
 });
 var budget_templates_default = router7;
 
-// server/documents.ts
+// server/routes/documents.routes.ts
 import { Router as Router2 } from "express";
 
-// server/services/document-service.ts
+// server/services/documents.service.ts
 init_prisma_client();
-import * as fs5 from "fs";
-import * as path5 from "path";
-import { v4 as uuidv4 } from "uuid";
-import multer from "multer";
-var DocumentService = class {
-  // 50MB
-  constructor(uploadDir = "./uploads/documents") {
-    this.maxFileSize = 50 * 1024 * 1024;
-    this.uploadDir = uploadDir;
-    this.ensureUploadDir();
+import { nanoid } from "nanoid";
+var DocumentsService = class {
+  /**
+   * Generar siguiente número de recibo
+   */
+  async getNextReceiptNumber(year) {
+    const lastReceipt = await prisma_client_default.receipts.findFirst({
+      where: { year },
+      orderBy: { sequential: "desc" }
+    });
+    const sequential = lastReceipt ? lastReceipt.sequential + 1 : 1;
+    const numero = `REC-${year}-${sequential.toString().padStart(4, "0")}`;
+    return { numero, sequential };
   }
-  ensureUploadDir() {
-    if (!fs5.existsSync(this.uploadDir)) {
-      fs5.mkdirSync(this.uploadDir, { recursive: true });
-    }
-  }
-  // ============ DOCUMENTO CRUD ============
-  async createDocument(data) {
-    const id = uuidv4();
-    const document = await prisma_client_default.documents.create({
+  /**
+   * Crear recibo
+   */
+  async createReceipt(data) {
+    const year = (/* @__PURE__ */ new Date()).getFullYear();
+    const { numero, sequential } = await this.getNextReceiptNumber(year);
+    const iva_porcentaje = data.iva_porcentaje || 21;
+    const iva_importe = data.base_imponible * iva_porcentaje / 100;
+    const total = data.base_imponible + iva_importe;
+    return await prisma_client_default.receipts.create({
       data: {
-        id,
+        id: nanoid(),
+        numero,
+        year,
+        sequential,
+        client_id: data.clientId || null,
+        recipient_name: data.recipient_name,
+        recipient_nif: data.recipient_nif,
+        recipient_email: data.recipient_email,
+        recipient_address: data.recipient_address,
+        concepto: data.concepto,
+        base_imponible: data.base_imponible,
+        iva_porcentaje,
+        iva_importe,
+        total,
+        notes: data.notes,
+        status: "BORRADOR",
+        created_by: data.createdBy
+      },
+      include: {
+        clients: true,
+        creator: { select: { id: true, username: true, email: true } }
+      }
+    });
+  }
+  /**
+   * Listar recibos
+   */
+  async listReceipts(filters) {
+    const where = {};
+    if (filters?.status) where.status = filters.status;
+    if (filters?.clientId) where.client_id = filters.clientId;
+    if (filters?.year) where.year = filters.year;
+    return await prisma_client_default.receipts.findMany({
+      where,
+      include: {
+        clients: true,
+        creator: { select: { id: true, username: true, email: true } }
+      },
+      orderBy: [{ year: "desc" }, { sequential: "desc" }]
+    });
+  }
+  /**
+   * Obtener recibo por ID
+   */
+  async getReceiptById(id) {
+    const receipt = await prisma_client_default.receipts.findUnique({
+      where: { id },
+      include: {
+        clients: true,
+        creator: { select: { id: true, username: true, email: true } }
+      }
+    });
+    if (!receipt) throw new Error("Recibo no encontrado");
+    return receipt;
+  }
+  /**
+   * Actualizar recibo
+   */
+  async updateReceipt(id, data) {
+    return await prisma_client_default.receipts.update({
+      where: { id },
+      data,
+      include: { clients: true }
+    });
+  }
+  /**
+   * Crear documento
+   */
+  async createDocument(data) {
+    const client = await prisma_client_default.clients.findUnique({ where: { id: data.clientId } });
+    if (!client) throw new Error("Cliente no encontrado");
+    const docName = data.type === "DATA_PROTECTION" ? `Protecci\xF3n de Datos - ${client.razonSocial}` : `Domiciliaci\xF3n Bancaria - ${client.razonSocial}`;
+    return await prisma_client_default.documents.create({
+      data: {
+        id: nanoid(),
         type: data.type,
-        name: data.name,
-        description: data.description,
+        name: docName,
+        description: data.notes,
         template_id: data.templateId,
         client_id: data.clientId,
         created_by: data.createdBy,
-        status: "draft",
-        updated_at: /* @__PURE__ */ new Date()
-      }
-    });
-    return document;
-  }
-  async getDocuments(filters) {
-    const where = {};
-    if (filters.clientId) where.client_id = filters.clientId;
-    if (filters.type) where.type = filters.type;
-    if (filters.status) where.status = filters.status;
-    if (filters.createdBy) where.created_by = filters.createdBy;
-    const documents = await prisma_client_default.documents.findMany({
-      where,
-      orderBy: {
-        created_at: "desc"
-      }
-    });
-    return documents;
-  }
-  async getDocumentById(id) {
-    const document = await prisma_client_default.documents.findUnique({
-      where: { id }
-    });
-    return document;
-  }
-  async updateDocument(id, data) {
-    const updateData = {
-      updated_at: /* @__PURE__ */ new Date()
-    };
-    if (data.name) updateData.name = data.name;
-    if (data.description) updateData.description = data.description;
-    if (data.status) updateData.status = data.status;
-    if (data.signatureStatus) updateData.signature_status = data.signatureStatus;
-    if (data.signatureDate) updateData.signature_date = data.signatureDate;
-    if (data.signedBy) updateData.signed_by = data.signedBy;
-    const document = await prisma_client_default.documents.update({
-      where: { id },
-      data: updateData
-    });
-    return document;
-  }
-  async deleteDocument(id) {
-    const document = await prisma_client_default.documents.findUnique({
-      where: { id }
-    });
-    if (!document) {
-      throw new Error("Documento no encontrado");
-    }
-    if (document.file_path) {
-      const fullPath = path5.join(process.cwd(), document.file_path);
-      if (fs5.existsSync(fullPath)) {
-        fs5.unlinkSync(fullPath);
-      }
-    }
-    await prisma_client_default.document_signatures.deleteMany({
-      where: { document_id: id }
-    });
-    await prisma_client_default.document_versions.deleteMany({
-      where: { document_id: id }
-    });
-    await prisma_client_default.documents.delete({
-      where: { id }
-    });
-    return { success: true, id };
-  }
-  // ============ TEMPLATES ============
-  async createTemplate(data) {
-    const id = uuidv4();
-    const template = await prisma_client_default.document_templates.create({
-      data: {
-        id,
-        type: data.type,
-        name: data.name,
-        description: data.description,
-        content: data.content,
-        variables: data.variables ? JSON.stringify(data.variables) : null,
-        is_active: true,
-        updated_at: /* @__PURE__ */ new Date()
-      }
-    });
-    return template;
-  }
-  async getTemplates(type) {
-    const where = {
-      is_active: true
-    };
-    if (type) where.type = type;
-    const templates = await prisma_client_default.document_templates.findMany({
-      where,
-      orderBy: {
-        created_at: "desc"
-      }
-    });
-    return templates;
-  }
-  async getTemplateById(id) {
-    const template = await prisma_client_default.document_templates.findUnique({
-      where: { id }
-    });
-    return template;
-  }
-  // ============ FIRMAS ============
-  async signDocument(documentId, userId, signatureType, ipAddress, userAgent) {
-    const signatureId = uuidv4();
-    const signature = await prisma_client_default.document_signatures.create({
-      data: {
-        id: signatureId,
-        document_id: documentId,
-        signed_by: userId,
-        signature_type: signatureType,
-        ip_address: ipAddress,
-        user_agent: userAgent,
-        signature_date: /* @__PURE__ */ new Date()
+        status: "BORRADOR",
+        signature_status: "PENDIENTE"
       },
       include: {
-        users: true
+        clients: true,
+        template: true,
+        creator: { select: { id: true, username: true, email: true } }
       }
+    });
+  }
+  /**
+   * Listar documentos
+   */
+  async listDocuments(filters) {
+    const where = {};
+    if (filters?.type) where.type = filters.type;
+    if (filters?.status) where.status = filters.status;
+    if (filters?.clientId) where.client_id = filters.clientId;
+    return await prisma_client_default.documents.findMany({
+      where,
+      include: {
+        clients: true,
+        template: true,
+        creator: { select: { id: true, username: true, email: true } }
+      },
+      orderBy: { created_at: "desc" }
+    });
+  }
+  /**
+   * Obtener documento por ID
+   */
+  async getDocumentById(id) {
+    const doc = await prisma_client_default.documents.findUnique({
+      where: { id },
+      include: {
+        clients: true,
+        template: true,
+        creator: { select: { id: true, username: true, email: true } },
+        versions: true
+      }
+    });
+    if (!doc) throw new Error("Documento no encontrado");
+    return doc;
+  }
+  /**
+   * Actualizar documento
+   */
+  async updateDocument(id, data) {
+    return await prisma_client_default.documents.update({
+      where: { id },
+      data,
+      include: { clients: true }
+    });
+  }
+  /**
+   * Marcar documento como aceptado
+   */
+  async markDocumentAsAccepted(documentId, signedFilePath, userId) {
+    return await prisma_client_default.documents.update({
+      where: { id: documentId },
+      data: {
+        status: "ACEPTADO",
+        signature_status: "FIRMADO",
+        signature_date: /* @__PURE__ */ new Date(),
+        signed_file_path: signedFilePath,
+        signature_type: "manual",
+        signed_by_name: userId
+      },
+      include: { clients: true }
+    });
+  }
+  /**
+   * CRUD Plantillas
+   */
+  async createTemplate(data) {
+    return await prisma_client_default.document_templates.create({
+      data: {
+        id: nanoid(),
+        type: data.type,
+        name: data.name,
+        content: data.content,
+        description: data.description,
+        available_vars: JSON.stringify([]),
+        is_active: true
+      }
+    });
+  }
+  async listTemplates(filters) {
+    const where = {};
+    if (filters?.type) where.type = filters.type;
+    if (filters?.isActive !== void 0) where.is_active = filters.isActive;
+    return await prisma_client_default.document_templates.findMany({
+      where,
+      orderBy: { created_at: "desc" }
+    });
+  }
+  async getTemplateById(id) {
+    const template = await prisma_client_default.document_templates.findUnique({ where: { id } });
+    if (!template) throw new Error("Plantilla no encontrada");
+    return template;
+  }
+  async updateTemplate(id, data) {
+    return await prisma_client_default.document_templates.update({
+      where: { id },
+      data: { ...data, updated_at: /* @__PURE__ */ new Date() }
+    });
+  }
+  async deleteTemplate(id) {
+    const count = await prisma_client_default.documents.count({ where: { template_id: id } });
+    if (count > 0) {
+      throw new Error(`No se puede eliminar: ${count} documentos la usan`);
+    }
+    await prisma_client_default.document_templates.delete({ where: { id } });
+    return { success: true };
+  }
+};
+var documentsService = new DocumentsService();
+
+// server/services/document-pdf.service.ts
+import puppeteer3 from "puppeteer";
+import path5 from "path";
+import fs5 from "fs/promises";
+var DocumentPdfService = class {
+  constructor() {
+    this.uploadsDir = path5.join(process.cwd(), "uploads", "documents");
+    this.ensureUploadsDirExists();
+  }
+  async ensureUploadsDirExists() {
+    try {
+      await fs5.access(this.uploadsDir);
+    } catch {
+      await fs5.mkdir(this.uploadsDir, { recursive: true });
+    }
+  }
+  /**
+   * Generar PDF de recibo
+   */
+  async generateReceiptPdf(receipt) {
+    const html = this.buildReceiptHtml(receipt);
+    const filename = `recibo-${receipt.numero}.pdf`;
+    const pdfPath = path5.join(this.uploadsDir, filename);
+    await this.generatePdfFromHtml(html, pdfPath);
+    return pdfPath;
+  }
+  /**
+   * Generar PDF de documento
+   */
+  async generateDocumentPdf(document) {
+    if (!document.template || !document.clients) {
+      throw new Error("Documento sin plantilla o cliente");
+    }
+    const html = this.buildDocumentHtml(document);
+    const filename = `${document.type}-${document.clients.nifCif}-${Date.now()}.pdf`;
+    const pdfPath = path5.join(this.uploadsDir, filename);
+    await this.generatePdfFromHtml(html, pdfPath);
+    return pdfPath;
+  }
+  /**
+   * HTML para recibo
+   */
+  buildReceiptHtml(receipt) {
+    const client = receipt.clients;
+    const nombre = client?.razonSocial || receipt.recipient_name;
+    const nif = client?.nifCif || receipt.recipient_nif;
+    const email = client?.email || receipt.recipient_email;
+    return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: Arial, sans-serif; padding: 40px; color: #333; }
+    .header { text-align: center; margin-bottom: 40px; border-bottom: 3px solid #1e40af; padding-bottom: 20px; }
+    .header h1 { color: #1e40af; font-size: 32px; }
+    .info { margin: 20px 0; }
+    .info-row { display: flex; margin-bottom: 8px; }
+    .label { font-weight: bold; width: 150px; }
+    table { width: 100%; margin: 30px 0; border-collapse: collapse; }
+    th { background: #1e40af; color: white; padding: 12px; text-align: left; }
+    td { padding: 12px; border-bottom: 1px solid #ddd; }
+    .amount { text-align: right; font-weight: bold; }
+    .total-row { background: #f3f4f6; font-size: 18px; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>RECIBO</h1>
+    <div>${receipt.numero}</div>
+  </div>
+  <div class="info">
+    <div class="info-row"><div class="label">Nombre:</div><div>${nombre}</div></div>
+    <div class="info-row"><div class="label">NIF/CIF:</div><div>${nif}</div></div>
+    <div class="info-row"><div class="label">Email:</div><div>${email}</div></div>
+    <div class="info-row"><div class="label">Fecha:</div><div>${new Date(receipt.created_at).toLocaleDateString("es-ES")}</div></div>
+  </div>
+  <table>
+    <tr><th>Concepto</th><th class="amount">Base</th><th class="amount">IVA (${receipt.iva_porcentaje}%)</th><th class="amount">Total</th></tr>
+    <tr><td>${receipt.concepto}</td><td class="amount">${Number(receipt.base_imponible).toFixed(2)} \u20AC</td><td class="amount">${Number(receipt.iva_importe).toFixed(2)} \u20AC</td><td class="amount">${Number(receipt.total).toFixed(2)} \u20AC</td></tr>
+    <tr class="total-row"><td colspan="3">TOTAL</td><td class="amount">${Number(receipt.total).toFixed(2)} \u20AC</td></tr>
+  </table>
+  ${receipt.notes ? `<div style="padding:15px;background:#fef3c7;border-left:4px solid #f59e0b;"><strong>Notas:</strong> ${receipt.notes}</div>` : ""}
+</body>
+</html>
+    `;
+  }
+  /**
+   * HTML para documento
+   */
+  buildDocumentHtml(document) {
+    const client = document.clients;
+    const content = document.template.content || "<p>Sin contenido</p>";
+    let html = content.replace(/{{CLIENTE_NOMBRE}}/g, client.razonSocial || "").replace(/{{CLIENTE_NIF}}/g, client.nifCif || "").replace(/{{CLIENTE_EMAIL}}/g, client.email || "").replace(/{{FECHA}}/g, (/* @__PURE__ */ new Date()).toLocaleDateString("es-ES"));
+    return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: Arial, sans-serif; padding: 40px; line-height: 1.6; }
+    h1 { color: #1e40af; margin-bottom: 20px; }
+    p { margin-bottom: 10px; }
+  </style>
+</head>
+<body>
+  ${html}
+</body>
+</html>
+    `;
+  }
+  /**
+   * Generar PDF con Puppeteer
+   */
+  async generatePdfFromHtml(html, outputPath) {
+    const browser = await puppeteer3.launch({
+      headless: true,
+      args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
+    });
+    try {
+      const page = await browser.newPage();
+      await page.setContent(html, { waitUntil: "networkidle0" });
+      await page.pdf({
+        path: outputPath,
+        format: "A4",
+        margin: { top: "20mm", right: "15mm", bottom: "20mm", left: "15mm" },
+        printBackground: true
+      });
+    } finally {
+      await browser.close();
+    }
+  }
+};
+var documentPdfService = new DocumentPdfService();
+
+// server/services/document-email.service.ts
+init_prisma_client();
+import nodemailer5 from "nodemailer";
+import fs6 from "fs/promises";
+var DocumentEmailService = class {
+  /**
+   * Obtener configuración SMTP
+   */
+  async getSmtpConfig() {
+    const smtp = await prisma_client_default.smtp_accounts.findFirst({
+      where: { activa: true, is_predeterminada: true }
+    });
+    if (!smtp) {
+      const any = await prisma_client_default.smtp_accounts.findFirst({ where: { activa: true } });
+      if (!any) throw new Error("No hay cuentas SMTP activas");
+      return any;
+    }
+    return smtp;
+  }
+  /**
+   * Crear transporter
+   */
+  async createTransporter() {
+    const config = await this.getSmtpConfig();
+    return nodemailer5.createTransport({
+      host: config.host,
+      port: config.port,
+      secure: config.port === 465,
+      auth: { user: config.user, pass: config.password }
+    });
+  }
+  /**
+   * Enviar recibo
+   */
+  async sendReceiptEmail(receiptId, pdfPath, to) {
+    const receipt = await prisma_client_default.receipts.findUnique({
+      where: { id: receiptId },
+      include: { clients: true }
+    });
+    if (!receipt) throw new Error("Recibo no encontrado");
+    const nombre = receipt.clients?.razonSocial || receipt.recipient_name;
+    const subject = `Recibo ${receipt.numero}`;
+    const message = `
+Estimado/a ${nombre},
+
+Adjunto encontrar\xE1 el recibo n\xFAmero ${receipt.numero} por importe de ${Number(receipt.total).toFixed(2)} \u20AC.
+
+Concepto: ${receipt.concepto}
+
+Saludos cordiales,
+Asesor\xEDa La Llave
+    `.trim();
+    const transporter2 = await this.createTransporter();
+    const pdfBuffer = await fs6.readFile(pdfPath);
+    await transporter2.sendMail({
+      from: '"Asesor\xEDa La Llave" <noreply@asesorialalllave.com>',
+      to,
+      subject,
+      text: message,
+      attachments: [{ filename: `recibo-${receipt.numero}.pdf`, content: pdfBuffer }]
+    });
+    await prisma_client_default.receipts.update({
+      where: { id: receiptId },
+      data: { status: "ENVIADO", sent_at: /* @__PURE__ */ new Date() }
+    });
+  }
+  /**
+   * Enviar documento
+   */
+  async sendDocumentEmail(documentId, pdfPath, to) {
+    const doc = await prisma_client_default.documents.findUnique({
+      where: { id: documentId },
+      include: { clients: true }
+    });
+    if (!doc) throw new Error("Documento no encontrado");
+    const typeName = doc.type === "DATA_PROTECTION" ? "Protecci\xF3n de Datos" : "Domiciliaci\xF3n Bancaria";
+    const subject = `${typeName} - ${doc.clients.razonSocial}`;
+    const message = `
+Estimado/a ${doc.clients.razonSocial},
+
+Adjunto encontrar\xE1 el documento de ${typeName} para su firma.
+
+Por favor, revise, firme y env\xEDenos una copia firmada.
+
+Saludos cordiales,
+Asesor\xEDa La Llave
+    `.trim();
+    const transporter2 = await this.createTransporter();
+    const pdfBuffer = await fs6.readFile(pdfPath);
+    await transporter2.sendMail({
+      from: '"Asesor\xEDa La Llave" <noreply@asesorialalllave.com>',
+      to,
+      subject,
+      text: message,
+      attachments: [{ filename: `${doc.type}-${doc.clients.nifCif}.pdf`, content: pdfBuffer }]
     });
     await prisma_client_default.documents.update({
       where: { id: documentId },
-      data: {
-        signature_status: "signed",
-        signature_date: /* @__PURE__ */ new Date(),
-        signed_by: userId,
-        status: "signed",
-        updated_at: /* @__PURE__ */ new Date()
-      }
+      data: { status: "ENVIADO", sent_at: /* @__PURE__ */ new Date() }
     });
-    return signature;
-  }
-  async getSignatures(documentId) {
-    const signatures = await prisma_client_default.document_signatures.findMany({
-      where: { document_id: documentId },
-      include: {
-        users: true
-      },
-      orderBy: {
-        signature_date: "desc"
-      }
-    });
-    return signatures;
-  }
-  // ============ VERSIONADO ============
-  async createVersion(documentId, content, createdBy) {
-    const lastVersion = await prisma_client_default.document_versions.findFirst({
-      where: { document_id: documentId },
-      orderBy: { version: "desc" },
-      select: { version: true }
-    });
-    const nextVersion = (lastVersion?.version ?? 0) + 1;
-    const versionId = uuidv4();
-    const version = await prisma_client_default.document_versions.create({
-      data: {
-        id: versionId,
-        document_id: documentId,
-        version: nextVersion,
-        content,
-        created_by: createdBy
-      },
-      include: {
-        users: true
-      }
-    });
-    return version;
-  }
-  async getVersions(documentId) {
-    const versions = await prisma_client_default.document_versions.findMany({
-      where: { document_id: documentId },
-      include: {
-        users: true
-      },
-      orderBy: {
-        version: "desc"
-      }
-    });
-    return versions;
-  }
-  // ============ ARCHIVOS ============
-  async uploadFile(documentId, file) {
-    if (!file) {
-      throw new Error("No file provided");
-    }
-    if (file.size > this.maxFileSize) {
-      throw new Error(`File size exceeds maximum of ${this.maxFileSize / 1024 / 1024}MB`);
-    }
-    const timestamp = Date.now();
-    const fileName = `${documentId}-${timestamp}-${file.originalname}`;
-    const filePath = path5.join(this.uploadDir, fileName);
-    const relativeFilePath = path5.join("uploads/documents", fileName);
-    fs5.writeFileSync(filePath, file.buffer);
-    const document = await prisma_client_default.documents.update({
-      where: { id: documentId },
-      data: {
-        file_path: relativeFilePath,
-        file_name: file.originalname,
-        file_size: file.size,
-        file_type: file.mimetype,
-        updated_at: /* @__PURE__ */ new Date()
-      }
-    });
-    return document;
-  }
-  async downloadFile(documentId) {
-    const document = await prisma_client_default.documents.findUnique({
-      where: { id: documentId }
-    });
-    if (!document || !document.file_path) {
-      return null;
-    }
-    const filePath = path5.join(process.cwd(), document.file_path);
-    if (!fs5.existsSync(filePath)) {
-      return null;
-    }
-    const fileBuffer = fs5.readFileSync(filePath);
-    const fileName = document.file_name || `document-${documentId}`;
-    return {
-      buffer: fileBuffer,
-      fileName,
-      mimeType: document.file_type || "application/octet-stream"
-    };
-  }
-  // ============ UTILIDADES ============
-  async getDocumentStats() {
-    const stats = {
-      totalDocuments: await prisma_client_default.documents.count(),
-      byType: await prisma_client_default.documents.groupBy({
-        by: ["type"],
-        _count: true
-      }),
-      byStatus: await prisma_client_default.documents.groupBy({
-        by: ["status"],
-        _count: true
-      }),
-      totalSignatures: await prisma_client_default.document_signatures.count(),
-      totalVersions: await prisma_client_default.document_versions.count()
-    };
-    return stats;
-  }
-  async getClientDocuments(clientId) {
-    const documents = await prisma_client_default.documents.findMany({
-      where: { client_id: clientId },
-      include: {
-        users: true,
-        signatures: true
-      },
-      orderBy: {
-        created_at: "desc"
-      }
-    });
-    return documents;
-  }
-  async archiveDocument(documentId) {
-    const document = await prisma_client_default.documents.update({
-      where: { id: documentId },
-      data: {
-        status: "archived",
-        updated_at: /* @__PURE__ */ new Date()
-      }
-    });
-    return document;
-  }
-  async searchDocuments(query) {
-    const documents = await prisma_client_default.documents.findMany({
-      where: {
-        OR: [
-          { name: { contains: query } },
-          { description: { contains: query } }
-        ]
-      },
-      include: {
-        users: true,
-        signatures: true
-      },
-      orderBy: {
-        created_at: "desc"
-      }
-    });
-    return documents;
   }
 };
-var configureMulter = () => {
-  const storage = multer.memoryStorage();
-  const upload3 = multer({
-    storage,
-    limits: {
-      fileSize: 50 * 1024 * 1024
-      // 50MB
-    },
-    fileFilter: (req, file, cb) => {
-      const allowedMimes = [
-        "application/pdf",
-        "image/jpeg",
-        "image/png",
-        "application/msword",
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "application/vnd.ms-excel",
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "text/plain"
-      ];
-      if (allowedMimes.includes(file.mimetype)) {
-        cb(null, true);
-      } else {
-        cb(new Error("Invalid file type"));
-      }
-    }
-  });
-  return upload3;
-};
-var documentService = new DocumentService();
+var documentEmailService = new DocumentEmailService();
 
-// server/documents.ts
-var documentsRouter = Router2();
-var upload = configureMulter();
-var normalizeDocument = (doc) => {
-  if (!doc) return null;
-  return {
-    id: doc.id,
-    type: doc.type,
-    name: doc.name,
-    description: doc.description ?? null,
-    template_id: doc.template_id ?? null,
-    client_id: doc.client_id ?? null,
-    created_by: doc.created_by,
-    file_path: doc.file_path ?? null,
-    file_name: doc.file_name ?? null,
-    file_size: doc.file_size ?? null,
-    file_type: doc.file_type ?? null,
-    status: doc.status,
-    signature_status: doc.signature_status ?? "unsigned",
-    signature_date: doc.signature_date ?? null,
-    signed_by: doc.signed_by ?? null,
-    created_at: doc.created_at,
-    updated_at: doc.updated_at
-  };
-};
-var requireAuth = (req, res, next) => {
-  if (!req.user) {
-    return res.status(401).json({ error: "Usuario no autenticado" });
-  }
-  next();
-};
-var checkPermission = (requiredPermission) => {
-  return (req, res, next) => {
-    if (!req.user) {
-      return res.status(401).json({ error: "Usuario no autenticado" });
-    }
-    if (req.user.roleName === "Administrador") {
-      return next();
-    }
-    if (!req.user.permissions.includes(requiredPermission)) {
-      return res.status(403).json({
-        error: "No tienes permisos para esta acci\xF3n",
-        required: requiredPermission
-      });
-    }
-    next();
-  };
-};
-documentsRouter.use(requireAuth);
-documentsRouter.get(
-  "/stats/all",
-  checkPermission("documents:read"),
-  async (req, res) => {
-    try {
-      const stats = await documentService.getDocumentStats();
-      res.json({
-        success: true,
-        data: stats
-      });
-    } catch (error) {
-      res.status(500).json({
-        success: false,
-        error: error.message
-      });
-    }
-  }
-);
-documentsRouter.get(
-  "/client/:clientId",
-  checkPermission("documents:read"),
-  async (req, res) => {
-    try {
-      const { clientId } = req.params;
-      const documents = await documentService.getClientDocuments(clientId);
-      res.json({
-        success: true,
-        data: documents
-      });
-    } catch (error) {
-      res.status(500).json({
-        success: false,
-        error: error.message
-      });
-    }
-  }
-);
-documentsRouter.get(
-  "/search/:query",
-  checkPermission("documents:read"),
-  async (req, res) => {
-    try {
-      const { query } = req.params;
-      if (!query || query.length < 2) {
-        return res.status(400).json({
-          success: false,
-          error: "Query debe tener al menos 2 caracteres"
-        });
-      }
-      const documents = await documentService.searchDocuments(query);
-      res.json({
-        success: true,
-        data: documents
-      });
-    } catch (error) {
-      res.status(500).json({
-        success: false,
-        error: error.message
-      });
-    }
-  }
-);
-documentsRouter.get("/templates", checkPermission("documents:read"), async (req, res) => {
-  try {
-    const { type } = req.query;
-    const templates = await documentService.getTemplates(type);
-    res.json({
-      success: true,
-      data: templates
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+// server/routes/documents.routes.ts
+import multer from "multer";
+import path6 from "path";
+import { nanoid as nanoid2 } from "nanoid";
+var router8 = Router2();
+var storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, path6.join(process.cwd(), "uploads", "documents", "signed"));
+  },
+  filename: (req, file, cb) => {
+    const uniqueName = `${nanoid2()}-${file.originalname}`;
+    cb(null, uniqueName);
   }
 });
-documentsRouter.post(
-  "/templates",
-  checkPermission("admin:templates"),
+var upload = multer({
+  storage,
+  limits: { fileSize: 10 * 1024 * 1024 },
+  // 10MB
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype === "application/pdf") {
+      cb(null, true);
+    } else {
+      cb(new Error("Solo se permiten archivos PDF"));
+    }
+  }
+});
+router8.post("/receipts", authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({ error: "Usuario no autenticado" });
+    }
+    const receipt = await documentsService.createReceipt({
+      ...req.body,
+      createdBy: userId
+    });
+    res.status(201).json(receipt);
+  } catch (error) {
+    console.error("Error creating receipt:", error);
+    res.status(500).json({ error: error.message || "Error al crear recibo" });
+  }
+});
+router8.get("/receipts", authenticateToken, async (req, res) => {
+  try {
+    const { status, clientId, year } = req.query;
+    const receipts = await documentsService.listReceipts({
+      status,
+      clientId,
+      year: year ? parseInt(year) : void 0
+    });
+    res.json(receipts);
+  } catch (error) {
+    console.error("Error listing receipts:", error);
+    res.status(500).json({ error: error.message || "Error al listar recibos" });
+  }
+});
+router8.get("/receipts/:id", authenticateToken, async (req, res) => {
+  try {
+    const receipt = await documentsService.getReceiptById(req.params.id);
+    res.json(receipt);
+  } catch (error) {
+    console.error("Error getting receipt:", error);
+    res.status(404).json({ error: error.message || "Recibo no encontrado" });
+  }
+});
+router8.post("/receipts/:id/generate-pdf", authenticateToken, async (req, res) => {
+  try {
+    const receipt = await documentsService.getReceiptById(req.params.id);
+    const pdfPath = await documentPdfService.generateReceiptPdf(receipt);
+    await documentsService.updateReceipt(req.params.id, { pdf_path: pdfPath });
+    res.json({
+      success: true,
+      message: "PDF generado correctamente",
+      pdfPath
+    });
+  } catch (error) {
+    console.error("Error generating receipt PDF:", error);
+    res.status(500).json({ error: error.message || "Error al generar PDF" });
+  }
+});
+router8.post("/receipts/:id/send", authenticateToken, async (req, res) => {
+  try {
+    const { to, subject, message } = req.body;
+    const receipt = await documentsService.getReceiptById(req.params.id);
+    if (!receipt.pdf_path) {
+      return res.status(400).json({ error: "Debe generar el PDF primero" });
+    }
+    await documentEmailService.sendReceiptEmail(req.params.id, receipt.pdf_path, to || receipt.recipient_email);
+    res.json({
+      success: true,
+      message: "Recibo enviado correctamente"
+    });
+  } catch (error) {
+    console.error("Error sending receipt:", error);
+    res.status(500).json({ error: error.message || "Error al enviar recibo" });
+  }
+});
+router8.post("/documents", authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({ error: "Usuario no autenticado" });
+    }
+    const document = await documentsService.createDocument({
+      ...req.body,
+      createdBy: userId
+    });
+    res.status(201).json(document);
+  } catch (error) {
+    console.error("Error creating document:", error);
+    res.status(500).json({ error: error.message || "Error al crear documento" });
+  }
+});
+router8.get("/documents", authenticateToken, async (req, res) => {
+  try {
+    const { type, status, clientId } = req.query;
+    const documents = await documentsService.listDocuments({
+      type,
+      status,
+      clientId
+    });
+    res.json(documents);
+  } catch (error) {
+    console.error("Error listing documents:", error);
+    res.status(500).json({ error: error.message || "Error al listar documentos" });
+  }
+});
+router8.get("/documents/:id", authenticateToken, async (req, res) => {
+  try {
+    const document = await documentsService.getDocumentById(req.params.id);
+    res.json(document);
+  } catch (error) {
+    console.error("Error getting document:", error);
+    res.status(404).json({ error: error.message || "Documento no encontrado" });
+  }
+});
+router8.post("/documents/:id/generate-pdf", authenticateToken, async (req, res) => {
+  try {
+    const document = await documentsService.getDocumentById(req.params.id);
+    const pdfPath = await documentPdfService.generateDocumentPdf(document);
+    await documentsService.updateDocument(req.params.id, { filePath: pdfPath });
+    res.json({
+      success: true,
+      message: "PDF generado correctamente",
+      pdfPath
+    });
+  } catch (error) {
+    console.error("Error generating document PDF:", error);
+    res.status(500).json({ error: error.message || "Error al generar PDF" });
+  }
+});
+router8.post("/documents/:id/send", authenticateToken, async (req, res) => {
+  try {
+    const { to, subject, message } = req.body;
+    const document = await documentsService.getDocumentById(req.params.id);
+    if (!document.file_path) {
+      return res.status(400).json({ error: "Debe generar el PDF primero" });
+    }
+    await documentEmailService.sendDocumentEmail(
+      req.params.id,
+      document.file_path,
+      to || document.clients?.email
+    );
+    res.json({
+      success: true,
+      message: "Documento enviado correctamente"
+    });
+  } catch (error) {
+    console.error("Error sending document:", error);
+    res.status(500).json({ error: error.message || "Error al enviar documento" });
+  }
+});
+router8.post(
+  "/documents/:id/accept",
+  authenticateToken,
+  upload.single("signedFile"),
   async (req, res) => {
     try {
-      const { type, name, description, content, variables } = req.body;
-      if (!type || !name || !content) {
-        return res.status(400).json({
-          success: false,
-          error: "type, name y content son requeridos"
-        });
+      const userId = req.user?.userId;
+      if (!userId) {
+        return res.status(401).json({ error: "Usuario no autenticado" });
       }
-      const template = await documentService.createTemplate({
-        type,
-        name,
-        description,
-        content,
-        variables
-      });
-      res.status(201).json({
-        success: true,
-        data: template
-      });
-    } catch (error) {
-      res.status(500).json({
-        success: false,
-        error: error.message
-      });
-    }
-  }
-);
-documentsRouter.post(
-  "/",
-  checkPermission("documents:create"),
-  async (req, res) => {
-    try {
-      const { type, name, description, templateId, clientId } = req.body;
-      if (!type || !name) {
-        return res.status(400).json({
-          success: false,
-          error: "type y name son requeridos"
-        });
-      }
-      const document = await documentService.createDocument({
-        type,
-        name,
-        description,
-        templateId,
-        clientId,
-        createdBy: req.user.id
-      });
-      res.status(201).json(normalizeDocument(document));
-    } catch (error) {
-      res.status(500).json({
-        success: false,
-        error: error.message
-      });
-    }
-  }
-);
-documentsRouter.get(
-  "/",
-  checkPermission("documents:read"),
-  async (req, res) => {
-    try {
-      const { type, status, clientId, createdBy } = req.query;
-      const filters = {};
-      if (type) filters.type = type;
-      if (status) filters.status = status;
-      if (clientId) filters.clientId = clientId;
-      if (createdBy) filters.createdBy = createdBy;
-      const documents = await documentService.getDocuments(filters);
-      res.json(documents.map(normalizeDocument));
-    } catch (error) {
-      res.status(500).json({
-        success: false,
-        error: error.message
-      });
-    }
-  }
-);
-documentsRouter.put(
-  "/:id/archive",
-  checkPermission("documents:update"),
-  async (req, res) => {
-    try {
-      const { id } = req.params;
-      const document = await documentService.archiveDocument(id);
-      res.json({
-        success: true,
-        data: document
-      });
-    } catch (error) {
-      res.status(500).json({
-        success: false,
-        error: error.message
-      });
-    }
-  }
-);
-documentsRouter.get(
-  "/:id",
-  checkPermission("documents:read"),
-  async (req, res) => {
-    try {
-      const { id } = req.params;
-      const document = await documentService.getDocumentById(id);
-      if (!document) {
-        return res.status(404).json({
-          success: false,
-          error: "Documento no encontrado"
-        });
-      }
-      res.json(normalizeDocument(document));
-    } catch (error) {
-      res.status(500).json({
-        success: false,
-        error: error.message
-      });
-    }
-  }
-);
-documentsRouter.put(
-  "/:id",
-  checkPermission("documents:update"),
-  async (req, res) => {
-    try {
-      const { id } = req.params;
-      const updateData = req.body;
-      const document = await documentService.updateDocument(id, updateData);
-      res.json(normalizeDocument(document));
-    } catch (error) {
-      res.status(500).json({
-        success: false,
-        error: error.message
-      });
-    }
-  }
-);
-documentsRouter.delete(
-  "/:id",
-  checkPermission("documents:delete"),
-  async (req, res) => {
-    try {
-      const { id } = req.params;
-      const result = await documentService.deleteDocument(id);
-      res.json({
-        success: true,
-        data: result
-      });
-    } catch (error) {
-      res.status(500).json({
-        success: false,
-        error: error.message
-      });
-    }
-  }
-);
-documentsRouter.post(
-  "/:id/sign",
-  checkPermission("documents:sign"),
-  async (req, res) => {
-    try {
-      const { id } = req.params;
-      const { signatureType } = req.body;
-      if (!signatureType) {
-        return res.status(400).json({
-          success: false,
-          error: "signatureType es requerido"
-        });
-      }
-      const signature = await documentService.signDocument(
-        id,
-        req.user?.id,
-        signatureType,
-        req.ip,
-        req.get("user-agent")
-      );
-      res.json({
-        success: true,
-        data: signature
-      });
-    } catch (error) {
-      res.status(500).json({
-        success: false,
-        error: error.message
-      });
-    }
-  }
-);
-documentsRouter.get(
-  "/:id/signatures",
-  checkPermission("documents:read"),
-  async (req, res) => {
-    try {
-      const { id } = req.params;
-      const signatures = await documentService.getSignatures(id);
-      res.json({
-        success: true,
-        data: signatures
-      });
-    } catch (error) {
-      res.status(500).json({
-        success: false,
-        error: error.message
-      });
-    }
-  }
-);
-documentsRouter.post(
-  "/:id/versions",
-  checkPermission("documents:update"),
-  async (req, res) => {
-    try {
-      const { id } = req.params;
-      const { content } = req.body;
-      if (!content) {
-        return res.status(400).json({
-          success: false,
-          error: "content es requerido"
-        });
-      }
-      const version = await documentService.createVersion(
-        id,
-        content,
-        req.user?.id
-      );
-      res.status(201).json({
-        success: true,
-        data: version
-      });
-    } catch (error) {
-      res.status(500).json({
-        success: false,
-        error: error.message
-      });
-    }
-  }
-);
-documentsRouter.get(
-  "/:id/versions",
-  checkPermission("documents:read"),
-  async (req, res) => {
-    try {
-      const { id } = req.params;
-      const versions = await documentService.getVersions(id);
-      res.json({
-        success: true,
-        data: versions
-      });
-    } catch (error) {
-      res.status(500).json({
-        success: false,
-        error: error.message
-      });
-    }
-  }
-);
-documentsRouter.post(
-  "/:id/upload",
-  checkPermission("documents:update"),
-  upload.single("file"),
-  async (req, res) => {
-    try {
-      const { id } = req.params;
       if (!req.file) {
-        return res.status(400).json({
-          success: false,
-          error: "No file provided"
-        });
+        return res.status(400).json({ error: "Debe adjuntar el archivo firmado" });
       }
-      const document = await documentService.uploadFile(id, req.file);
+      const document = await documentsService.markDocumentAsAccepted(
+        req.params.id,
+        req.file.path,
+        userId
+      );
       res.json({
         success: true,
-        data: document
+        message: "Documento marcado como aceptado",
+        document
       });
     } catch (error) {
-      res.status(500).json({
-        success: false,
-        error: error.message
-      });
+      console.error("Error accepting document:", error);
+      res.status(500).json({ error: error.message || "Error al aceptar documento" });
     }
   }
 );
-documentsRouter.get(
-  "/:id/download",
-  checkPermission("documents:read"),
-  async (req, res) => {
-    try {
-      const { id } = req.params;
-      const fileData = await documentService.downloadFile(id);
-      if (!fileData) {
-        return res.status(404).json({
-          success: false,
-          error: "Archivo no encontrado"
-        });
+router8.post("/templates", authenticateToken, async (req, res) => {
+  try {
+    const template = await documentsService.createTemplate(req.body);
+    res.status(201).json(template);
+  } catch (error) {
+    console.error("Error creating template:", error);
+    res.status(500).json({ error: error.message || "Error al crear plantilla" });
+  }
+});
+router8.get("/templates", authenticateToken, async (req, res) => {
+  try {
+    const { type, isActive } = req.query;
+    const templates = await documentsService.listTemplates({
+      type,
+      isActive: isActive === "true" ? true : isActive === "false" ? false : void 0
+    });
+    res.json(templates);
+  } catch (error) {
+    console.error("Error listing templates:", error);
+    res.status(500).json({ error: error.message || "Error al listar plantillas" });
+  }
+});
+router8.get("/templates/:id", authenticateToken, async (req, res) => {
+  try {
+    const template = await documentsService.getTemplateById(req.params.id);
+    res.json(template);
+  } catch (error) {
+    console.error("Error getting template:", error);
+    res.status(404).json({ error: error.message || "Plantilla no encontrada" });
+  }
+});
+router8.put("/templates/:id", authenticateToken, async (req, res) => {
+  try {
+    const template = await documentsService.updateTemplate(req.params.id, req.body);
+    res.json(template);
+  } catch (error) {
+    console.error("Error updating template:", error);
+    res.status(500).json({ error: error.message || "Error al actualizar plantilla" });
+  }
+});
+router8.delete("/templates/:id", authenticateToken, async (req, res) => {
+  try {
+    await documentsService.deleteTemplate(req.params.id);
+    res.json({ success: true, message: "Plantilla eliminada correctamente" });
+  } catch (error) {
+    console.error("Error deleting template:", error);
+    res.status(500).json({ error: error.message || "Error al eliminar plantilla" });
+  }
+});
+var documents_routes_default = router8;
+
+// server/routes/github-updates.routes.ts
+import express7 from "express";
+import { PrismaClient as PrismaClient13 } from "@prisma/client";
+import crypto3 from "crypto";
+import { v4 as uuidv4 } from "uuid";
+import { execSync } from "child_process";
+var router9 = express7.Router();
+var prisma13 = new PrismaClient13();
+function verifyGitHubSignature(payload, signature, secret) {
+  const hmac = crypto3.createHmac("sha256", secret);
+  const digest = "sha256=" + hmac.update(payload).digest("hex");
+  return crypto3.timingSafeEqual(Buffer.from(signature), Buffer.from(digest));
+}
+router9.post("/webhook", async (req, res) => {
+  try {
+    const signature = req.headers["x-hub-signature-256"];
+    const event = req.headers["x-github-event"];
+    if (event !== "push") {
+      return res.status(200).json({ message: "Event ignored" });
+    }
+    const config = await prisma13.system_update_config.findFirst();
+    if (!config) {
+      console.error("No GitHub config found");
+      return res.status(500).json({ error: "Configuration not found" });
+    }
+    if (config.githubWebhookSecret && signature) {
+      const payload = JSON.stringify(req.body);
+      const isValid = verifyGitHubSignature(payload, signature, config.githubWebhookSecret);
+      if (!isValid) {
+        console.error("Invalid webhook signature");
+        return res.status(401).json({ error: "Invalid signature" });
       }
-      res.setHeader(
-        "Content-Disposition",
-        `attachment; filename="${fileData.fileName}"`
-      );
-      res.setHeader("Content-Type", fileData.mimeType);
-      res.send(fileData.buffer);
-    } catch (error) {
-      res.status(500).json({
-        success: false,
-        error: error.message
+    }
+    const { commits, ref, repository, pusher } = req.body;
+    const branch = ref.replace("refs/heads/", "");
+    if (branch !== config.githubBranch) {
+      console.log(`Ignoring push to branch ${branch}, configured branch is ${config.githubBranch}`);
+      return res.status(200).json({ message: "Branch ignored" });
+    }
+    const lastCommit = commits[commits.length - 1];
+    if (!lastCommit) {
+      return res.status(400).json({ error: "No commits found" });
+    }
+    const commitHash = lastCommit.id;
+    const commitMessage = lastCommit.message;
+    const commitAuthor = lastCommit.author?.name || pusher?.name || "Unknown";
+    const commitDate = new Date(lastCommit.timestamp);
+    console.log(`Received GitHub webhook for commit ${commitHash.substring(0, 7)}: ${commitMessage}`);
+    const existingUpdate = await prisma13.system_updates.findFirst({
+      where: { commit_hash: commitHash }
+    });
+    if (existingUpdate) {
+      console.log(`Update for commit ${commitHash.substring(0, 7)} already exists`);
+      return res.status(200).json({ message: "Update already exists", updateId: existingUpdate.id });
+    }
+    const update = await prisma13.system_updates.create({
+      data: {
+        id: uuidv4(),
+        update_type: "GITHUB",
+        commit_hash: commitHash,
+        commit_message: commitMessage,
+        commit_author: commitAuthor,
+        commit_date: commitDate,
+        branch,
+        status: "PENDING",
+        auto_applied: false,
+        logs: `Commit recibido desde GitHub:
+Autor: ${commitAuthor}
+Fecha: ${commitDate.toISOString()}
+Mensaje: ${commitMessage}
+
+`
+      }
+    });
+    console.log(`Created update record ${update.id} for commit ${commitHash.substring(0, 7)}`);
+    if (config.autoUpdateEnabled) {
+      console.log("Auto-update enabled, triggering update...");
+      const { executeGitUpdate: executeGitUpdate2 } = await Promise.resolve().then(() => (init_git_update_service(), git_update_service_exports));
+      executeGitUpdate2(update.id).catch((err) => {
+        console.error("Error executing auto-update:", err);
+      });
+      return res.status(200).json({
+        message: "Update received and auto-apply triggered",
+        updateId: update.id,
+        autoApplied: true
       });
     }
+    return res.status(200).json({
+      message: "Update received",
+      updateId: update.id,
+      autoApplied: false
+    });
+  } catch (error) {
+    console.error("Error processing GitHub webhook:", error);
+    return res.status(500).json({ error: error.message });
   }
-);
+});
+router9.get("/updates", async (req, res) => {
+  try {
+    const updates = await prisma13.system_updates.findMany({
+      where: { update_type: "GITHUB" },
+      orderBy: { createdAt: "desc" },
+      take: 50,
+      include: {
+        users: {
+          select: {
+            id: true,
+            username: true,
+            email: true
+          }
+        }
+      }
+    });
+    return res.json(updates);
+  } catch (error) {
+    console.error("Error fetching GitHub updates:", error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+router9.post("/updates/:id/apply", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user?.id;
+    const update = await prisma13.system_updates.findUnique({
+      where: { id }
+    });
+    if (!update) {
+      return res.status(404).json({ error: "Update not found" });
+    }
+    if (update.status !== "PENDING" && update.status !== "FAILED") {
+      return res.status(400).json({ error: `Cannot apply update with status ${update.status}` });
+    }
+    await prisma13.system_updates.update({
+      where: { id },
+      data: {
+        initiated_by: userId,
+        status: "APPLYING"
+      }
+    });
+    const { executeGitUpdate: executeGitUpdate2 } = await Promise.resolve().then(() => (init_git_update_service(), git_update_service_exports));
+    executeGitUpdate2(id).catch((err) => {
+      console.error("Error executing update:", err);
+    });
+    return res.json({ message: "Update started", updateId: id });
+  } catch (error) {
+    console.error("Error applying update:", error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+router9.get("/updates/:id/logs", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const update = await prisma13.system_updates.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        commit_hash: true,
+        commit_message: true,
+        status: true,
+        logs: true,
+        error_message: true,
+        createdAt: true,
+        completed_at: true
+      }
+    });
+    if (!update) {
+      return res.status(404).json({ error: "Update not found" });
+    }
+    return res.json(update);
+  } catch (error) {
+    console.error("Error fetching update logs:", error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+router9.get("/config", async (req, res) => {
+  try {
+    let config = await prisma13.system_update_config.findFirst();
+    if (!config) {
+      config = await prisma13.system_update_config.create({
+        data: {
+          id: uuidv4(),
+          githubRepo: "",
+          githubBranch: "main",
+          autoUpdateEnabled: false
+        }
+      });
+    }
+    const { githubToken, githubWebhookSecret, ...safeConfig } = config;
+    return res.json(safeConfig);
+  } catch (error) {
+    console.error("Error fetching GitHub config:", error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+router9.put("/config", async (req, res) => {
+  try {
+    const { githubRepo, githubBranch, autoUpdateEnabled, githubToken, githubWebhookSecret } = req.body;
+    let config = await prisma13.system_update_config.findFirst();
+    const data = {};
+    if (githubRepo !== void 0) data.githubRepo = githubRepo;
+    if (githubBranch !== void 0) data.githubBranch = githubBranch;
+    if (autoUpdateEnabled !== void 0) data.autoUpdateEnabled = autoUpdateEnabled;
+    if (githubToken !== void 0) data.githubToken = githubToken;
+    if (githubWebhookSecret !== void 0) data.githubWebhookSecret = githubWebhookSecret;
+    if (config) {
+      config = await prisma13.system_update_config.update({
+        where: { id: config.id },
+        data
+      });
+    } else {
+      config = await prisma13.system_update_config.create({
+        data: {
+          id: uuidv4(),
+          githubRepo: githubRepo || "",
+          githubBranch: githubBranch || "main",
+          autoUpdateEnabled: autoUpdateEnabled || false,
+          githubToken: githubToken || null,
+          githubWebhookSecret: githubWebhookSecret || null
+        }
+      });
+    }
+    const { githubToken: _, githubWebhookSecret: __, ...safeConfig } = config;
+    return res.json(safeConfig);
+  } catch (error) {
+    console.error("Error updating GitHub config:", error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+router9.get("/current-commit", async (req, res) => {
+  try {
+    const currentCommit = execSync("git rev-parse HEAD", {
+      encoding: "utf-8",
+      cwd: "/root/www/Asesoria-la-Llave-V2"
+    }).trim();
+    const currentBranch = execSync("git rev-parse --abbrev-ref HEAD", {
+      encoding: "utf-8",
+      cwd: "/root/www/Asesoria-la-Llave-V2"
+    }).trim();
+    return res.json({
+      commitHash: currentCommit,
+      branch: currentBranch
+    });
+  } catch (error) {
+    console.error("Error getting current commit:", error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+var github_updates_routes_default = router9;
 
 // server/services/version-service.ts
 import { readFile } from "fs/promises";
-import { join as join2, dirname } from "path";
+import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 var __filename = fileURLToPath(import.meta.url);
 var __dirname = dirname(__filename);
 async function getCurrentVersion() {
   try {
-    const packageJsonPath = join2(__dirname, "../../package.json");
+    const packageJsonPath = join(__dirname, "../../package.json");
     const packageJson = await readFile(packageJsonPath, "utf-8");
     const pkg = JSON.parse(packageJson);
     return pkg.version || "1.0.0";
@@ -11321,7 +12692,7 @@ function compareVersions(v1, v2) {
   }
   return 0;
 }
-async function checkForUpdates(owner, repo) {
+async function checkForUpdates2(owner, repo) {
   const currentVersion = await getCurrentVersion();
   const latestRelease = await getLatestGitHubVersion(owner, repo);
   if (!latestRelease) {
@@ -11365,21 +12736,21 @@ var getUpdateHistory = async (...args) => {
 };
 
 // server/services/storage-factory.ts
-import { PrismaClient as PrismaClient11 } from "@prisma/client";
+import { PrismaClient as PrismaClient14 } from "@prisma/client";
 
 // server/services/storage-provider.ts
-import fs6 from "fs/promises";
-import path6 from "path";
+import fs7 from "fs/promises";
+import path7 from "path";
 var LocalStorageProvider = class {
-  constructor(basePath = path6.join(process.cwd(), "uploads")) {
+  constructor(basePath = path7.join(process.cwd(), "uploads")) {
     this.basePath = basePath;
   }
   async upload(file, relativePath) {
-    const fullPath = path6.join(this.basePath, relativePath);
-    const dir = path6.dirname(fullPath);
-    await fs6.mkdir(dir, { recursive: true });
+    const fullPath = path7.join(this.basePath, relativePath);
+    const dir = path7.dirname(fullPath);
+    await fs7.mkdir(dir, { recursive: true });
     if (Buffer.isBuffer(file)) {
-      await fs6.writeFile(fullPath, file);
+      await fs7.writeFile(fullPath, file);
     } else {
       const writeStream = (await import("fs")).createWriteStream(fullPath);
       await new Promise((resolve, reject) => {
@@ -11392,20 +12763,20 @@ var LocalStorageProvider = class {
     return relativePath;
   }
   async download(relativePath) {
-    const fullPath = path6.join(this.basePath, relativePath);
-    return await fs6.readFile(fullPath);
+    const fullPath = path7.join(this.basePath, relativePath);
+    return await fs7.readFile(fullPath);
   }
   async delete(relativePath) {
-    const fullPath = path6.join(this.basePath, relativePath);
-    await fs6.unlink(fullPath);
+    const fullPath = path7.join(this.basePath, relativePath);
+    await fs7.unlink(fullPath);
   }
   async list(relativePath = "", recursive = false) {
-    const fullPath = path6.join(this.basePath, relativePath);
+    const fullPath = path7.join(this.basePath, relativePath);
     const files = [];
     try {
-      const entries = await fs6.readdir(fullPath, { withFileTypes: true });
+      const entries = await fs7.readdir(fullPath, { withFileTypes: true });
       for (const entry of entries) {
-        const entryPath = path6.join(relativePath, entry.name);
+        const entryPath = path7.join(relativePath, entry.name);
         if (entry.isFile()) {
           files.push(entryPath);
         } else if (entry.isDirectory() && recursive) {
@@ -11421,9 +12792,9 @@ var LocalStorageProvider = class {
     return files;
   }
   async exists(relativePath) {
-    const fullPath = path6.join(this.basePath, relativePath);
+    const fullPath = path7.join(this.basePath, relativePath);
     try {
-      await fs6.access(fullPath);
+      await fs7.access(fullPath);
       return true;
     } catch {
       return false;
@@ -11437,7 +12808,7 @@ var LocalStorageProvider = class {
 // server/services/ftp-storage-provider.ts
 import { Client as FTPClient } from "basic-ftp";
 import { Readable } from "stream";
-import path7 from "path";
+import path8 from "path";
 var FTPStorageProvider = class {
   constructor(config) {
     this.client = null;
@@ -11481,8 +12852,8 @@ var FTPStorageProvider = class {
   async upload(file, relativePath) {
     await this.ensureConnection();
     if (!this.client) throw new Error("Cliente FTP no conectado");
-    const fullPath = path7.posix.join(this.config.basePath, relativePath);
-    const dir = path7.posix.dirname(fullPath);
+    const fullPath = path8.posix.join(this.config.basePath, relativePath);
+    const dir = path8.posix.dirname(fullPath);
     await this.client.ensureDir(dir);
     if (Buffer.isBuffer(file)) {
       try {
@@ -11502,7 +12873,7 @@ var FTPStorageProvider = class {
   async download(relativePath) {
     await this.ensureConnection();
     if (!this.client) throw new Error("Cliente FTP no conectado");
-    const fullPath = path7.posix.join(this.config.basePath, relativePath);
+    const fullPath = path8.posix.join(this.config.basePath, relativePath);
     const chunks = [];
     try {
       const writableStream = new (__require("stream")).Writable({
@@ -11529,7 +12900,7 @@ var FTPStorageProvider = class {
   async delete(relativePath) {
     await this.ensureConnection();
     if (!this.client) throw new Error("Cliente FTP no conectado");
-    const fullPath = path7.posix.join(this.config.basePath, relativePath);
+    const fullPath = path8.posix.join(this.config.basePath, relativePath);
     try {
       await this.client.remove(fullPath);
     } catch (error) {
@@ -11541,7 +12912,7 @@ var FTPStorageProvider = class {
   async list(relativePath = "", recursive = false) {
     await this.ensureConnection();
     if (!this.client) throw new Error("Cliente FTP no conectado");
-    const fullPath = path7.posix.join(this.config.basePath, relativePath);
+    const fullPath = path8.posix.join(this.config.basePath, relativePath);
     const files = [];
     try {
       if (recursive) {
@@ -11550,7 +12921,7 @@ var FTPStorageProvider = class {
         const items = await this.client.list(fullPath);
         for (const item of items) {
           if (item.type === 1) {
-            const filePath = path7.posix.join(relativePath, item.name);
+            const filePath = path8.posix.join(relativePath, item.name);
             files.push(filePath);
           }
         }
@@ -11569,8 +12940,8 @@ var FTPStorageProvider = class {
     if (!this.client) return;
     const items = await this.client.list(fullPath);
     for (const item of items) {
-      const itemRelativePath = path7.posix.join(relativePath, item.name);
-      const itemFullPath = path7.posix.join(fullPath, item.name);
+      const itemRelativePath = path8.posix.join(relativePath, item.name);
+      const itemFullPath = path8.posix.join(fullPath, item.name);
       if (item.type === 1) {
         files.push(itemRelativePath);
       } else if (item.type === 2) {
@@ -11581,9 +12952,9 @@ var FTPStorageProvider = class {
   async exists(relativePath) {
     await this.ensureConnection();
     if (!this.client) throw new Error("Cliente FTP no conectado");
-    const fullPath = path7.posix.join(this.config.basePath, relativePath);
-    const dir = path7.posix.dirname(fullPath);
-    const filename = path7.posix.basename(fullPath);
+    const fullPath = path8.posix.join(this.config.basePath, relativePath);
+    const dir = path8.posix.dirname(fullPath);
+    const filename = path8.posix.basename(fullPath);
     try {
       const items = await this.client.list(dir);
       return items.some((item) => item.name === filename);
@@ -11619,7 +12990,7 @@ var FTPStorageProvider = class {
 
 // server/services/smb-storage-provider.ts
 import SMB2 from "@marsaud/smb2";
-import path8 from "path";
+import path9 from "path";
 var SMBStorageProvider = class {
   constructor(config) {
     this.client = null;
@@ -11641,12 +13012,12 @@ var SMBStorageProvider = class {
     });
   }
   getSMBPath(relativePath) {
-    const combined = path8.posix.join(this.config.basePath, relativePath);
+    const combined = path9.posix.join(this.config.basePath, relativePath);
     return combined.replace(/\//g, "\\");
   }
   async upload(file, relativePath) {
     const smbPath = this.getSMBPath(relativePath);
-    const dir = path8.dirname(smbPath);
+    const dir = path9.dirname(smbPath);
     return new Promise((resolve, reject) => {
       this.client.mkdir(dir, (err) => {
         if (err && err.code !== "STATUS_OBJECT_NAME_COLLISION") {
@@ -11706,7 +13077,7 @@ var SMBStorageProvider = class {
         const items = await this.readdir(smbPath);
         for (const item of items) {
           if (item.type === "file") {
-            const filePath = path8.posix.join(relativePath, item.name);
+            const filePath = path9.posix.join(relativePath, item.name);
             files.push(filePath);
           }
         }
@@ -11734,8 +13105,8 @@ var SMBStorageProvider = class {
   async listRecursive(smbPath, relativePath, files) {
     const items = await this.readdir(smbPath);
     for (const item of items) {
-      const itemRelativePath = path8.posix.join(relativePath, item.name);
-      const itemSMBPath = path8.join(smbPath, item.name);
+      const itemRelativePath = path9.posix.join(relativePath, item.name);
+      const itemSMBPath = path9.join(smbPath, item.name);
       if (item.type === "file") {
         files.push(itemRelativePath);
       } else if (item.type === "directory") {
@@ -11780,9 +13151,9 @@ var SMBStorageProvider = class {
 };
 
 // server/services/storage-factory.ts
-import crypto3 from "crypto";
-import path9 from "path";
-var prisma11 = new PrismaClient11();
+import crypto4 from "crypto";
+import path10 from "path";
+var prisma14 = new PrismaClient14();
 var ALGORITHM2 = "aes-256-gcm";
 function getEncryptionKey2() {
   const envKey = process.env.STORAGE_ENCRYPTION_KEY;
@@ -11793,8 +13164,8 @@ function getEncryptionKey2() {
 }
 function encryptPassword2(password) {
   const ENCRYPTION_KEY = getEncryptionKey2();
-  const iv = crypto3.randomBytes(16);
-  const cipher = crypto3.createCipheriv(ALGORITHM2, Buffer.from(ENCRYPTION_KEY.slice(0, 32)), iv);
+  const iv = crypto4.randomBytes(16);
+  const cipher = crypto4.createCipheriv(ALGORITHM2, Buffer.from(ENCRYPTION_KEY.slice(0, 32)), iv);
   let encrypted = cipher.update(password, "utf8", "hex");
   encrypted += cipher.final("hex");
   const authTag = cipher.getAuthTag();
@@ -11810,7 +13181,7 @@ function decryptPassword2(encryptedData) {
     const iv = Buffer.from(parts[0], "hex");
     const authTag = Buffer.from(parts[1], "hex");
     const encrypted = parts[2];
-    const decipher = crypto3.createDecipheriv(ALGORITHM2, Buffer.from(ENCRYPTION_KEY.slice(0, 32)), iv);
+    const decipher = crypto4.createDecipheriv(ALGORITHM2, Buffer.from(ENCRYPTION_KEY.slice(0, 32)), iv);
     decipher.setAuthTag(authTag);
     let decrypted = decipher.update(encrypted, "hex", "utf8");
     decrypted += decipher.final("utf8");
@@ -11828,7 +13199,7 @@ var StorageFactory = class {
   }
   // Obtener el provider de almacenamiento activo
   static async getActiveProvider() {
-    const activeConfig = await prisma11.storage_configs.findFirst({
+    const activeConfig = await prisma14.storage_configs.findFirst({
       where: { isActive: true }
     });
     if (!activeConfig || this.currentConfigId !== activeConfig.id || !this.instance) {
@@ -11839,7 +13210,7 @@ var StorageFactory = class {
   }
   // Obtener provider para una configuración específica por ID
   static async getProviderById(configId) {
-    const config = await prisma11.storage_configs.findUnique({
+    const config = await prisma14.storage_configs.findUnique({
       where: { id: configId }
     });
     if (!config) {
@@ -11850,7 +13221,7 @@ var StorageFactory = class {
   // Crear provider según configuración
   static async createProvider(config) {
     if (!config || config.type === "LOCAL") {
-      const basePath = config?.base_path ? path9.join(process.cwd(), config.base_path) : void 0;
+      const basePath = config?.base_path ? path10.join(process.cwd(), config.base_path) : void 0;
       return new LocalStorageProvider(basePath);
     }
     if (config.type === "FTP") {
@@ -11891,7 +13262,7 @@ var StorageFactory = class {
   }
   // Probar conexión con una configuración específica guardada
   static async testConfiguration(configId) {
-    const config = await prisma11.storage_configs.findUnique({
+    const config = await prisma14.storage_configs.findUnique({
       where: { id: configId }
     });
     if (!config) {
@@ -11930,7 +13301,7 @@ var StorageFactory = class {
   }
   // Crear provider para una configuración específica (sin activarla)
   static async createProviderForConfig(configId) {
-    const config = await prisma11.storage_configs.findUnique({
+    const config = await prisma14.storage_configs.findUnique({
       where: { id: configId }
     });
     if (!config) {
@@ -11941,8 +13312,8 @@ var StorageFactory = class {
 };
 
 // server/middleware/storage-upload.ts
-import fs7 from "fs/promises";
-import path10 from "path";
+import fs8 from "fs/promises";
+import path11 from "path";
 async function uploadToStorage(req, res, next) {
   try {
     if (!req.file && !req.files) {
@@ -11972,12 +13343,12 @@ async function uploadToStorage(req, res, next) {
   }
 }
 async function processFile(file, provider) {
-  const uploadsDir2 = path10.join(process.cwd(), "uploads");
-  const relativePath = path10.relative(uploadsDir2, file.path);
+  const uploadsDir2 = path11.join(process.cwd(), "uploads");
+  const relativePath = path11.relative(uploadsDir2, file.path);
   const isLocal = provider.constructor.name === "LocalStorageProvider";
   if (isLocal) {
     file.path = relativePath;
-    file.destination = path10.dirname(relativePath);
+    file.destination = path11.dirname(relativePath);
     return;
   }
   const tempFilePath = file.path;
@@ -11985,8 +13356,8 @@ async function processFile(file, provider) {
   try {
     await provider.upload(readStream, relativePath);
     file.path = relativePath;
-    file.destination = path10.dirname(relativePath);
-    await fs7.unlink(tempFilePath);
+    file.destination = path11.dirname(relativePath);
+    await fs8.unlink(tempFilePath);
   } catch (error) {
     readStream.destroy();
     throw error;
@@ -12384,8 +13755,8 @@ var registerLimiter = rateLimit({
 var apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1e3,
   // 15 minutos
-  max: 100,
-  // Máximo 100 requests por IP en 15 minutos
+  max: 1e3,
+  // Máximo 1000 requests por IP en 15 minutos (permite cálculos en tiempo real)
   message: {
     error: "Demasiadas solicitudes. Por favor, int\xE9ntalo de nuevo m\xE1s tarde."
   },
@@ -12417,17 +13788,36 @@ var strictLimiter = rateLimit({
     });
   }
 });
+var budgetCalculationLimiter = rateLimit({
+  windowMs: 1 * 60 * 1e3,
+  // 1 minuto
+  max: 120,
+  // Máximo 120 requests por minuto (2 por segundo)
+  message: {
+    error: "Demasiados c\xE1lculos. Por favor, espera un momento."
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: false,
+  handler: (req, res) => {
+    console.warn(`[SECURITY] Rate limit de c\xE1lculos excedido desde IP: ${req.ip}`);
+    res.status(429).json({
+      error: "Demasiados c\xE1lculos. Por favor, espera un momento.",
+      retryAfter: 60
+    });
+  }
+});
 
 // server/epic-tasks-routes.ts
-import { PrismaClient as PrismaClient12 } from "@prisma/client";
+import { PrismaClient as PrismaClient15 } from "@prisma/client";
 import multer2 from "multer";
-import path11 from "path";
-import fs8 from "fs";
+import path12 from "path";
+import fs9 from "fs";
 import { randomUUID as randomUUID7 } from "crypto";
-var prisma12 = new PrismaClient12();
-var tasksUploadsDir = path11.join(process.cwd(), "uploads", "tasks", "attachments");
-if (!fs8.existsSync(tasksUploadsDir)) {
-  fs8.mkdirSync(tasksUploadsDir, { recursive: true });
+var prisma15 = new PrismaClient15();
+var tasksUploadsDir = path12.join(process.cwd(), "uploads", "tasks", "attachments");
+if (!fs9.existsSync(tasksUploadsDir)) {
+  fs9.mkdirSync(tasksUploadsDir, { recursive: true });
 }
 var taskAttachmentsStorage = multer2.diskStorage({
   destination: (req, file, cb) => {
@@ -12447,7 +13837,7 @@ function registerEpicTasksRoutes(app2) {
   app2.get("/api/tasks/:taskId/comments", authenticateToken, async (req, res) => {
     try {
       const { taskId } = req.params;
-      const comments = await prisma12.task_comments.findMany({
+      const comments = await prisma15.task_comments.findMany({
         where: { taskId },
         include: {
           users: {
@@ -12473,11 +13863,11 @@ function registerEpicTasksRoutes(app2) {
       if (!contenido || contenido.trim() === "") {
         return res.status(400).json({ error: "El contenido del comentario es requerido" });
       }
-      const task = await prisma12.tasks.findUnique({ where: { id: taskId } });
+      const task = await prisma15.tasks.findUnique({ where: { id: taskId } });
       if (!task) {
         return res.status(404).json({ error: "Tarea no encontrada" });
       }
-      const comment = await prisma12.task_comments.create({
+      const comment = await prisma15.task_comments.create({
         data: {
           id: randomUUID7(),
           tasks: { connect: { id: taskId } },
@@ -12495,7 +13885,7 @@ function registerEpicTasksRoutes(app2) {
           }
         }
       });
-      await prisma12.task_activities.create({
+      await prisma15.task_activities.create({
         data: {
           id: randomUUID7(),
           taskId,
@@ -12515,7 +13905,7 @@ function registerEpicTasksRoutes(app2) {
     try {
       const { taskId, commentId } = req.params;
       const { contenido } = req.body;
-      const comment = await prisma12.task_comments.findUnique({
+      const comment = await prisma15.task_comments.findUnique({
         where: { id: commentId }
       });
       if (!comment) {
@@ -12524,7 +13914,7 @@ function registerEpicTasksRoutes(app2) {
       if (comment.userId !== req.user.id) {
         return res.status(403).json({ error: "No tienes permiso para editar este comentario" });
       }
-      const updated = await prisma12.task_comments.update({
+      const updated = await prisma15.task_comments.update({
         where: { id: commentId },
         data: {
           contenido,
@@ -12549,7 +13939,7 @@ function registerEpicTasksRoutes(app2) {
   app2.delete("/api/tasks/:taskId/comments/:commentId", authenticateToken, async (req, res) => {
     try {
       const { commentId } = req.params;
-      const comment = await prisma12.task_comments.findUnique({
+      const comment = await prisma15.task_comments.findUnique({
         where: { id: commentId }
       });
       if (!comment) {
@@ -12558,7 +13948,7 @@ function registerEpicTasksRoutes(app2) {
       if (comment.userId !== req.user.id && !req.user.permissions.includes("admin:settings")) {
         return res.status(403).json({ error: "No tienes permiso para eliminar este comentario" });
       }
-      await prisma12.task_comments.delete({
+      await prisma15.task_comments.delete({
         where: { id: commentId }
       });
       res.status(204).end();
@@ -12570,7 +13960,7 @@ function registerEpicTasksRoutes(app2) {
   app2.get("/api/tasks/:taskId/attachments", authenticateToken, async (req, res) => {
     try {
       const { taskId } = req.params;
-      const attachments = await prisma12.task_attachments.findMany({
+      const attachments = await prisma15.task_attachments.findMany({
         where: { taskId },
         include: {
           users: {
@@ -12594,11 +13984,11 @@ function registerEpicTasksRoutes(app2) {
       if (!req.file) {
         return res.status(400).json({ error: "No se proporcion\xF3 ning\xFAn archivo" });
       }
-      const task = await prisma12.tasks.findUnique({ where: { id: taskId } });
+      const task = await prisma15.tasks.findUnique({ where: { id: taskId } });
       if (!task) {
         return res.status(404).json({ error: "Tarea no encontrada" });
       }
-      const attachment = await prisma12.task_attachments.create({
+      const attachment = await prisma15.task_attachments.create({
         data: {
           id: randomUUID7(),
           tasks: { connect: { id: taskId } },
@@ -12618,7 +14008,7 @@ function registerEpicTasksRoutes(app2) {
           }
         }
       });
-      await prisma12.task_activities.create({
+      await prisma15.task_activities.create({
         data: {
           id: randomUUID7(),
           taskId,
@@ -12637,7 +14027,7 @@ function registerEpicTasksRoutes(app2) {
   app2.delete("/api/tasks/:taskId/attachments/:attachmentId", authenticateToken, async (req, res) => {
     try {
       const { attachmentId } = req.params;
-      const attachment = await prisma12.task_attachments.findUnique({
+      const attachment = await prisma15.task_attachments.findUnique({
         where: { id: attachmentId }
       });
       if (!attachment) {
@@ -12646,11 +14036,11 @@ function registerEpicTasksRoutes(app2) {
       if (attachment.userId !== req.user.id && !req.user.permissions.includes("admin:settings")) {
         return res.status(403).json({ error: "No tienes permiso para eliminar este adjunto" });
       }
-      const filePath = path11.join(process.cwd(), "uploads", "tasks", "attachments", attachment.fileName);
-      if (fs8.existsSync(filePath)) {
-        fs8.unlinkSync(filePath);
+      const filePath = path12.join(process.cwd(), "uploads", "tasks", "attachments", attachment.fileName);
+      if (fs9.existsSync(filePath)) {
+        fs9.unlinkSync(filePath);
       }
-      await prisma12.task_attachments.delete({
+      await prisma15.task_attachments.delete({
         where: { id: attachmentId }
       });
       res.status(204).end();
@@ -12662,7 +14052,7 @@ function registerEpicTasksRoutes(app2) {
   app2.get("/api/tasks/:taskId/time-entries", authenticateToken, async (req, res) => {
     try {
       const { taskId } = req.params;
-      const entries = await prisma12.task_time_entries.findMany({
+      const entries = await prisma15.task_time_entries.findMany({
         where: { taskId },
         include: {
           users: {
@@ -12687,11 +14077,11 @@ function registerEpicTasksRoutes(app2) {
       if (!minutos || minutos <= 0) {
         return res.status(400).json({ error: "Los minutos deben ser mayores a 0" });
       }
-      const task = await prisma12.tasks.findUnique({ where: { id: taskId } });
+      const task = await prisma15.tasks.findUnique({ where: { id: taskId } });
       if (!task) {
         return res.status(404).json({ error: "Tarea no encontrada" });
       }
-      const entry = await prisma12.task_time_entries.create({
+      const entry = await prisma15.task_time_entries.create({
         data: {
           id: randomUUID7(),
           tasks: { connect: { id: taskId } },
@@ -12710,13 +14100,13 @@ function registerEpicTasksRoutes(app2) {
           }
         }
       });
-      await prisma12.tasks.update({
+      await prisma15.tasks.update({
         where: { id: taskId },
         data: {
           tiempo_invertido: task.tiempo_invertido + minutos
         }
       });
-      await prisma12.task_activities.create({
+      await prisma15.task_activities.create({
         data: {
           id: randomUUID7(),
           taskId,
@@ -12735,7 +14125,7 @@ function registerEpicTasksRoutes(app2) {
   app2.delete("/api/tasks/:taskId/time-entries/:entryId", authenticateToken, async (req, res) => {
     try {
       const { taskId, entryId } = req.params;
-      const entry = await prisma12.task_time_entries.findUnique({
+      const entry = await prisma15.task_time_entries.findUnique({
         where: { id: entryId }
       });
       if (!entry) {
@@ -12744,16 +14134,16 @@ function registerEpicTasksRoutes(app2) {
       if (entry.userId !== req.user.id) {
         return res.status(403).json({ error: "No tienes permiso para eliminar este registro" });
       }
-      const task = await prisma12.tasks.findUnique({ where: { id: taskId } });
+      const task = await prisma15.tasks.findUnique({ where: { id: taskId } });
       if (task) {
-        await prisma12.tasks.update({
+        await prisma15.tasks.update({
           where: { id: taskId },
           data: {
             tiempo_invertido: Math.max(0, task.tiempo_invertido - entry.minutos)
           }
         });
       }
-      await prisma12.task_time_entries.delete({
+      await prisma15.task_time_entries.delete({
         where: { id: entryId }
       });
       res.status(204).end();
@@ -12765,7 +14155,7 @@ function registerEpicTasksRoutes(app2) {
   app2.get("/api/tasks/:taskId/activities", authenticateToken, async (req, res) => {
     try {
       const { taskId } = req.params;
-      const activities = await prisma12.task_activities.findMany({
+      const activities = await prisma15.task_activities.findMany({
         where: { taskId },
         include: {
           users: {
@@ -12788,7 +14178,7 @@ function registerEpicTasksRoutes(app2) {
   app2.get("/api/tasks/:taskId/subtasks", authenticateToken, async (req, res) => {
     try {
       const { taskId } = req.params;
-      const subtasks = await prisma12.tasks.findMany({
+      const subtasks = await prisma15.tasks.findMany({
         where: { parent_task_id: taskId },
         include: {
           users: {
@@ -12810,11 +14200,11 @@ function registerEpicTasksRoutes(app2) {
     try {
       const { taskId } = req.params;
       const { estado, orden } = req.body;
-      const task = await prisma12.tasks.findUnique({ where: { id: taskId } });
+      const task = await prisma15.tasks.findUnique({ where: { id: taskId } });
       if (!task) {
         return res.status(404).json({ error: "Tarea no encontrada" });
       }
-      const updatedTask = await prisma12.tasks.update({
+      const updatedTask = await prisma15.tasks.update({
         where: { id: taskId },
         data: {
           ...estado !== void 0 && { estado },
@@ -12823,7 +14213,7 @@ function registerEpicTasksRoutes(app2) {
         }
       });
       if (estado && estado !== task.estado) {
-        await prisma12.task_activities.create({
+        await prisma15.task_activities.create({
           data: {
             id: randomUUID7(),
             taskId,
@@ -12851,23 +14241,23 @@ function registerEpicTasksRoutes(app2) {
         porPrioridad,
         porUsuario
       ] = await Promise.all([
-        prisma12.tasks.count({ where: { is_archived: false } }),
-        prisma12.tasks.count({ where: { estado: "PENDIENTE", is_archived: false } }),
-        prisma12.tasks.count({ where: { estado: "EN_PROGRESO", is_archived: false } }),
-        prisma12.tasks.count({ where: { estado: "COMPLETADA", is_archived: false } }),
-        prisma12.tasks.count({
+        prisma15.tasks.count({ where: { is_archived: false } }),
+        prisma15.tasks.count({ where: { estado: "PENDIENTE", is_archived: false } }),
+        prisma15.tasks.count({ where: { estado: "EN_PROGRESO", is_archived: false } }),
+        prisma15.tasks.count({ where: { estado: "COMPLETADA", is_archived: false } }),
+        prisma15.tasks.count({
           where: {
             fecha_vencimiento: { lt: /* @__PURE__ */ new Date() },
             estado: { not: "COMPLETADA" },
             is_archived: false
           }
         }),
-        prisma12.tasks.groupBy({
+        prisma15.tasks.groupBy({
           by: ["prioridad"],
           where: { is_archived: false },
           _count: true
         }),
-        prisma12.tasks.groupBy({
+        prisma15.tasks.groupBy({
           by: ["asignado_a"],
           where: { is_archived: false, asignado_a: { not: null } },
           _count: true
@@ -12899,22 +14289,22 @@ function registerEpicTasksRoutes(app2) {
 }
 
 // server/routes.ts
-import nodemailer5 from "nodemailer";
-import { exec } from "child_process";
-import { promisify } from "util";
-var execPromise = promisify(exec);
-var prisma13 = new PrismaClient13();
+import nodemailer6 from "nodemailer";
+import { exec as exec2 } from "child_process";
+import { promisify as promisify2 } from "util";
+var execPromise = promisify2(exec2);
+var prisma16 = new PrismaClient16();
 if (!process.env.JWT_SECRET) {
   throw new Error("FATAL: JWT_SECRET no est\xE1 configurado. Este valor es OBLIGATORIO para la seguridad del sistema.");
 }
 var JWT_SECRET2 = process.env.JWT_SECRET;
 var SALT_ROUNDS = 10;
-var uploadsDir = path12.join(process.cwd(), "uploads");
-var manualsImagesDir = path12.join(uploadsDir, "manuals", "images");
-var manualsAttachmentsDir = path12.join(uploadsDir, "manuals", "attachments");
+var uploadsDir = path13.join(process.cwd(), "uploads");
+var manualsImagesDir = path13.join(uploadsDir, "manuals", "images");
+var manualsAttachmentsDir = path13.join(uploadsDir, "manuals", "attachments");
 [uploadsDir, manualsImagesDir, manualsAttachmentsDir].forEach((dir) => {
-  if (!fs9.existsSync(dir)) {
-    fs9.mkdirSync(dir, { recursive: true });
+  if (!fs10.existsSync(dir)) {
+    fs10.mkdirSync(dir, { recursive: true });
   }
 });
 var imagesMimeTypes = ["image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp"];
@@ -13028,7 +14418,7 @@ var authenticateToken2 = async (req, res, next) => {
     return res.status(403).json({ error: "Token inv\xE1lido" });
   }
 };
-var checkPermission2 = (requiredPermission) => {
+var checkPermission = (requiredPermission) => {
   return (req, res, next) => {
     if (!req.user) {
       return res.status(401).json({ error: "Usuario no autenticado" });
@@ -13096,6 +14486,9 @@ async function registerRoutes(app2, options) {
     if (req.path === "/health" || req.path === "/api/health") {
       return next();
     }
+    if (req.path === "/gestoria-budgets/calculate") {
+      return next();
+    }
     return apiLimiter(req, res, next);
   });
   app2.get("/api/health", async (req, res) => {
@@ -13131,7 +14524,7 @@ async function registerRoutes(app2, options) {
         }
         let defaultRoleId = roleId;
         if (!defaultRoleId) {
-          const defaultRole = await prisma13.roles.findUnique({
+          const defaultRole = await prisma16.roles.findUnique({
             where: { name: "Gestor" }
           });
           if (defaultRole) {
@@ -13208,7 +14601,7 @@ async function registerRoutes(app2, options) {
   });
   app2.get("/api/users", authenticateToken2, async (req, res) => {
     try {
-      const users = await prisma13.users.findMany({
+      const users = await prisma16.users.findMany({
         select: {
           id: true,
           username: true,
@@ -13233,7 +14626,7 @@ async function registerRoutes(app2, options) {
   app2.post(
     "/api/users",
     authenticateToken2,
-    checkPermission2("users:create"),
+    checkPermission("users:create"),
     validateZod(userCreateSchema),
     async (req, res) => {
       try {
@@ -13255,7 +14648,7 @@ async function registerRoutes(app2, options) {
   app2.patch(
     "/api/users/:id",
     authenticateToken2,
-    checkPermission2("users:update"),
+    checkPermission("users:update"),
     async (req, res) => {
       try {
         const { id } = req.params;
@@ -13277,7 +14670,7 @@ async function registerRoutes(app2, options) {
   app2.patch(
     "/api/users/:id/toggle-active",
     authenticateToken2,
-    checkPermission2("users:update"),
+    checkPermission("users:update"),
     async (req, res) => {
       try {
         const { id } = req.params;
@@ -13310,7 +14703,7 @@ async function registerRoutes(app2, options) {
       try {
         const { id } = req.params;
         const currentUserId = req.user.id;
-        const currentUser = await prisma13.users.findUnique({
+        const currentUser = await prisma16.users.findUnique({
           where: { id: currentUserId },
           select: { is_owner: true }
         });
@@ -13320,7 +14713,7 @@ async function registerRoutes(app2, options) {
             code: "NOT_OWNER"
           });
         }
-        const targetUser = await prisma13.users.findUnique({
+        const targetUser = await prisma16.users.findUnique({
           where: { id }
         });
         if (!targetUser) {
@@ -13329,11 +14722,11 @@ async function registerRoutes(app2, options) {
         if (targetUser.id === currentUserId) {
           return res.status(400).json({ error: "No puedes transferir el rol a ti mismo" });
         }
-        await prisma13.users.update({
+        await prisma16.users.update({
           where: { id: currentUserId },
           data: { is_owner: false }
         });
-        const newOwner = await prisma13.users.update({
+        const newOwner = await prisma16.users.update({
           where: { id },
           data: { is_owner: true }
         });
@@ -13356,12 +14749,12 @@ async function registerRoutes(app2, options) {
   app2.post(
     "/api/users/:id/set-owner",
     authenticateToken2,
-    checkPermission2("admin:system"),
+    checkPermission("admin:system"),
     async (req, res) => {
       try {
         const { id } = req.params;
         const currentUserId = req.user.id;
-        const targetUser = await prisma13.users.findUnique({
+        const targetUser = await prisma16.users.findUnique({
           where: { id },
           select: { id: true, username: true, email: true, is_owner: true }
         });
@@ -13371,11 +14764,11 @@ async function registerRoutes(app2, options) {
         if (targetUser.is_owner) {
           return res.status(400).json({ error: "Este usuario ya es Owner" });
         }
-        await prisma13.users.updateMany({
+        await prisma16.users.updateMany({
           where: { is_owner: true },
           data: { is_owner: false }
         });
-        const newOwner = await prisma13.users.update({
+        const newOwner = await prisma16.users.update({
           where: { id },
           data: { is_owner: true }
         });
@@ -13398,7 +14791,7 @@ async function registerRoutes(app2, options) {
   app2.delete(
     "/api/users/:id",
     authenticateToken2,
-    checkPermission2("users:delete"),
+    checkPermission("users:delete"),
     async (req, res) => {
       try {
         const { id } = req.params;
@@ -13406,7 +14799,7 @@ async function registerRoutes(app2, options) {
         if (!user) {
           return res.status(404).json({ error: "Usuario no encontrado" });
         }
-        const userToDelete = await prisma13.users.findUnique({
+        const userToDelete = await prisma16.users.findUnique({
           where: { id },
           select: { is_owner: true, username: true }
         });
@@ -13416,9 +14809,9 @@ async function registerRoutes(app2, options) {
             code: "CANNOT_DELETE_OWNER"
           });
         }
-        const manuals = await prisma13.manuals.count({ where: { autor_id: id } });
-        const activityLogs = await prisma13.activity_logs.count({ where: { usuarioId: id } });
-        const auditTrails = await prisma13.audit_trail.count({ where: { usuarioId: id } });
+        const manuals = await prisma16.manuals.count({ where: { autor_id: id } });
+        const activityLogs = await prisma16.activity_logs.count({ where: { usuarioId: id } });
+        const auditTrails = await prisma16.audit_trail.count({ where: { usuarioId: id } });
         if (manuals > 0) {
           return res.status(409).json({
             error: `No se puede eliminar: el usuario tiene ${manuals} manual(es) asignado(s) que se borrar\xEDan permanentemente. Reasigne los manuales a otro usuario primero.`
@@ -13458,7 +14851,7 @@ async function registerRoutes(app2, options) {
   app2.get(
     "/api/clients/import-template",
     authenticateToken2,
-    checkPermission2("clients:read"),
+    checkPermission("clients:read"),
     async (req, res) => {
       try {
         logger.info("Generando plantilla de importaci\xF3n de clientes");
@@ -13477,7 +14870,7 @@ async function registerRoutes(app2, options) {
   app2.post(
     "/api/clients/import-excel",
     authenticateToken2,
-    checkPermission2("clients:create"),
+    checkPermission("clients:create"),
     uploadExcel.single("file"),
     async (req, res) => {
       try {
@@ -13538,7 +14931,7 @@ async function registerRoutes(app2, options) {
   app2.post(
     "/api/clients",
     authenticateToken2,
-    checkPermission2("clients:create"),
+    checkPermission("clients:create"),
     validateZod(clientCreateSchema),
     async (req, res) => {
       try {
@@ -13567,7 +14960,7 @@ async function registerRoutes(app2, options) {
   app2.patch(
     "/api/clients/:id",
     authenticateToken2,
-    checkPermission2("clients:update"),
+    checkPermission("clients:update"),
     validateZod(clientUpdateSchema),
     async (req, res) => {
       try {
@@ -13601,7 +14994,7 @@ async function registerRoutes(app2, options) {
   app2.delete(
     "/api/clients/:id",
     authenticateToken2,
-    checkPermission2("clients:delete"),
+    checkPermission("clients:delete"),
     async (req, res) => {
       try {
         const { id } = req.params;
@@ -13609,10 +15002,10 @@ async function registerRoutes(app2, options) {
         if (!client) {
           return res.status(404).json({ error: "Cliente no encontrado" });
         }
-        const clientTaxes = await prisma13.client_tax.findMany({
+        const clientTaxes = await prisma16.client_tax.findMany({
           where: { clientId: id }
         });
-        const assignmentCount = await prisma13.client_tax_assignments.count({
+        const assignmentCount = await prisma16.client_tax_assignments.count({
           where: { clientId: id }
         });
         if (clientTaxes.length > 0 || assignmentCount > 0) {
@@ -13676,19 +15069,19 @@ async function registerRoutes(app2, options) {
   app2.get(
     "/api/tax-models-config",
     authenticateToken2,
-    checkPermission2("taxes:read"),
+    checkPermission("taxes:read"),
     handleGetTaxConfigs
   );
   app2.get(
     "/api/tax/config",
     authenticateToken2,
-    checkPermission2("taxes:read"),
+    checkPermission("taxes:read"),
     handleGetTaxConfigs
   );
   app2.get(
     "/api/tax/assignments",
     authenticateToken2,
-    checkPermission2("taxes:read"),
+    checkPermission("taxes:read"),
     async (req, res) => {
       try {
         const clientId = req.query.clientId;
@@ -13705,7 +15098,7 @@ async function registerRoutes(app2, options) {
   app2.get(
     "/api/tax-assignments/:assignmentId/history",
     authenticateToken2,
-    checkPermission2("taxes:read"),
+    checkPermission("taxes:read"),
     async (req, res) => {
       try {
         const { assignmentId } = req.params;
@@ -13719,7 +15112,7 @@ async function registerRoutes(app2, options) {
   app2.post(
     "/api/clients/:id/tax-assignments",
     authenticateToken2,
-    checkPermission2("clients:update"),
+    checkPermission("clients:update"),
     validateZod(taxAssignmentCreateSchema),
     async (req, res) => {
       try {
@@ -13791,7 +15184,7 @@ async function registerRoutes(app2, options) {
   app2.patch(
     "/api/tax-assignments/:assignmentId",
     authenticateToken2,
-    checkPermission2("clients:update"),
+    checkPermission("clients:update"),
     validateZod(taxAssignmentUpdateSchema),
     async (req, res) => {
       try {
@@ -13859,7 +15252,7 @@ async function registerRoutes(app2, options) {
   app2.delete(
     "/api/tax-assignments/:assignmentId",
     authenticateToken2,
-    checkPermission2("clients:update"),
+    checkPermission("clients:update"),
     async (req, res) => {
       try {
         const { assignmentId } = req.params;
@@ -13916,7 +15309,7 @@ async function registerRoutes(app2, options) {
   app2.patch(
     "/api/clients/:id/toggle-active",
     authenticateToken2,
-    checkPermission2("clients:update"),
+    checkPermission("clients:update"),
     async (req, res) => {
       try {
         const { id } = req.params;
@@ -13949,7 +15342,7 @@ async function registerRoutes(app2, options) {
   app2.put(
     "/api/clients/:id/employees",
     authenticateToken2,
-    checkPermission2("clients:update"),
+    checkPermission("clients:update"),
     async (req, res) => {
       try {
         const { id } = req.params;
@@ -13958,11 +15351,11 @@ async function registerRoutes(app2, options) {
         if (!client) {
           return res.status(404).json({ error: "Cliente no encontrado" });
         }
-        await prisma13.client_employees.deleteMany({
+        await prisma16.client_employees.deleteMany({
           where: { clientId: id }
         });
         if (employeeIds && Array.isArray(employeeIds) && employeeIds.length > 0) {
-          await prisma13.client_employees.createMany({
+          await prisma16.client_employees.createMany({
             data: employeeIds.map((userId) => ({
               clientId: id,
               userId,
@@ -13991,7 +15384,7 @@ async function registerRoutes(app2, options) {
   app2.post(
     "/api/clients/:id/employees/:userId",
     authenticateToken2,
-    checkPermission2("clients:update"),
+    checkPermission("clients:update"),
     async (req, res) => {
       try {
         const { id, userId } = req.params;
@@ -14005,12 +15398,12 @@ async function registerRoutes(app2, options) {
           return res.status(404).json({ error: "Usuario no encontrado" });
         }
         if (isPrimary) {
-          await prisma13.client_employees.updateMany({
+          await prisma16.client_employees.updateMany({
             where: { clientId: id },
             data: { is_primary: false }
           });
         }
-        await prisma13.client_employees.upsert({
+        await prisma16.client_employees.upsert({
           where: {
             clientId_userId: {
               clientId: id,
@@ -14029,7 +15422,7 @@ async function registerRoutes(app2, options) {
         if (isPrimary) {
           await prismaStorage.updateClient(id, { responsableAsignado: userId });
         } else {
-          const primaryEmployee = await prisma13.client_employees.findFirst({
+          const primaryEmployee = await prisma16.client_employees.findFirst({
             where: { clientId: id, is_primary: true }
           });
           await prismaStorage.updateClient(id, {
@@ -14052,7 +15445,7 @@ async function registerRoutes(app2, options) {
   app2.delete(
     "/api/clients/:id/employees/:userId",
     authenticateToken2,
-    checkPermission2("clients:update"),
+    checkPermission("clients:update"),
     async (req, res) => {
       try {
         const { id, userId } = req.params;
@@ -14061,7 +15454,7 @@ async function registerRoutes(app2, options) {
           return res.status(404).json({ error: "Cliente no encontrado" });
         }
         const user = await prismaStorage.getUser(userId);
-        const employeeToDelete = await prisma13.client_employees.findUnique({
+        const employeeToDelete = await prisma16.client_employees.findUnique({
           where: {
             clientId_userId: {
               clientId: id,
@@ -14069,7 +15462,7 @@ async function registerRoutes(app2, options) {
             }
           }
         });
-        await prisma13.client_employees.delete({
+        await prisma16.client_employees.delete({
           where: {
             clientId_userId: {
               clientId: id,
@@ -14078,11 +15471,11 @@ async function registerRoutes(app2, options) {
           }
         });
         if (employeeToDelete?.is_primary) {
-          const remainingEmployee = await prisma13.client_employees.findFirst({
+          const remainingEmployee = await prisma16.client_employees.findFirst({
             where: { clientId: id }
           });
           if (remainingEmployee) {
-            await prisma13.client_employees.update({
+            await prisma16.client_employees.update({
               where: {
                 clientId_userId: {
                   clientId: id,
@@ -14126,7 +15519,7 @@ async function registerRoutes(app2, options) {
   app2.post(
     "/api/impuestos",
     authenticateToken2,
-    checkPermission2("taxes:create"),
+    checkPermission("taxes:create"),
     async (req, res) => {
       try {
         const { modelo, nombre, descripcion } = req.body;
@@ -14152,7 +15545,7 @@ async function registerRoutes(app2, options) {
   app2.patch(
     "/api/impuestos/:id",
     authenticateToken2,
-    checkPermission2("taxes:update"),
+    checkPermission("taxes:update"),
     async (req, res) => {
       try {
         const { modelo, nombre, descripcion } = req.body;
@@ -14175,7 +15568,7 @@ async function registerRoutes(app2, options) {
   app2.delete(
     "/api/impuestos/:id",
     authenticateToken2,
-    checkPermission2("taxes:delete"),
+    checkPermission("taxes:delete"),
     async (req, res) => {
       try {
         await prismaStorage.deleteImpuesto(req.params.id);
@@ -14218,7 +15611,7 @@ async function registerRoutes(app2, options) {
   app2.post(
     "/api/obligaciones-fiscales",
     authenticateToken2,
-    checkPermission2("taxes:create"),
+    checkPermission("taxes:create"),
     async (req, res) => {
       try {
         const { clienteId, impuestoId, periodicidad, diaVencimiento, observaciones, fechaInicio, fechaFin, activo } = req.body;
@@ -14251,7 +15644,7 @@ async function registerRoutes(app2, options) {
   app2.patch(
     "/api/obligaciones-fiscales/:id",
     authenticateToken2,
-    checkPermission2("taxes:update"),
+    checkPermission("taxes:update"),
     async (req, res) => {
       try {
         const updateData = { ...req.body };
@@ -14277,7 +15670,7 @@ async function registerRoutes(app2, options) {
   app2.delete(
     "/api/obligaciones-fiscales/:id",
     authenticateToken2,
-    checkPermission2("taxes:delete"),
+    checkPermission("taxes:delete"),
     async (req, res) => {
       try {
         await prismaStorage.deleteObligacionFiscal(req.params.id);
@@ -14311,7 +15704,7 @@ async function registerRoutes(app2, options) {
   app2.post(
     "/api/tasks",
     authenticateToken2,
-    checkPermission2("tasks:create"),
+    checkPermission("tasks:create"),
     validateZod(taskCreateSchema),
     async (req, res) => {
       try {
@@ -14389,7 +15782,7 @@ async function registerRoutes(app2, options) {
   app2.post(
     "/api/manuals",
     authenticateToken2,
-    checkPermission2("manuals:create"),
+    checkPermission("manuals:create"),
     async (req, res) => {
       try {
         const manual = await prismaStorage.createManual({
@@ -14411,7 +15804,7 @@ async function registerRoutes(app2, options) {
   app2.patch(
     "/api/manuals/:id",
     authenticateToken2,
-    checkPermission2("manuals:update"),
+    checkPermission("manuals:update"),
     async (req, res) => {
       try {
         const { id } = req.params;
@@ -14447,7 +15840,7 @@ async function registerRoutes(app2, options) {
   app2.delete(
     "/api/manuals/:id",
     authenticateToken2,
-    checkPermission2("manuals:update"),
+    checkPermission("manuals:update"),
     async (req, res) => {
       const { id } = req.params;
       try {
@@ -14470,7 +15863,7 @@ async function registerRoutes(app2, options) {
   app2.post(
     "/api/manuals/upload-image",
     authenticateToken2,
-    checkPermission2("manuals:update"),
+    checkPermission("manuals:update"),
     uploadManualImage.single("image"),
     uploadToStorage,
     async (req, res) => {
@@ -14488,7 +15881,7 @@ async function registerRoutes(app2, options) {
   app2.post(
     "/api/manuals/:id/attachments",
     authenticateToken2,
-    checkPermission2("manuals:update"),
+    checkPermission("manuals:update"),
     uploadManualAttachment.single("file"),
     uploadToStorage,
     async (req, res) => {
@@ -14506,7 +15899,7 @@ async function registerRoutes(app2, options) {
           fileName: req.file.filename,
           originalName: req.file.originalname,
           filePath: req.file.path,
-          fileType: path12.extname(req.file.originalname).toLowerCase(),
+          fileType: path13.extname(req.file.originalname).toLowerCase(),
           fileSize: req.file.size,
           uploadedBy: req.user.id
         });
@@ -14532,7 +15925,7 @@ async function registerRoutes(app2, options) {
   app2.delete(
     "/api/manuals/:manualId/attachments/:attachmentId",
     authenticateToken2,
-    checkPermission2("manuals:update"),
+    checkPermission("manuals:update"),
     async (req, res) => {
       try {
         const { attachmentId } = req.params;
@@ -14540,8 +15933,8 @@ async function registerRoutes(app2, options) {
         if (!attachment) {
           return res.status(404).json({ error: "Adjunto no encontrado" });
         }
-        if (fs9.existsSync(attachment.filePath)) {
-          fs9.unlinkSync(attachment.filePath);
+        if (fs10.existsSync(attachment.filePath)) {
+          fs10.unlinkSync(attachment.filePath);
         }
         const deleted = await prismaStorage.deleteManualAttachment(attachmentId);
         if (!deleted) {
@@ -14569,7 +15962,7 @@ async function registerRoutes(app2, options) {
   app2.post(
     "/api/manuals/:id/versions/restore/:versionId",
     authenticateToken2,
-    checkPermission2("manuals:update"),
+    checkPermission("manuals:update"),
     async (req, res) => {
       try {
         const { id, versionId } = req.params;
@@ -14592,7 +15985,7 @@ async function registerRoutes(app2, options) {
   app2.get(
     "/api/activity-logs",
     authenticateToken2,
-    checkPermission2("audits:read"),
+    checkPermission("audits:read"),
     async (req, res) => {
       try {
         const logs = await prismaStorage.getAllActivityLogs();
@@ -14631,7 +16024,7 @@ async function registerRoutes(app2, options) {
   app2.post(
     "/api/admin/smtp-config",
     authenticateToken2,
-    checkPermission2("admin:settings"),
+    checkPermission("admin:settings"),
     validateZod(smtpConfigSchema),
     async (req, res) => {
       try {
@@ -14666,7 +16059,7 @@ async function registerRoutes(app2, options) {
   app2.get(
     "/api/admin/smtp-config",
     authenticateToken2,
-    checkPermission2("admin:settings"),
+    checkPermission("admin:settings"),
     async (req, res) => {
       try {
         const config = getSMTPConfig();
@@ -14686,7 +16079,7 @@ async function registerRoutes(app2, options) {
   );
   app2.get("/api/admin/online-count", authenticateToken2, async (req, res) => {
     try {
-      const count = await prisma13.sessions.count({
+      const count = await prisma16.sessions.count({
         where: { ended_at: null }
       });
       res.json({ count });
@@ -14702,11 +16095,12 @@ async function registerRoutes(app2, options) {
   app2.use("/api/gestoria-budgets", gestoria_budgets_default);
   app2.use("/api/budget-parameters", budget_parameters_default);
   app2.use("/api/budget-templates", budget_templates_default);
-  app2.use("/api/documents", authenticateToken2, documentsRouter);
+  app2.use("/api/documents", authenticateToken2, documents_routes_default);
+  app2.use("/api/system/github", github_updates_routes_default);
   app2.get(
     "/api/admin/smtp-accounts",
     authenticateToken2,
-    checkPermission2("admin:smtp_manage"),
+    checkPermission("admin:smtp_manage"),
     async (req, res) => {
       try {
         const accounts = await prismaStorage.getAllSMTPAccounts();
@@ -14723,7 +16117,7 @@ async function registerRoutes(app2, options) {
   app2.post(
     "/api/admin/smtp-accounts",
     authenticateToken2,
-    checkPermission2("admin:smtp_manage"),
+    checkPermission("admin:smtp_manage"),
     validateZod(smtpAccountSchema),
     async (req, res) => {
       try {
@@ -14756,7 +16150,7 @@ async function registerRoutes(app2, options) {
   app2.patch(
     "/api/admin/smtp-accounts/:id",
     authenticateToken2,
-    checkPermission2("admin:smtp_manage"),
+    checkPermission("admin:smtp_manage"),
     async (req, res) => {
       try {
         const { id } = req.params;
@@ -14780,7 +16174,7 @@ async function registerRoutes(app2, options) {
   app2.delete(
     "/api/admin/smtp-accounts/:id",
     authenticateToken2,
-    checkPermission2("admin:smtp_manage"),
+    checkPermission("admin:smtp_manage"),
     async (req, res) => {
       try {
         const { id } = req.params;
@@ -14800,39 +16194,84 @@ async function registerRoutes(app2, options) {
   app2.post(
     "/api/admin/smtp-accounts/test",
     authenticateToken2,
-    checkPermission2("admin:smtp_manage"),
+    checkPermission("admin:smtp_manage"),
     async (req, res) => {
       try {
         const { host, port, user, password } = req.body;
-        const transporter2 = nodemailer5.createTransport({
+        if (!host || !port || !user || !password) {
+          return res.status(400).json({
+            success: false,
+            error: "Faltan par\xE1metros requeridos (host, port, user, password)"
+          });
+        }
+        console.log(`\u{1F50D} Probando conexi\xF3n SMTP a ${host}:${port} con usuario ${user}`);
+        const transportConfig = {
           host,
           port: parseInt(port),
           secure: parseInt(port) === 465,
-          auth: { user, pass: password }
-        });
+          // true para 465, false para otros puertos
+          auth: {
+            user,
+            pass: password
+          },
+          // Timeouts más largos para evitar errores prematuros
+          connectionTimeout: 1e4,
+          // 10 segundos
+          greetingTimeout: 1e4,
+          socketTimeout: 1e4
+        };
+        console.log("\u{1F4E7} Configuraci\xF3n SMTP:", { ...transportConfig, auth: { user, pass: "***" } });
+        const transporter2 = nodemailer6.createTransport(transportConfig);
         await transporter2.verify();
-        res.json({ success: true, message: "Conexi\xF3n SMTP exitosa" });
+        console.log("\u2705 Conexi\xF3n SMTP exitosa");
+        res.json({
+          success: true,
+          message: "Conexi\xF3n SMTP exitosa. El servidor est\xE1 configurado correctamente."
+        });
       } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
+        console.error("\u274C Error al probar conexi\xF3n SMTP:", {
+          message: error.message,
+          code: error.code,
+          command: error.command,
+          response: error.response,
+          responseCode: error.responseCode
+        });
+        let errorMessage = error.message || "Error desconocido al conectar con el servidor SMTP";
+        if (error.code === "ECONNREFUSED") {
+          errorMessage = `No se pudo conectar al servidor ${req.body.host}:${req.body.port}. Verifica el host y puerto.`;
+        } else if (error.code === "ENOTFOUND") {
+          errorMessage = `El servidor ${req.body.host} no existe o no se puede resolver. Verifica el host.`;
+        } else if (error.code === "ETIMEDOUT") {
+          errorMessage = `Tiempo de espera agotado al conectar con ${req.body.host}:${req.body.port}.`;
+        } else if (error.responseCode === 535 || error.message.includes("Invalid login")) {
+          errorMessage = "Usuario o contrase\xF1a incorrectos.";
+        } else if (error.responseCode === 454) {
+          errorMessage = "Autenticaci\xF3n fallida. Verifica que las credenciales sean correctas.";
+        }
+        res.status(500).json({
+          success: false,
+          error: errorMessage,
+          details: process.env.NODE_ENV === "development" ? error.message : void 0
+        });
       }
     }
   );
   app2.post(
     "/api/admin/apply-migrations",
     authenticateToken2,
-    checkPermission2("admin:system"),
+    checkPermission("admin:system"),
     async (req, res) => {
       try {
         console.log("\u{1F680} Iniciando migraciones...");
-        const updatedUsers = await prisma13.users.updateMany({
+        const updatedUsers = await prisma16.users.updateMany({
           where: { username: "CarlosAdmin" },
           data: { is_owner: true }
         });
-        const adminUser = await prisma13.users.findFirst({
+        const adminUser = await prisma16.users.findFirst({
           where: { username: "CarlosAdmin" },
           select: { username: true, email: true, is_owner: true }
         });
-        const roles = await prisma13.roles.findMany({
+        const roles = await prisma16.roles.findMany({
           select: {
             id: true,
             name: true,
@@ -14861,10 +16300,10 @@ async function registerRoutes(app2, options) {
   app2.get(
     "/api/admin/storage-config",
     authenticateToken2,
-    checkPermission2("admin:system"),
+    checkPermission("admin:system"),
     async (req, res) => {
       try {
-        const config = await prisma13.storage_configs.findFirst({
+        const config = await prisma16.storage_configs.findFirst({
           where: { isActive: true },
           orderBy: { createdAt: "desc" }
         });
@@ -14894,7 +16333,7 @@ async function registerRoutes(app2, options) {
   app2.post(
     "/api/admin/storage-config",
     authenticateToken2,
-    checkPermission2("admin:system"),
+    checkPermission("admin:system"),
     async (req, res) => {
       try {
         const { type, host, port, username, password, basePath } = req.body;
@@ -14909,11 +16348,11 @@ async function registerRoutes(app2, options) {
           }
         }
         const encryptedPassword = password ? encryptPassword2(password) : null;
-        await prisma13.storage_configs.updateMany({
+        await prisma16.storage_configs.updateMany({
           where: { isActive: true },
           data: { isActive: false }
         });
-        const config = await prisma13.storage_configs.create({
+        const config = await prisma16.storage_configs.create({
           data: {
             id: randomUUID8(),
             type,
@@ -14950,7 +16389,7 @@ async function registerRoutes(app2, options) {
   app2.post(
     "/api/admin/storage-config/test",
     authenticateToken2,
-    checkPermission2("admin:system"),
+    checkPermission("admin:system"),
     async (req, res) => {
       try {
         const { type, host, port, username, password, basePath } = req.body;
@@ -14993,7 +16432,7 @@ async function registerRoutes(app2, options) {
   app2.post(
     "/api/admin/storage-config/migrate",
     authenticateToken2,
-    checkPermission2("admin:system"),
+    checkPermission("admin:system"),
     async (req, res) => {
       try {
         const { targetConfigId } = req.body;
@@ -15036,7 +16475,7 @@ async function registerRoutes(app2, options) {
   app2.patch(
     "/api/admin/system-settings",
     authenticateToken2,
-    checkPermission2("admin:settings"),
+    checkPermission("admin:settings"),
     async (req, res) => {
       try {
         const { registrationEnabled } = req.body;
@@ -15058,10 +16497,10 @@ async function registerRoutes(app2, options) {
   app2.get(
     "/api/system/config",
     authenticateToken2,
-    checkPermission2("admin:settings"),
+    checkPermission("admin:settings"),
     async (req, res) => {
       try {
-        const configs = await prisma13.system_config.findMany({
+        const configs = await prisma16.system_config.findMany({
           orderBy: { key: "asc" }
         });
         res.json(configs);
@@ -15073,10 +16512,10 @@ async function registerRoutes(app2, options) {
   app2.get(
     "/api/system/config/:key",
     authenticateToken2,
-    checkPermission2("admin:settings"),
+    checkPermission("admin:settings"),
     async (req, res) => {
       try {
-        const config = await prisma13.system_config.findUnique({
+        const config = await prisma16.system_config.findUnique({
           where: { key: req.params.key }
         });
         if (!config) {
@@ -15091,14 +16530,14 @@ async function registerRoutes(app2, options) {
   app2.put(
     "/api/system/config/:key",
     authenticateToken2,
-    checkPermission2("admin:settings"),
+    checkPermission("admin:settings"),
     async (req, res) => {
       try {
         const { value } = req.body;
         if (value === void 0 || value === null) {
           return res.status(400).json({ error: "El valor de la configuraci\xF3n es requerido" });
         }
-        const existing = await prisma13.system_config.findUnique({
+        const existing = await prisma16.system_config.findUnique({
           where: { key: req.params.key }
         });
         if (!existing) {
@@ -15107,7 +16546,7 @@ async function registerRoutes(app2, options) {
         if (!existing.is_editable) {
           return res.status(403).json({ error: "Esta configuraci\xF3n no es editable" });
         }
-        const config = await prisma13.system_config.update({
+        const config = await prisma16.system_config.update({
           where: { key: req.params.key },
           data: { value: String(value) }
         });
@@ -15126,13 +16565,13 @@ async function registerRoutes(app2, options) {
   app2.get(
     "/api/admin/github-config",
     authenticateToken2,
-    checkPermission2("admin:settings"),
+    checkPermission("admin:settings"),
     async (req, res) => {
       try {
-        const repoConfig = await prisma13.system_config.findUnique({
+        const repoConfig = await prisma16.system_config.findUnique({
           where: { key: "github_repo_url" }
         });
-        const branchConfig = await prisma13.system_config.findUnique({
+        const branchConfig = await prisma16.system_config.findUnique({
           where: { key: "github_branch" }
         });
         res.json({
@@ -15148,7 +16587,7 @@ async function registerRoutes(app2, options) {
   app2.put(
     "/api/admin/github-config",
     authenticateToken2,
-    checkPermission2("admin:settings"),
+    checkPermission("admin:settings"),
     validateZod(githubConfigSchema),
     async (req, res) => {
       try {
@@ -15182,7 +16621,7 @@ async function registerRoutes(app2, options) {
           }
         }
         if (repoUrl !== void 0) {
-          await prisma13.system_config.upsert({
+          await prisma16.system_config.upsert({
             where: { key: "github_repo_url" },
             create: {
               id: randomUUID8(),
@@ -15196,7 +16635,7 @@ async function registerRoutes(app2, options) {
           });
         }
         if (branch !== void 0) {
-          await prisma13.system_config.upsert({
+          await prisma16.system_config.upsert({
             where: { key: "github_branch" },
             create: {
               id: randomUUID8(),
@@ -15229,11 +16668,11 @@ async function registerRoutes(app2, options) {
   app2.get(
     "/api/system/version",
     authenticateToken2,
-    checkPermission2("admin:system"),
+    checkPermission("admin:system"),
     async (req, res) => {
       try {
         const currentVersion = await getCurrentVersion();
-        const repoConfig = await prisma13.system_config.findUnique({
+        const repoConfig = await prisma16.system_config.findUnique({
           where: { key: "github_repo_url" }
         });
         if (!repoConfig?.value) {
@@ -15256,7 +16695,7 @@ async function registerRoutes(app2, options) {
           });
         }
         const [, owner, repo] = match;
-        const versionInfo = await checkForUpdates(owner, repo.replace(".git", ""));
+        const versionInfo = await checkForUpdates2(owner, repo.replace(".git", ""));
         res.json({
           ...versionInfo,
           configured: true
@@ -15269,7 +16708,7 @@ async function registerRoutes(app2, options) {
   app2.post(
     "/api/system/update",
     authenticateToken2,
-    checkPermission2("admin:system"),
+    checkPermission("admin:system"),
     async (req, res) => {
       try {
         const gitCheck = await verifyGitSetup();
@@ -15313,7 +16752,7 @@ async function registerRoutes(app2, options) {
   app2.get(
     "/api/system/backups",
     authenticateToken2,
-    checkPermission2("admin:system"),
+    checkPermission("admin:system"),
     async (req, res) => {
       try {
         const backups = await listBackups();
@@ -15326,7 +16765,7 @@ async function registerRoutes(app2, options) {
   app2.post(
     "/api/system/backups",
     authenticateToken2,
-    checkPermission2("admin:system"),
+    checkPermission("admin:system"),
     async (req, res) => {
       try {
         const backup = await createSystemBackup(req.user.id);
@@ -15345,7 +16784,7 @@ async function registerRoutes(app2, options) {
   app2.post(
     "/api/system/restore/:id",
     authenticateToken2,
-    checkPermission2("admin:system"),
+    checkPermission("admin:system"),
     async (req, res) => {
       try {
         await restoreFromBackup(req.params.id, req.user.id);
@@ -15367,7 +16806,7 @@ async function registerRoutes(app2, options) {
   app2.get(
     "/api/system/updates",
     authenticateToken2,
-    checkPermission2("admin:system"),
+    checkPermission("admin:system"),
     async (req, res) => {
       try {
         const updates = await getUpdateHistory(20);
@@ -15380,7 +16819,7 @@ async function registerRoutes(app2, options) {
   app2.get(
     "/api/roles",
     authenticateToken2,
-    checkPermission2("admin:roles"),
+    checkPermission("admin:roles"),
     async (req, res) => {
       try {
         const roles = await prismaStorage.getAllRoles();
@@ -15402,7 +16841,7 @@ async function registerRoutes(app2, options) {
   app2.get(
     "/api/roles/:id",
     authenticateToken2,
-    checkPermission2("admin:roles"),
+    checkPermission("admin:roles"),
     async (req, res) => {
       try {
         const role = await prismaStorage.getRoleById(req.params.id);
@@ -15427,7 +16866,7 @@ async function registerRoutes(app2, options) {
   app2.post(
     "/api/roles",
     authenticateToken2,
-    checkPermission2("admin:roles"),
+    checkPermission("admin:roles"),
     async (req, res) => {
       try {
         const {
@@ -15442,13 +16881,13 @@ async function registerRoutes(app2, options) {
         if (!name) {
           return res.status(400).json({ error: "El nombre del rol es requerido" });
         }
-        const existingRole = await prisma13.roles.findUnique({
+        const existingRole = await prisma16.roles.findUnique({
           where: { name }
         });
         if (existingRole) {
           return res.status(400).json({ error: "Ya existe un rol con ese nombre" });
         }
-        const role = await prisma13.roles.create({
+        const role = await prisma16.roles.create({
           data: {
             id: randomUUID8(),
             name,
@@ -15498,7 +16937,7 @@ async function registerRoutes(app2, options) {
   app2.patch(
     "/api/roles/:id",
     authenticateToken2,
-    checkPermission2("admin:roles"),
+    checkPermission("admin:roles"),
     async (req, res) => {
       try {
         const { id } = req.params;
@@ -15512,7 +16951,7 @@ async function registerRoutes(app2, options) {
           can_manage_roles,
           is_active
         } = req.body;
-        const existingRole = await prisma13.roles.findUnique({
+        const existingRole = await prisma16.roles.findUnique({
           where: { id }
         });
         if (!existingRole) {
@@ -15525,7 +16964,7 @@ async function registerRoutes(app2, options) {
           });
         }
         if (name && name !== existingRole.name) {
-          const duplicateRole = await prisma13.roles.findUnique({
+          const duplicateRole = await prisma16.roles.findUnique({
             where: { name }
           });
           if (duplicateRole) {
@@ -15544,7 +16983,7 @@ async function registerRoutes(app2, options) {
         if (can_delete_users !== void 0) additionalFields.can_delete_users = can_delete_users;
         if (can_manage_roles !== void 0) additionalFields.can_manage_roles = can_manage_roles;
         if (is_active !== void 0) additionalFields.is_active = is_active;
-        const role = await prisma13.roles.update({
+        const role = await prisma16.roles.update({
           where: { id },
           data: updateData,
           include: {
@@ -15581,11 +17020,11 @@ async function registerRoutes(app2, options) {
   app2.delete(
     "/api/roles/:id",
     authenticateToken2,
-    checkPermission2("admin:roles"),
+    checkPermission("admin:roles"),
     async (req, res) => {
       try {
         const { id } = req.params;
-        const role = await prisma13.roles.findUnique({
+        const role = await prisma16.roles.findUnique({
           where: { id }
         });
         if (!role) {
@@ -15597,7 +17036,7 @@ async function registerRoutes(app2, options) {
             code: "SYSTEM_ROLE_PROTECTED"
           });
         }
-        const usersWithRole = await prisma13.users.count({
+        const usersWithRole = await prisma16.users.count({
           where: { roleId: id }
         });
         if (usersWithRole > 0) {
@@ -15606,10 +17045,10 @@ async function registerRoutes(app2, options) {
             code: "ROLE_IN_USE"
           });
         }
-        await prisma13.role_permissions.deleteMany({
+        await prisma16.role_permissions.deleteMany({
           where: { roleId: id }
         });
-        await prisma13.roles.delete({
+        await prisma16.roles.delete({
           where: { id }
         });
         await prismaStorage.createActivityLog({
@@ -15631,7 +17070,7 @@ async function registerRoutes(app2, options) {
   app2.get(
     "/api/permissions",
     authenticateToken2,
-    checkPermission2("admin:roles"),
+    checkPermission("admin:roles"),
     async (req, res) => {
       try {
         const permissions = await prismaStorage.getAllPermissions();
@@ -15644,7 +17083,7 @@ async function registerRoutes(app2, options) {
   app2.post(
     "/api/roles/:id/permissions",
     authenticateToken2,
-    checkPermission2("admin:roles"),
+    checkPermission("admin:roles"),
     async (req, res) => {
       try {
         const { permissionIds } = req.body;
@@ -15667,7 +17106,7 @@ async function registerRoutes(app2, options) {
   app2.post(
     "/api/roles/:id/assign-permissions",
     authenticateToken2,
-    checkPermission2("admin:roles"),
+    checkPermission("admin:roles"),
     async (req, res) => {
       try {
         const { id } = req.params;
@@ -15675,7 +17114,7 @@ async function registerRoutes(app2, options) {
         if (!Array.isArray(permissionIds)) {
           return res.status(400).json({ error: "permissionIds debe ser un array" });
         }
-        const role = await prisma13.roles.findUnique({
+        const role = await prisma16.roles.findUnique({
           where: { id }
         });
         if (!role) {
@@ -15687,12 +17126,12 @@ async function registerRoutes(app2, options) {
             code: "SYSTEM_ROLE_PROTECTED"
           });
         }
-        await prisma13.role_permissions.deleteMany({
+        await prisma16.role_permissions.deleteMany({
           where: { roleId: id }
         });
         const rolePermissions = await Promise.all(
           permissionIds.map(
-            (permissionId) => prisma13.role_permissions.create({
+            (permissionId) => prisma16.role_permissions.create({
               data: {
                 id: randomUUID8(),
                 roleId: id,
@@ -15701,7 +17140,7 @@ async function registerRoutes(app2, options) {
             })
           )
         );
-        const updatedRole = await prisma13.roles.findUnique({
+        const updatedRole = await prisma16.roles.findUnique({
           where: { id },
           include: {
             role_permissions: {
@@ -15743,7 +17182,7 @@ async function registerRoutes(app2, options) {
   app2.get(
     "/api/audit",
     authenticateToken2,
-    checkPermission2("audits:read"),
+    checkPermission("audits:read"),
     async (req, res) => {
       try {
         const { table, recordId, userId } = req.query;
@@ -15798,7 +17237,7 @@ async function registerRoutes(app2, options) {
   );
   app2.get("/api/tax-requirements", authenticateToken2, async (req, res) => {
     try {
-      const requirements = await prisma13.client_tax_requirements.findMany({
+      const requirements = await prisma16.client_tax_requirements.findMany({
         include: { clients: true }
       });
       res.json(requirements);
@@ -15806,10 +17245,10 @@ async function registerRoutes(app2, options) {
       res.status(500).json({ error: error.message });
     }
   });
-  app2.post("/api/tax-requirements", authenticateToken2, checkPermission2("taxes:create"), async (req, res) => {
+  app2.post("/api/tax-requirements", authenticateToken2, checkPermission("taxes:create"), async (req, res) => {
     try {
       const { clientId, taxModelCode, impuesto, required = true, note, colorTag, detalle } = req.body;
-      const requirement = await prisma13.client_tax_requirements.create({
+      const requirement = await prisma16.client_tax_requirements.create({
         data: {
           id: randomUUID8(),
           clientId,
@@ -15827,14 +17266,14 @@ async function registerRoutes(app2, options) {
       res.status(500).json({ error: error.message });
     }
   });
-  app2.patch("/api/tax-requirements/:id/toggle", authenticateToken2, checkPermission2("taxes:update"), async (req, res) => {
+  app2.patch("/api/tax-requirements/:id/toggle", authenticateToken2, checkPermission("taxes:update"), async (req, res) => {
     try {
       const { id } = req.params;
-      const current = await prisma13.client_tax_requirements.findUnique({ where: { id } });
+      const current = await prisma16.client_tax_requirements.findUnique({ where: { id } });
       if (!current) {
         return res.status(404).json({ error: "Requisito no encontrado" });
       }
-      const updated = await prisma13.client_tax_requirements.update({
+      const updated = await prisma16.client_tax_requirements.update({
         where: { id },
         data: { required: !current.required },
         include: { clients: true }
@@ -15844,11 +17283,11 @@ async function registerRoutes(app2, options) {
       res.status(500).json({ error: error.message });
     }
   });
-  app2.patch("/api/tax-requirements/:id", authenticateToken2, checkPermission2("taxes:update"), async (req, res) => {
+  app2.patch("/api/tax-requirements/:id", authenticateToken2, checkPermission("taxes:update"), async (req, res) => {
     try {
       const { id } = req.params;
       const { note, color_tag: colorTag } = req.body;
-      const updated = await prisma13.client_tax_requirements.update({
+      const updated = await prisma16.client_tax_requirements.update({
         where: { id },
         data: { note, color_tag: colorTag },
         include: { clients: true }
@@ -15860,7 +17299,7 @@ async function registerRoutes(app2, options) {
   });
   app2.get("/api/fiscal-periods", authenticateToken2, async (req, res) => {
     try {
-      const periods = await prisma13.fiscal_periods.findMany({
+      const periods = await prisma16.fiscal_periods.findMany({
         orderBy: [{ year: "desc" }, { quarter: "asc" }]
       });
       res.json(periods);
@@ -15871,7 +17310,7 @@ async function registerRoutes(app2, options) {
   app2.get(
     "/api/tax/periods",
     authenticateToken2,
-    checkPermission2("taxes:read"),
+    checkPermission("taxes:read"),
     async (req, res) => {
       try {
         const year = req.query.year ? parseInt(req.query.year, 10) : void 0;
@@ -15885,7 +17324,7 @@ async function registerRoutes(app2, options) {
   app2.get(
     "/api/tax/periods/:id",
     authenticateToken2,
-    checkPermission2("taxes:read"),
+    checkPermission("taxes:read"),
     async (req, res) => {
       try {
         const period = await prismaStorage.getFiscalPeriod(req.params.id);
@@ -15901,7 +17340,7 @@ async function registerRoutes(app2, options) {
   app2.post(
     "/api/tax/periods/create-year",
     authenticateToken2,
-    checkPermission2("taxes:create"),
+    checkPermission("taxes:create"),
     async (req, res) => {
       try {
         const year = parseInt(req.body?.year, 10);
@@ -15918,7 +17357,7 @@ async function registerRoutes(app2, options) {
   app2.post(
     "/api/tax/periods/create",
     authenticateToken2,
-    checkPermission2("taxes:create"),
+    checkPermission("taxes:create"),
     async (req, res) => {
       try {
         const { year, kind, label, quarter, startsAt, endsAt } = req.body;
@@ -15942,7 +17381,7 @@ async function registerRoutes(app2, options) {
   app2.patch(
     "/api/tax/periods/:id/status",
     authenticateToken2,
-    checkPermission2("taxes:update"),
+    checkPermission("taxes:update"),
     async (req, res) => {
       try {
         const { id } = req.params;
@@ -15960,7 +17399,7 @@ async function registerRoutes(app2, options) {
   app2.get(
     "/api/tax-models",
     authenticateToken2,
-    checkPermission2("taxes:read"),
+    checkPermission("taxes:read"),
     async (_req, res) => {
       try {
         const models = await prismaStorage.getAllTaxModels();
@@ -15973,7 +17412,7 @@ async function registerRoutes(app2, options) {
   app2.post(
     "/api/tax-models",
     authenticateToken2,
-    checkPermission2("taxes:update"),
+    checkPermission("taxes:update"),
     async (req, res) => {
       try {
         const { code, name, allowedTypes, allowedPeriods } = req.body;
@@ -16005,7 +17444,7 @@ async function registerRoutes(app2, options) {
   app2.put(
     "/api/tax-models/:code",
     authenticateToken2,
-    checkPermission2("taxes:update"),
+    checkPermission("taxes:update"),
     async (req, res) => {
       try {
         const { code } = req.params;
@@ -16035,7 +17474,7 @@ async function registerRoutes(app2, options) {
   app2.delete(
     "/api/tax-models/:code",
     authenticateToken2,
-    checkPermission2("taxes:delete"),
+    checkPermission("taxes:delete"),
     async (req, res) => {
       try {
         const { code } = req.params;
@@ -16065,7 +17504,7 @@ async function registerRoutes(app2, options) {
   app2.get(
     "/api/tax/calendar",
     authenticateToken2,
-    checkPermission2("taxes:read"),
+    checkPermission("taxes:read"),
     async (req, res) => {
       try {
         const y = Number(req.query.year);
@@ -16080,7 +17519,7 @@ async function registerRoutes(app2, options) {
         if (periodicity === "annual") where.period = "ANUAL";
         if (periodicity === "special") where.period = { in: ["M04", "M10", "M12"] };
         if (status && ["PENDIENTE", "ABIERTO", "CERRADO"].includes(status)) where.status = status;
-        const list = await prisma13.tax_calendar.findMany({ where, orderBy: [{ endDate: "asc" }] });
+        const list = await prisma16.tax_calendar.findMany({ where, orderBy: [{ endDate: "asc" }] });
         const rows = list.map((r) => ({
           id: r.id,
           modelCode: r.modelCode,
@@ -16103,7 +17542,7 @@ async function registerRoutes(app2, options) {
   app2.post(
     "/api/tax/calendar",
     authenticateToken2,
-    checkPermission2("taxes:create"),
+    checkPermission("taxes:create"),
     async (req, res) => {
       try {
         const { modelCode, period, year, startDate, endDate, active = true } = req.body || {};
@@ -16132,7 +17571,7 @@ async function registerRoutes(app2, options) {
   app2.patch(
     "/api/tax/calendar/:id",
     authenticateToken2,
-    checkPermission2("taxes:update"),
+    checkPermission("taxes:update"),
     async (req, res) => {
       try {
         const data = {};
@@ -16150,7 +17589,7 @@ async function registerRoutes(app2, options) {
   app2.delete(
     "/api/tax/calendar/:id",
     authenticateToken2,
-    checkPermission2("taxes:delete"),
+    checkPermission("taxes:delete"),
     async (req, res) => {
       try {
         const ok = await prismaStorage.deleteTaxCalendar(req.params.id);
@@ -16164,7 +17603,7 @@ async function registerRoutes(app2, options) {
   app2.post(
     "/api/tax/calendar/create-year",
     authenticateToken2,
-    checkPermission2("taxes:create"),
+    checkPermission("taxes:create"),
     async (req, res) => {
       try {
         const y = Number(req.body?.year);
@@ -16179,7 +17618,7 @@ async function registerRoutes(app2, options) {
   app2.post(
     "/api/tax/calendar/seed-year",
     authenticateToken2,
-    checkPermission2("taxes:create"),
+    checkPermission("taxes:create"),
     async (req, res) => {
       try {
         const y = Number(req.body?.year);
@@ -16199,7 +17638,7 @@ async function registerRoutes(app2, options) {
   app2.post(
     "/api/tax/calendar/generate-aeat-calendar",
     authenticateToken2,
-    checkPermission2("taxes:create"),
+    checkPermission("taxes:create"),
     async (req, res) => {
       try {
         const y = Number(req.body?.year);
@@ -16232,12 +17671,12 @@ async function registerRoutes(app2, options) {
   app2.get(
     "/api/tax/calendar/:year.ics",
     authenticateToken2,
-    checkPermission2("taxes:read"),
+    checkPermission("taxes:read"),
     async (req, res) => {
       try {
         const y = Number(req.params.year);
         if (!Number.isFinite(y)) return res.status(400).send("");
-        const rows = await prisma13.tax_calendar.findMany({ where: { year: y }, orderBy: [{ startDate: "asc" }] });
+        const rows = await prisma16.tax_calendar.findMany({ where: { year: y }, orderBy: [{ startDate: "asc" }] });
         const toICSDate = (d) => {
           const pad = (n) => String(n).padStart(2, "0");
           const yyyy = d.getUTCFullYear();
@@ -16275,7 +17714,7 @@ async function registerRoutes(app2, options) {
   app2.get(
     "/api/tax/calendar/download-template",
     authenticateToken2,
-    checkPermission2("taxes:read"),
+    checkPermission("taxes:read"),
     async (req, res) => {
       try {
         const buffer = await generateTemplate();
@@ -16300,7 +17739,7 @@ async function registerRoutes(app2, options) {
   app2.post(
     "/api/tax/calendar/import-excel",
     authenticateToken2,
-    checkPermission2("taxes:create"),
+    checkPermission("taxes:create"),
     uploadExcel.single("file"),
     async (req, res) => {
       try {
@@ -16346,7 +17785,7 @@ async function registerRoutes(app2, options) {
   app2.get(
     "/api/tax/reports/kpis",
     authenticateToken2,
-    checkPermission2("taxes:read"),
+    checkPermission("taxes:read"),
     async (req, res) => {
       try {
         const data = await getReportsKpis(parseReportFilters(req));
@@ -16359,7 +17798,7 @@ async function registerRoutes(app2, options) {
   app2.get(
     "/api/tax/reports/summary/model",
     authenticateToken2,
-    checkPermission2("taxes:read"),
+    checkPermission("taxes:read"),
     async (req, res) => {
       try {
         const data = await getSummaryByModel(parseReportFilters(req));
@@ -16372,7 +17811,7 @@ async function registerRoutes(app2, options) {
   app2.get(
     "/api/tax/reports/summary/assignee",
     authenticateToken2,
-    checkPermission2("taxes:read"),
+    checkPermission("taxes:read"),
     async (req, res) => {
       try {
         const data = await getSummaryByAssignee(parseReportFilters(req));
@@ -16385,7 +17824,7 @@ async function registerRoutes(app2, options) {
   app2.get(
     "/api/tax/reports/summary/client",
     authenticateToken2,
-    checkPermission2("taxes:read"),
+    checkPermission("taxes:read"),
     async (req, res) => {
       try {
         const data = await getSummaryByClient(parseReportFilters(req));
@@ -16398,7 +17837,7 @@ async function registerRoutes(app2, options) {
   app2.get(
     "/api/tax/reports/trends",
     authenticateToken2,
-    checkPermission2("taxes:read"),
+    checkPermission("taxes:read"),
     async (req, res) => {
       try {
         const filters = parseReportFilters(req);
@@ -16412,7 +17851,7 @@ async function registerRoutes(app2, options) {
   app2.get(
     "/api/tax/reports/exceptions",
     authenticateToken2,
-    checkPermission2("taxes:read"),
+    checkPermission("taxes:read"),
     async (req, res) => {
       try {
         const data = await getExceptions(parseReportFilters(req));
@@ -16425,7 +17864,7 @@ async function registerRoutes(app2, options) {
   app2.get(
     "/api/tax/reports/filings",
     authenticateToken2,
-    checkPermission2("taxes:read"),
+    checkPermission("taxes:read"),
     async (req, res) => {
       try {
         const filters = parseReportFilters(req);
@@ -16441,7 +17880,7 @@ async function registerRoutes(app2, options) {
   app2.get(
     "/api/tax/reports/export",
     authenticateToken2,
-    checkPermission2("taxes:read"),
+    checkPermission("taxes:read"),
     async (req, res) => {
       try {
         const filters = parseReportFilters(req);
@@ -16492,7 +17931,7 @@ async function registerRoutes(app2, options) {
   app2.get(
     "/api/tax/reports/export-excel",
     authenticateToken2,
-    checkPermission2("taxes:read"),
+    checkPermission("taxes:read"),
     async (req, res) => {
       try {
         const filters = parseReportFilters(req);
@@ -16512,7 +17951,7 @@ async function registerRoutes(app2, options) {
   app2.get(
     "/api/tax/reports/year-comparison",
     authenticateToken2,
-    checkPermission2("taxes:read"),
+    checkPermission("taxes:read"),
     async (req, res) => {
       try {
         const year1 = Number(req.query.year1 || (/* @__PURE__ */ new Date()).getFullYear() - 1);
@@ -16533,7 +17972,7 @@ async function registerRoutes(app2, options) {
   app2.get(
     "/api/tax/reports/productivity",
     authenticateToken2,
-    checkPermission2("taxes:read"),
+    checkPermission("taxes:read"),
     async (req, res) => {
       try {
         const { getProductivityAnalysis: getProductivityAnalysis2 } = await Promise.resolve().then(() => (init_reports_service(), reports_service_exports));
@@ -16547,7 +17986,7 @@ async function registerRoutes(app2, options) {
   app2.get(
     "/api/tax/reports/predictions",
     authenticateToken2,
-    checkPermission2("taxes:read"),
+    checkPermission("taxes:read"),
     async (req, res) => {
       try {
         const { getPredictions: getPredictions2 } = await Promise.resolve().then(() => (init_reports_service(), reports_service_exports));
@@ -16561,7 +18000,7 @@ async function registerRoutes(app2, options) {
   app2.get(
     "/api/tax/reports/temporal-performance",
     authenticateToken2,
-    checkPermission2("taxes:read"),
+    checkPermission("taxes:read"),
     async (req, res) => {
       try {
         const { getTemporalPerformance: getTemporalPerformance2 } = await Promise.resolve().then(() => (init_reports_service(), reports_service_exports));
@@ -16575,7 +18014,7 @@ async function registerRoutes(app2, options) {
   app2.get(
     "/api/tax/reports/goals",
     authenticateToken2,
-    checkPermission2("taxes:read"),
+    checkPermission("taxes:read"),
     async (req, res) => {
       try {
         const { getGoals: getGoals2, evaluateGoals: evaluateGoals2 } = await Promise.resolve().then(() => (init_goals_service(), goals_service_exports));
@@ -16591,25 +18030,25 @@ async function registerRoutes(app2, options) {
   app2.get(
     "/api/tax/reports/diagnostic",
     authenticateToken2,
-    checkPermission2("taxes:read"),
+    checkPermission("taxes:read"),
     async (req, res) => {
       try {
         const year = req.query.year ? Number(req.query.year) : (/* @__PURE__ */ new Date()).getFullYear();
-        const totalFilings = await prisma13.client_tax_filings.count();
-        const filingsWithPeriods = await prisma13.client_tax_filings.count({
+        const totalFilings = await prisma16.client_tax_filings.count();
+        const filingsWithPeriods = await prisma16.client_tax_filings.count({
           where: { fiscal_periods: { isNot: null } }
         });
-        const totalPeriods = await prisma13.fiscal_periods.count();
-        const periodsThisYear = await prisma13.fiscal_periods.count({ where: { year } });
-        const periods = await prisma13.fiscal_periods.findMany({
+        const totalPeriods = await prisma16.fiscal_periods.count();
+        const periodsThisYear = await prisma16.fiscal_periods.count({ where: { year } });
+        const periods = await prisma16.fiscal_periods.findMany({
           select: { year: true },
           distinct: ["year"],
           orderBy: { year: "desc" }
         });
-        const filingsThisYear = await prisma13.client_tax_filings.count({
+        const filingsThisYear = await prisma16.client_tax_filings.count({
           where: { fiscal_periods: { year } }
         });
-        const sampleFilings = await prisma13.client_tax_filings.findMany({
+        const sampleFilings = await prisma16.client_tax_filings.findMany({
           take: 3,
           include: {
             fiscal_periods: true,
@@ -16646,7 +18085,7 @@ async function registerRoutes(app2, options) {
   app2.get(
     "/api/tax/filings",
     authenticateToken2,
-    checkPermission2("taxes:read"),
+    checkPermission("taxes:read"),
     async (req, res) => {
       try {
         const filings = await prismaStorage.getTaxFilings({
@@ -16668,7 +18107,7 @@ async function registerRoutes(app2, options) {
   app2.post(
     "/api/tax/filings/ensure-year",
     authenticateToken2,
-    checkPermission2("taxes:update"),
+    checkPermission("taxes:update"),
     async (req, res) => {
       try {
         const rawYear = req.body?.year ?? req.query?.year;
@@ -16690,7 +18129,7 @@ async function registerRoutes(app2, options) {
   app2.patch(
     "/api/tax/filings/:id",
     authenticateToken2,
-    checkPermission2("taxes:update"),
+    checkPermission("taxes:update"),
     async (req, res) => {
       try {
         const isAdmin = req.user?.roleName === "Administrador";
@@ -16713,15 +18152,15 @@ async function registerRoutes(app2, options) {
   app2.post(
     "/api/tax/filings/cleanup",
     authenticateToken2,
-    checkPermission2("taxes:delete"),
+    checkPermission("taxes:delete"),
     async (req, res) => {
       try {
-        const allFilings = await prisma13.client_tax_filings.findMany({
+        const allFilings = await prisma16.client_tax_filings.findMany({
           include: {
             fiscal_periods: true
           }
         });
-        const assignments = await prisma13.client_tax_assignments.findMany({
+        const assignments = await prisma16.client_tax_assignments.findMany({
           where: { activeFlag: true }
         });
         const assignmentMap = /* @__PURE__ */ new Map();
@@ -16755,7 +18194,7 @@ async function registerRoutes(app2, options) {
           }
         }
         if (orphanIds.length > 0) {
-          await prisma13.client_tax_filings.deleteMany({
+          await prisma16.client_tax_filings.deleteMany({
             where: { id: { in: orphanIds } }
           });
         }
@@ -16810,7 +18249,7 @@ async function registerRoutes(app2, options) {
   app2.get(
     "/api/notification-templates",
     authenticateToken2,
-    checkPermission2("notifications:view_history"),
+    checkPermission("notifications:view_history"),
     async (req, res) => {
       try {
         const templates = await prismaStorage.getAllNotificationTemplates();
@@ -16823,7 +18262,7 @@ async function registerRoutes(app2, options) {
   app2.post(
     "/api/notification-templates",
     authenticateToken2,
-    checkPermission2("notifications:create"),
+    checkPermission("notifications:create"),
     async (req, res) => {
       try {
         const { nombre, asunto, contenidoHTML, variables, tipo, activa } = req.body;
@@ -16854,7 +18293,7 @@ async function registerRoutes(app2, options) {
   app2.patch(
     "/api/notification-templates/:id",
     authenticateToken2,
-    checkPermission2("notifications:update"),
+    checkPermission("notifications:update"),
     async (req, res) => {
       try {
         const { id } = req.params;
@@ -16875,7 +18314,7 @@ async function registerRoutes(app2, options) {
   app2.delete(
     "/api/notification-templates/:id",
     authenticateToken2,
-    checkPermission2("notifications:delete"),
+    checkPermission("notifications:delete"),
     async (req, res) => {
       try {
         const { id } = req.params;
@@ -16895,7 +18334,7 @@ async function registerRoutes(app2, options) {
   app2.post(
     "/api/notifications/send",
     authenticateToken2,
-    checkPermission2("notifications:send"),
+    checkPermission("notifications:send"),
     async (req, res) => {
       try {
         const { plantillaId, smtpAccountId, destinatarios, asunto, contenido } = req.body;
@@ -16928,7 +18367,7 @@ async function registerRoutes(app2, options) {
   app2.get(
     "/api/notifications/history",
     authenticateToken2,
-    checkPermission2("notifications:view_history"),
+    checkPermission("notifications:view_history"),
     async (req, res) => {
       try {
         const logs = await prismaStorage.getAllNotificationLogs();
@@ -16941,7 +18380,7 @@ async function registerRoutes(app2, options) {
   app2.get(
     "/api/notifications/scheduled",
     authenticateToken2,
-    checkPermission2("notifications:view_history"),
+    checkPermission("notifications:view_history"),
     async (req, res) => {
       try {
         const scheduled = await prismaStorage.getAllScheduledNotifications();
@@ -16954,7 +18393,7 @@ async function registerRoutes(app2, options) {
   app2.post(
     "/api/notifications/schedule",
     authenticateToken2,
-    checkPermission2("notifications:send"),
+    checkPermission("notifications:send"),
     async (req, res) => {
       try {
         const { plantillaId, smtpAccountId, destinatariosSeleccionados, fechaProgramada, recurrencia } = req.body;
@@ -16985,7 +18424,7 @@ async function registerRoutes(app2, options) {
   app2.patch(
     "/api/notifications/scheduled/:id",
     authenticateToken2,
-    checkPermission2("notifications:update"),
+    checkPermission("notifications:update"),
     async (req, res) => {
       try {
         const { id } = req.params;
@@ -17009,7 +18448,7 @@ async function registerRoutes(app2, options) {
   app2.delete(
     "/api/notifications/scheduled/:id",
     authenticateToken2,
-    checkPermission2("notifications:delete"),
+    checkPermission("notifications:delete"),
     async (req, res) => {
       try {
         const { id } = req.params;
@@ -17035,7 +18474,7 @@ async function registerRoutes(app2, options) {
     let lastHeartbeat = Date.now();
     heartbeatInterval = setInterval(async () => {
       try {
-        await prisma13.sessions.updateMany({
+        await prisma16.sessions.updateMany({
           where: { socket_id: socket.id, ended_at: null },
           data: { last_seen_at: /* @__PURE__ */ new Date() }
         });
@@ -17051,7 +18490,7 @@ async function registerRoutes(app2, options) {
     socket.on("heartbeat-response", async () => {
       lastHeartbeat = Date.now();
       try {
-        await prisma13.sessions.updateMany({
+        await prisma16.sessions.updateMany({
           where: { socket_id: socket.id, ended_at: null },
           data: { last_seen_at: /* @__PURE__ */ new Date() }
         });
@@ -17086,7 +18525,7 @@ async function registerRoutes(app2, options) {
         const ipHeader = socket.handshake.headers["x-forwarded-for"] || "";
         const ip = ipHeader ? ipHeader.split(",")[0].trim() : socket.handshake.address;
         const userAgent = String(socket.handshake.headers["user-agent"] || "");
-        await prisma13.sessions.create({
+        await prisma16.sessions.create({
           data: {
             id: randomUUID8(),
             userId: user.id,
@@ -17123,7 +18562,7 @@ async function registerRoutes(app2, options) {
         });
         (async () => {
           try {
-            await prisma13.sessions.updateMany({
+            await prisma16.sessions.updateMany({
               where: { socket_id: socket.id, ended_at: null },
               data: { ended_at: /* @__PURE__ */ new Date(), last_seen_at: /* @__PURE__ */ new Date() }
             });
@@ -17143,15 +18582,15 @@ async function registerRoutes(app2, options) {
 }
 
 // server/vite.ts
-import express7 from "express";
-import fs10 from "fs";
-import path14 from "path";
+import express8 from "express";
+import fs11 from "fs";
+import path15 from "path";
 import { createServer as createViteServer, createLogger } from "vite";
 
 // vite.config.ts
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
-import path13 from "path";
+import path14 from "path";
 import runtimeErrorOverlay from "@replit/vite-plugin-runtime-error-modal";
 var vite_config_default = defineConfig({
   plugins: [
@@ -17168,14 +18607,14 @@ var vite_config_default = defineConfig({
   ],
   resolve: {
     alias: {
-      "@": path13.resolve(import.meta.dirname, "client", "src"),
-      "@shared": path13.resolve(import.meta.dirname, "shared"),
-      "@assets": path13.resolve(import.meta.dirname, "attached_assets")
+      "@": path14.resolve(import.meta.dirname, "client", "src"),
+      "@shared": path14.resolve(import.meta.dirname, "shared"),
+      "@assets": path14.resolve(import.meta.dirname, "attached_assets")
     }
   },
-  root: path13.resolve(import.meta.dirname, "client"),
+  root: path14.resolve(import.meta.dirname, "client"),
   build: {
-    outDir: path13.resolve(import.meta.dirname, "dist/public"),
+    outDir: path14.resolve(import.meta.dirname, "dist/public"),
     emptyOutDir: true
   },
   server: {
@@ -17187,7 +18626,7 @@ var vite_config_default = defineConfig({
 });
 
 // server/vite.ts
-import { nanoid } from "nanoid";
+import { nanoid as nanoid3 } from "nanoid";
 var viteLogger = createLogger();
 async function setupVite(app2, server) {
   const serverOptions = {
@@ -17212,16 +18651,16 @@ async function setupVite(app2, server) {
   app2.use("*", async (req, res, next) => {
     const url = req.originalUrl;
     try {
-      const clientTemplate = path14.resolve(
+      const clientTemplate = path15.resolve(
         import.meta.dirname,
         "..",
         "client",
         "index.html"
       );
-      let template = await fs10.promises.readFile(clientTemplate, "utf-8");
+      let template = await fs11.promises.readFile(clientTemplate, "utf-8");
       template = template.replace(
         `src="/src/main.tsx"`,
-        `src="/src/main.tsx?v=${nanoid()}"`
+        `src="/src/main.tsx?v=${nanoid3()}"`
       );
       const page = await vite.transformIndexHtml(url, template);
       res.status(200).set({ "Content-Type": "text/html" }).end(page);
@@ -17232,15 +18671,15 @@ async function setupVite(app2, server) {
   });
 }
 function serveStatic(app2) {
-  const distPath = path14.resolve(import.meta.dirname, "public");
-  if (!fs10.existsSync(distPath)) {
+  const distPath = path15.resolve(import.meta.dirname, "public");
+  if (!fs11.existsSync(distPath)) {
     throw new Error(
       `Could not find the build directory: ${distPath}, make sure to build the client first`
     );
   }
-  app2.use(express7.static(distPath));
+  app2.use(express8.static(distPath));
   app2.use("*", (_req, res) => {
-    res.sendFile(path14.resolve(distPath, "index.html"));
+    res.sendFile(path15.resolve(distPath, "index.html"));
   });
 }
 
@@ -17251,19 +18690,19 @@ import cors from "cors";
 
 // server/jobs.ts
 import cron from "node-cron";
-import { PrismaClient as PrismaClient14 } from "@prisma/client";
-import nodemailer6 from "nodemailer";
+import { PrismaClient as PrismaClient17 } from "@prisma/client";
+import nodemailer7 from "nodemailer";
 import { addDays, format } from "date-fns";
 import { es } from "date-fns/locale";
-var prisma14;
+var prisma17;
 function initializeJobs(client) {
-  prisma14 = client;
+  prisma17 = client;
 }
 var smtpPassword = process.env.SMTP_PASS || process.env.SMTP_PASSWORD;
 if (process.env.SMTP_USER && !smtpPassword) {
   console.warn("\u26A0\uFE0F  SMTP password environment variable missing. Define SMTP_PASS or SMTP_PASSWORD.");
 }
-var transporter = nodemailer6.createTransport({
+var transporter = nodemailer7.createTransport({
   host: process.env.SMTP_HOST,
   port: parseInt(process.env.SMTP_PORT || "587"),
   secure: process.env.SMTP_SECURE === "true",
@@ -17304,7 +18743,7 @@ var taskRemindersJob = cron.createTask("0 9 * * *", async () => {
   try {
     const tomorrow = addDays(/* @__PURE__ */ new Date(), 1);
     const nextWeek = addDays(/* @__PURE__ */ new Date(), 7);
-    const upcomingTasks = await prisma14.tasks.findMany({
+    const upcomingTasks = await prisma17.tasks.findMany({
       where: {
         estado: { notIn: ["COMPLETADA"] },
         fecha_vencimiento: {
@@ -17363,7 +18802,7 @@ var taxRemindersJob = cron.createTask("0 8 * * *", async () => {
   try {
     const now = /* @__PURE__ */ new Date();
     const nextMonth = addDays(now, 30);
-    const clientes = await prisma14.clients.findMany({
+    const clientes = await prisma17.clients.findMany({
       include: {
         clientTaxes: {
           include: {
@@ -17423,18 +18862,18 @@ var taxRemindersJob = cron.createTask("0 8 * * *", async () => {
   }
 });
 var taxCalendarRefreshJob = cron.createTask("0 */6 * * *", async () => {
-  if (!prisma14) {
+  if (!prisma17) {
     console.warn("\u26A0\uFE0F  taxCalendarRefreshJob: Prisma no inicializado");
     return;
   }
   console.log("\u{1F5D3}\uFE0F  Ejecutando job: refresco calendario fiscal");
   try {
-    const entries = await prisma14.tax_calendar.findMany();
+    const entries = await prisma17.tax_calendar.findMany();
     let updated = 0;
     for (const entry of entries) {
       const derived = calculateDerivedFields(entry.startDate, entry.endDate);
       if (entry.status !== derived.status || entry.days_to_start !== derived.daysToStart || entry.days_to_end !== derived.daysToEnd) {
-        await prisma14.tax_calendar.update({
+        await prisma17.tax_calendar.update({
           where: { id: entry.id },
           data: {
             status: derived.status,
@@ -17451,7 +18890,7 @@ var taxCalendarRefreshJob = cron.createTask("0 */6 * * *", async () => {
   }
 });
 var fiscalPeriodsStatusJob = cron.createTask("0 */6 * * *", async () => {
-  if (!prisma14) {
+  if (!prisma17) {
     console.warn("\u26A0\uFE0F  fiscalPeriodsStatusJob: Prisma no inicializado");
     return;
   }
@@ -17459,7 +18898,7 @@ var fiscalPeriodsStatusJob = cron.createTask("0 */6 * * *", async () => {
   try {
     const now = /* @__PURE__ */ new Date();
     now.setHours(0, 0, 0, 0);
-    const periods = await prisma14.fiscal_periods.findMany({
+    const periods = await prisma17.fiscal_periods.findMany({
       select: {
         id: true,
         starts_at: true,
@@ -17487,7 +18926,7 @@ var fiscalPeriodsStatusJob = cron.createTask("0 */6 * * *", async () => {
         }
       }
       if (newStatus && newStatus !== period.status) {
-        await prisma14.fiscal_periods.update({
+        await prisma17.fiscal_periods.update({
           where: { id: period.id },
           data: { status: newStatus }
         });
@@ -17526,10 +18965,10 @@ var ensureTaxFilingsJob = cron.createTask("10 * * * *", async () => {
 var cleanupSessionsJob = cron.createTask("0 * * * *", async () => {
   console.log("\u{1F9F9} Ejecutando job: limpieza de sesiones");
   try {
-    const prisma15 = new PrismaClient14();
+    const prisma18 = new PrismaClient17();
     const sevenDaysAgo = /* @__PURE__ */ new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-    const closedSessionsResult = await prisma15.sessions.deleteMany({
+    const closedSessionsResult = await prisma18.sessions.deleteMany({
       where: {
         ended_at: {
           not: null,
@@ -17539,7 +18978,7 @@ var cleanupSessionsJob = cron.createTask("0 * * * *", async () => {
     });
     const twoHoursAgo = /* @__PURE__ */ new Date();
     twoHoursAgo.setHours(twoHoursAgo.getHours() - 2);
-    const inactiveSessionsResult = await prisma15.sessions.updateMany({
+    const inactiveSessionsResult = await prisma18.sessions.updateMany({
       where: {
         ended_at: null,
         last_seen_at: { lt: twoHoursAgo }
@@ -17549,7 +18988,7 @@ var cleanupSessionsJob = cron.createTask("0 * * * *", async () => {
       }
     });
     console.log(`\u2705 Sesiones limpias: ${closedSessionsResult.count} eliminadas, ${inactiveSessionsResult.count} marcadas como inactivas`);
-    await prisma15.$disconnect();
+    await prisma18.$disconnect();
   } catch (error) {
     console.error("\u274C Error en job de limpieza:", error);
   }
@@ -17558,8 +18997,8 @@ var backupDatabaseJob = cron.createTask("0 3 * * *", async () => {
   console.log("\u{1F4BE} Ejecutando job: backup de base de datos");
   try {
     const { spawn } = __require("child_process");
-    const path15 = __require("path");
-    const backupScript = path15.join(process.cwd(), "scripts", "backup.sh");
+    const path16 = __require("path");
+    const backupScript = path16.join(process.cwd(), "scripts", "backup.sh");
     const backup = spawn("bash", [backupScript], {
       env: process.env,
       stdio: "inherit"
@@ -17576,7 +19015,7 @@ var backupDatabaseJob = cron.createTask("0 3 * * *", async () => {
   }
 });
 function startAllJobs() {
-  if (!prisma14) {
+  if (!prisma17) {
     throw new Error(
       "\u274C JOBS ERROR: Prisma client no inicializado.\n   Debe llamar a initializeJobs(prisma) antes de startAllJobs().\n   Ver server/index.ts para el orden correcto de inicializaci\xF3n."
     );
@@ -17607,7 +19046,7 @@ function startAllJobs() {
   console.log("\u2705 Todos los jobs activos");
 }
 function stopAllJobs() {
-  if (!prisma14) {
+  if (!prisma17) {
     throw new Error("Jobs no inicializados: debe llamar initializeJobs(prisma) primero");
   }
   taskRemindersJob.stop();
@@ -17732,7 +19171,7 @@ function validateSecurityConfig() {
 // server/index.ts
 import { randomUUID as randomUUID9 } from "crypto";
 var SALT_ROUNDS2 = 10;
-var app = express8();
+var app = express9();
 validateSecurityConfig();
 app.set("trust proxy", 1);
 var dbUrl = process.env.DATABASE_URL;
@@ -17784,11 +19223,11 @@ app.use(helmet({
   contentSecurityPolicy: isDev ? false : {
     directives: {
       defaultSrc: ["'self'"],
-      styleSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
       scriptSrc: ["'self'"],
       imgSrc: ["'self'", "data:", "blob:", "https:"],
       connectSrc: ["'self'"],
-      fontSrc: ["'self'"],
+      fontSrc: ["'self'", "https://fonts.gstatic.com"],
       objectSrc: ["'none'"],
       mediaSrc: ["'self'"],
       frameSrc: ["'none'"]
@@ -17807,9 +19246,9 @@ app.use(cors({
   origin: process.env.FRONTEND_URL || (isDev ? "*" : false),
   credentials: true
 }));
-app.use(express8.json({ limit: "10mb" }));
-app.use(express8.urlencoded({ extended: false, limit: "10mb" }));
-app.use("/uploads", express8.static("uploads"));
+app.use(express9.json({ limit: "10mb" }));
+app.use(express9.urlencoded({ extended: false, limit: "10mb" }));
+app.use("/uploads", express9.static("uploads"));
 app.use(httpLogger);
 app.get("/health", async (_req, res) => {
   res.status(200).json({

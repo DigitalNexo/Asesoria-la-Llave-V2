@@ -142,7 +142,7 @@ router.delete('/:id', async (req: Request, res: Response) => {
 router.post('/calculate', async (req: Request, res: Response) => {
   try {
     const input: BudgetCalculationInput = req.body.calculation;
-    const tipo = req.body.tipo as 'OFICIAL' | 'ONLINE';
+    const tipo = req.body.tipo as 'ASESORIA_LA_LLAVE' | 'GESTORIA_ONLINE';
     
     const result = await gestoriaBudgetCalculationService.calculate(input, tipo);
     
@@ -241,17 +241,35 @@ router.post('/:id/send', async (req: Request, res: Response) => {
 
 /**
  * POST /api/gestoria-budgets/:id/accept
- * Marcar presupuesto como aceptado
+ * Marcar presupuesto como aceptado y convertir automáticamente a cliente
  */
 router.post('/:id/accept', async (req: Request, res: Response) => {
   try {
     const id = req.params.id;
     const budget = await gestoriaBudgetService.acceptBudget(id);
     
+    // Intentar convertir automáticamente a cliente
+    let clientId = budget.clienteId;
+    if (!clientId) {
+      try {
+        const canConvert = await gestoriaBudgetConversionService.canConvertToClient(id);
+        if (canConvert.canConvert) {
+          clientId = await gestoriaBudgetConversionService.convertToClient(id, {
+            notifyClient: false // No enviar notificación adicional
+          });
+        }
+      } catch (conversionError) {
+        // Si falla la conversión, no bloqueamos la aceptación
+        console.warn(`No se pudo convertir automáticamente presupuesto ${id} a cliente:`, conversionError);
+      }
+    }
+    
     res.json({
       success: true,
-      data: budget,
-      message: 'Presupuesto aceptado exitosamente'
+      data: { ...budget, clientId },
+      message: clientId 
+        ? 'Presupuesto aceptado y cliente creado exitosamente' 
+        : 'Presupuesto aceptado exitosamente'
     });
     
   } catch (error: any) {
@@ -414,7 +432,7 @@ router.get('/:id/pdf', async (req: Request, res: Response) => {
  */
 router.get('/stats/summary', async (req: Request, res: Response) => {
   try {
-    const tipo = req.query.tipo as 'OFICIAL' | 'ONLINE' | undefined;
+    const tipo = req.query.tipo as 'ASESORIA_LA_LLAVE' | 'GESTORIA_ONLINE' | undefined;
     const fechaDesde = req.query.fechaDesde ? new Date(req.query.fechaDesde as string) : undefined;
     const fechaHasta = req.query.fechaHasta ? new Date(req.query.fechaHasta as string) : undefined;
     
@@ -439,7 +457,7 @@ router.get('/stats/summary', async (req: Request, res: Response) => {
  */
 router.get('/stats/by-month', async (req: Request, res: Response) => {
   try {
-    const tipo = req.query.tipo as 'OFICIAL' | 'ONLINE' | undefined;
+    const tipo = req.query.tipo as 'ASESORIA_LA_LLAVE' | 'GESTORIA_ONLINE' | undefined;
     const year = req.query.year ? parseInt(req.query.year as string) : new Date().getFullYear();
     
     // Implementación simplificada - se puede mejorar
@@ -480,7 +498,7 @@ router.get('/stats/by-month', async (req: Request, res: Response) => {
 router.get('/config/list', async (req: Request, res: Response) => {
   try {
     const filters = {
-      tipo: req.query.tipo as 'OFICIAL' | 'ONLINE' | undefined,
+      tipo: req.query.tipo as 'ASESORIA_LA_LLAVE' | 'GESTORIA_ONLINE' | undefined,
       activo: req.query.activo ? req.query.activo === 'true' : undefined
     };
     
@@ -505,7 +523,7 @@ router.get('/config/list', async (req: Request, res: Response) => {
  */
 router.get('/config/active/:tipo', async (req: Request, res: Response) => {
   try {
-    const tipo = req.params.tipo as 'OFICIAL' | 'ONLINE';
+    const tipo = req.params.tipo as 'ASESORIA_LA_LLAVE' | 'GESTORIA_ONLINE';
     const config = await gestoriaBudgetConfigService.getActiveConfig(tipo);
     
     if (!config) {

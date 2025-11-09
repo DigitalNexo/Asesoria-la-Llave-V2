@@ -6,6 +6,7 @@ const prisma = new PrismaClient();
 export interface ConvertBudgetToClientOptions {
   telefono?: string;
   direccion?: string;
+  notifyClient?: boolean;
 }
 
 /**
@@ -219,11 +220,12 @@ export class GestoriaBudgetConversionService {
       await prisma.documents.create({
         data: {
           id: `DOC-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-          clientId: clientId,
+          client_id: clientId,
+          created_by: 'system',
           name: `Presupuesto ${budget.numero}`,
           type: 'PRESUPUESTO',
-          upload_date: new Date(),
-          file_path: budget.pdfPath || null
+          file_path: budget.pdfPath || null,
+          status: 'active'
         }
       });
     } catch (error) {

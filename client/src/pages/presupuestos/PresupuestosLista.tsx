@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation } from 'wouter';
 import { 
   useGestoriaBudgets, 
   useBudgetStatistics,
@@ -69,7 +69,7 @@ import { es } from 'date-fns/locale';
 import { toast } from 'sonner';
 
 export default function PresupuestosLista() {
-  const navigate = useNavigate();
+  const [, setLocation] = useLocation();
   
   // Estados
   const [filters, setFilters] = useState<BudgetFilters>({});
@@ -141,9 +141,10 @@ export default function PresupuestosLista() {
   };
   
   const getTipoBadge = (tipo: string) => {
+    const label = tipo === 'ASESORIA_LA_LLAVE' ? 'Asesoría La Llave' : 'Gestoría Online';
     return (
-      <Badge variant={tipo === 'OFICIAL' ? 'default' : 'outline'}>
-        {tipo}
+      <Badge variant={tipo === 'ASESORIA_LA_LLAVE' ? 'default' : 'outline'}>
+        {label}
       </Badge>
     );
   };
@@ -155,13 +156,23 @@ export default function PresupuestosLista() {
         <div>
           <h1 className="text-3xl font-bold">Presupuestos de Gestoría</h1>
           <p className="text-muted-foreground">
-            Gestión completa de presupuestos OFICIAL y ONLINE
+            Gestión completa de presupuestos para Asesoría La Llave y Gestoría Online
           </p>
         </div>
-        <Button onClick={() => navigate('/presupuestos/nuevo')}>
-          <Plus className="w-4 h-4 mr-2" />
-          Nuevo Presupuesto
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => setLocation('/documentacion/presupuestos/parametros')}>
+            <Filter className="w-4 h-4 mr-2" />
+            Parámetros
+          </Button>
+          <Button variant="outline" onClick={() => setLocation('/documentacion/presupuestos/nuevo-autonomo')}>
+            <Plus className="w-4 h-4 mr-2" />
+            Presupuesto Autónomo
+          </Button>
+          <Button onClick={() => setLocation('/documentacion/presupuestos/nuevo')}>
+            <Plus className="w-4 h-4 mr-2" />
+            Nuevo Presupuesto
+          </Button>
+        </div>
       </div>
       
       {/* Estadísticas */}
@@ -265,8 +276,8 @@ export default function PresupuestosLista() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Todos los tipos</SelectItem>
-                <SelectItem value="OFICIAL">OFICIAL</SelectItem>
-                <SelectItem value="ONLINE">ONLINE</SelectItem>
+                <SelectItem value="ASESORIA_LA_LLAVE">Asesoría La Llave</SelectItem>
+                <SelectItem value="GESTORIA_ONLINE">Gestoría Online</SelectItem>
               </SelectContent>
             </Select>
             
@@ -323,7 +334,7 @@ export default function PresupuestosLista() {
               <p className="text-muted-foreground mb-4">
                 Crea tu primer presupuesto para comenzar
               </p>
-              <Button onClick={() => navigate('/presupuestos/nuevo')}>
+              <Button onClick={() => setLocation('/documentacion/presupuestos/nuevo')}>
                 <Plus className="w-4 h-4 mr-2" />
                 Crear Presupuesto
               </Button>
@@ -383,11 +394,11 @@ export default function PresupuestosLista() {
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
-                            <DropdownMenuItem onClick={() => navigate(`/presupuestos/${budget.id}`)}>
+                            <DropdownMenuItem onClick={() => setLocation(`/documentacion/presupuestos/${budget.id}`)}>
                               <Eye className="w-4 h-4 mr-2" />
                               Ver Detalles
                             </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => navigate(`/presupuestos/${budget.id}/editar`)}>
+                            <DropdownMenuItem onClick={() => setLocation(`/documentacion/presupuestos/${budget.id}/editar`)}>
                               <Edit className="w-4 h-4 mr-2" />
                               Editar
                             </DropdownMenuItem>

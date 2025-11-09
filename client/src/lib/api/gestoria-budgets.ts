@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 export interface GestoriaBudget {
   id: string;
   numero: string;
-  tipoGestoria: 'OFICIAL' | 'ONLINE';
+  tipoGestoria: 'ASESORIA_LA_LLAVE' | 'GESTORIA_ONLINE';
   estado: 'BORRADOR' | 'ENVIADO' | 'ACEPTADO' | 'RECHAZADO' | 'FACTURADO';
   
   // Cliente potencial
@@ -71,7 +71,7 @@ export interface GestoriaBudget {
 }
 
 export interface CreateBudgetInput {
-  tipoGestoria: 'OFICIAL' | 'ONLINE';
+  tipoGestoria: 'ASESORIA_LA_LLAVE' | 'GESTORIA_ONLINE';
   nombreCliente: string;
   nifCif: string;
   email: string;
@@ -110,7 +110,7 @@ export interface CreateBudgetInput {
 }
 
 export interface BudgetFilters {
-  tipoGestoria?: 'OFICIAL' | 'ONLINE';
+  tipoGestoria?: 'ASESORIA_LA_LLAVE' | 'GESTORIA_ONLINE';
   estado?: 'BORRADOR' | 'ENVIADO' | 'ACEPTADO' | 'RECHAZADO' | 'FACTURADO';
   nombreCliente?: string;
   nifCif?: string;
@@ -175,7 +175,7 @@ export interface BudgetStatistics {
 
 export interface BudgetConfiguration {
   id: string;
-  tipoGestoria: 'OFICIAL' | 'ONLINE';
+  tipoGestoria: 'ASESORIA_LA_LLAVE' | 'GESTORIA_ONLINE';
   activo: boolean;
   version: string;
   fechaVigencia: string;
@@ -278,7 +278,7 @@ async function deleteBudget(id: string): Promise<void> {
 
 async function calculateBudget(
   calculation: BudgetCalculationInput,
-  tipo: 'OFICIAL' | 'ONLINE'
+  tipo: 'ASESORIA_LA_LLAVE' | 'GESTORIA_ONLINE'
 ): Promise<BudgetCalculationResult> {
   const response = await fetch(`${API_BASE}/calculate`, {
     method: 'POST',
@@ -336,7 +336,7 @@ async function canConvertBudget(id: string): Promise<{ canConvert: boolean; reas
 }
 
 async function fetchBudgetStatistics(
-  tipo?: 'OFICIAL' | 'ONLINE',
+  tipo?: 'ASESORIA_LA_LLAVE' | 'GESTORIA_ONLINE',
   fechaDesde?: string,
   fechaHasta?: string
 ): Promise<BudgetStatistics> {
@@ -351,14 +351,14 @@ async function fetchBudgetStatistics(
   return data.data;
 }
 
-async function fetchActiveConfig(tipo: 'OFICIAL' | 'ONLINE'): Promise<BudgetConfiguration> {
+async function fetchActiveConfig(tipo: 'ASESORIA_LA_LLAVE' | 'GESTORIA_ONLINE'): Promise<BudgetConfiguration> {
   const response = await fetch(`${API_BASE}/config/active/${tipo}`);
   if (!response.ok) throw new Error(`No hay configuración activa para ${tipo}`);
   const data = await response.json();
   return data.data;
 }
 
-async function fetchAllConfigs(filters?: { tipo?: 'OFICIAL' | 'ONLINE'; activo?: boolean }): Promise<BudgetConfiguration[]> {
+async function fetchAllConfigs(filters?: { tipo?: 'ASESORIA_LA_LLAVE' | 'GESTORIA_ONLINE'; activo?: boolean }): Promise<BudgetConfiguration[]> {
   const params = new URLSearchParams();
   if (filters?.tipo) params.append('tipo', filters.tipo);
   if (filters?.activo !== undefined) params.append('activo', String(filters.activo));
@@ -447,7 +447,7 @@ export function useDeleteBudget() {
 
 export function useCalculateBudget() {
   return useMutation({
-    mutationFn: ({ calculation, tipo }: { calculation: BudgetCalculationInput; tipo: 'OFICIAL' | 'ONLINE' }) =>
+    mutationFn: ({ calculation, tipo }: { calculation: BudgetCalculationInput; tipo: 'ASESORIA_LA_LLAVE' | 'GESTORIA_ONLINE' }) =>
       calculateBudget(calculation, tipo)
   });
 }
@@ -506,21 +506,21 @@ export function useCanConvertBudget(id: string) {
   });
 }
 
-export function useBudgetStatistics(tipo?: 'OFICIAL' | 'ONLINE', fechaDesde?: string, fechaHasta?: string) {
+export function useBudgetStatistics(tipo?: 'ASESORIA_LA_LLAVE' | 'GESTORIA_ONLINE', fechaDesde?: string, fechaHasta?: string) {
   return useQuery({
     queryKey: ['budget-statistics', tipo, fechaDesde, fechaHasta],
     queryFn: () => fetchBudgetStatistics(tipo, fechaDesde, fechaHasta)
   });
 }
 
-export function useBudgetConfigs(filters?: { tipo?: 'OFICIAL' | 'ONLINE'; activo?: boolean }) {
+export function useBudgetConfigs(filters?: { tipo?: 'ASESORIA_LA_LLAVE' | 'GESTORIA_ONLINE'; activo?: boolean }) {
   return useQuery({
     queryKey: ['budget-configs', filters],
     queryFn: () => fetchAllConfigs(filters)
   });
 }
 
-export function useActiveConfig(tipo: 'OFICIAL' | 'ONLINE') {
+export function useActiveConfig(tipo: 'ASESORIA_LA_LLAVE' | 'GESTORIA_ONLINE') {
   return useQuery({
     queryKey: ['active-config', tipo],
     queryFn: () => fetchActiveConfig(tipo),

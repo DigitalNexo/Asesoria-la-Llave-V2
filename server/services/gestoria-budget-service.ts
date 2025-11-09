@@ -1,11 +1,11 @@
-import { PrismaClient, gestoria_budgets } from '@prisma/client';
+import { PrismaClient, gestoria_budgets, gestoria_budget_statistics_events_evento } from '@prisma/client';
 import { gestoriaBudgetCalculationService, BudgetCalculationInput } from './gestoria-budget-calculation-service';
 
 const prisma = new PrismaClient();
 
 export interface CreateBudgetInput {
   // Tipo de gestoría
-  tipoGestoria: 'OFICIAL' | 'ONLINE';
+  tipoGestoria: 'ASESORIA_LA_LLAVE' | 'GESTORIA_ONLINE';
   
   // Datos del cliente potencial
   nombreCliente: string;
@@ -64,7 +64,7 @@ export interface UpdateBudgetInput extends Partial<CreateBudgetInput> {
 }
 
 export interface BudgetFilters {
-  tipoGestoria?: 'OFICIAL' | 'ONLINE';
+  tipoGestoria?: 'ASESORIA_LA_LLAVE' | 'GESTORIA_ONLINE';
   estado?: 'BORRADOR' | 'ENVIADO' | 'ACEPTADO' | 'RECHAZADO' | 'FACTURADO';
   nombreCliente?: string;
   nifCif?: string;
@@ -137,7 +137,7 @@ export class GestoriaBudgetService {
         // Negocio
         facturacion: input.facturacion,
         facturasMes: input.facturasMes,
-        nominasMes: input.nominasMes || null,
+        nominasMes: input.nominasMes || 0,
         sistemaTributacion: input.sistemaTributacion,
         periodoDeclaraciones: input.periodoDeclaraciones,
         
@@ -173,8 +173,14 @@ export class GestoriaBudgetService {
         
         // Metadata
         creadoPor: input.creadoPor,
-        configId: input.configId,
-        fechaCreacion: new Date()
+        fechaCreacion: new Date(),
+        
+        // Relación con configuración
+        configuracion: {
+          connect: {
+            id: input.configId
+          }
+        }
       }
     });
     
@@ -191,8 +197,8 @@ export class GestoriaBudgetService {
       });
     }
     
-    // Registrar evento de creación
-    await this.logStatisticsEvent('CREATED', budget.id, budget.tipoGestoria);
+  // Registrar evento de creación
+  await this.logStatisticsEvent('CREADO', budget.id, budget.tipoGestoria);
     
     return budget;
   }
@@ -328,12 +334,14 @@ export class GestoriaBudgetService {
     }
     
     // Actualizar presupuesto
+    // NOTE: fechaModificacion es @updatedAt en el esquema Prisma, no es necesario
+    // establecerlo manualmente aquí (y puede causar errores si el cliente Prisma
+    // no está regenerado). Dejar que Prisma lo actualice automáticamente.
     const updated = await prisma.gestoria_budgets.update({
       where: { id },
       data: {
         ...this.buildUpdateData(input),
-        ...updatedTotals,
-        fechaModificacion: new Date()
+        ...updatedTotals
       },
       include: {
         serviciosAdicionales: true
@@ -379,7 +387,7 @@ export class GestoriaBudgetService {
       }
     });
     
-    await this.logStatisticsEvent('ACCEPTED', id, budget.tipoGestoria);
+  await this.logStatisticsEvent('ACEPTADO', id, budget.tipoGestoria);
     
     return updated;
   }
@@ -403,7 +411,7 @@ export class GestoriaBudgetService {
       }
     });
     
-    await this.logStatisticsEvent('REJECTED', id, budget.tipoGestoria);
+  await this.logStatisticsEvent('RECHAZADO', id, budget.tipoGestoria);
     
     return updated;
   }
@@ -438,7 +446,7 @@ export class GestoriaBudgetService {
   /**
    * Obtener estadísticas de presupuestos
    */
-  async getStatistics(tipo?: 'OFICIAL' | 'ONLINE', fechaDesde?: Date, fechaHasta?: Date) {
+  async getStatistics(tipo?: 'ASESORIA_LA_LLAVE' | 'GESTORIA_ONLINE', fechaDesde?: Date, fechaHasta?: Date) {
     const where: any = {};
     
     if (tipo) {
@@ -544,14 +552,14 @@ export class GestoriaBudgetService {
   private buildUpdateData(input: UpdateBudgetInput): any {
     const data: any = {};
     
-    // Campos simples
+    // Campos simples - CORREGIDOS para coincidir con el esquema de Prisma
     const simpleFields = [
-      'nombreCompleto', 'cifNif', 'email', 'telefono', 'direccion', 'codigoPostal', 'ciudad', 'provincia',
-      'actividadEmpresarial', 'facturacion', 'facturasMes', 'nominasMes', 'sistemaTributacion', 'periodoDeclaraciones',
+      'nombreCliente', 'nifCif', 'email', 'telefono', 'direccion', 'personaContacto',
+      'facturacion', 'facturasMes', 'nominasMes', 'sistemaTributacion', 'periodoDeclaraciones',
       'modelo303', 'modelo111', 'modelo115', 'modelo130', 'modelo100', 'modelo349', 'modelo347',
       'solicitudCertificados', 'censosAEAT', 'recepcionNotificaciones', 'estadisticasINE', 'solicitudAyudas',
-      'conLaboralSocial', 'aplicaDescuento', 'tipoDescuento', 'valorDescuento', 'motivoDescuento',
-      'observaciones', 'estado', 'motivoRechazo'
+      'conLaboralSocial', 'aplicaDescuento', 'tipoDescuento', 'valorDescuento',
+      'estado', 'motivoRechazo', 'tipoGestoria'
     ];
     
     for (const field of simpleFields) {
@@ -563,14 +571,17 @@ export class GestoriaBudgetService {
     return data;
   }
   
-  private async logStatisticsEvent(evento: 'CREATED' | 'SENT' | 'VIEWED' | 'ACCEPTED' | 'REJECTED' | 'CONVERTED', budgetId: string, tipoGestoria: 'OFICIAL' | 'ONLINE', userId?: string): Promise<void> {
+  private async logStatisticsEvent(evento: gestoria_budget_statistics_events_evento, budgetId: string, tipoGestoria?: 'ASESORIA_LA_LLAVE' | 'GESTORIA_ONLINE', userId?: string): Promise<void> {
+    const data: any = {
+      budgetId: budgetId,
+      evento: evento,
+      fecha: new Date()
+    };
+
+    if (userId) data.userId = userId;
+
     await prisma.gestoria_budget_statistics_events.create({
-      data: {
-        budgetId: budgetId,
-        tipoGestoria: tipoGestoria,
-        evento: evento,
-        fecha: new Date()
-      }
+      data
     });
   }
 }
