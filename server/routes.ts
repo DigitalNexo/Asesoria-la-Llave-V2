@@ -2302,7 +2302,8 @@ export async function registerRoutes(app: Express, options?: { skipDbInit?: bool
   app.use('/api/budget-parameters', budgetParametersRouter);
   app.use('/api/budget-templates', budgetTemplatesRouter);
   // Documents routes (incluye recibos, protección de datos, domiciliación bancaria y plantillas)
-  app.use('/api/documents', authenticateToken, documentsRouter);
+  // Removido authenticateToken de aquí porque las rutas individuales ya lo tienen
+  app.use('/api/documents', documentsRouter);
   // GitHub updates routes (webhook y gestión de actualizaciones)
   app.use('/api/system/github', githubUpdatesRouter);
   app.get(

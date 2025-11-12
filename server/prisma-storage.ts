@@ -3547,3 +3547,4 @@ export class PrismaStorage implements IStorage {
 }
 
 export const prismaStorage = new PrismaStorage();
+export { prisma };

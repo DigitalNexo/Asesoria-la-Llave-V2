@@ -90,6 +90,10 @@ export async function getReceiptById(id: string) {
   return await apiRequest('GET', `/api/documents/receipts/${id}`);
 }
 
+export async function updateReceipt(id: string, data: Partial<Receipt>) {
+  return await apiRequest('PUT', `/api/documents/receipts/${id}`, data);
+}
+
 export async function generateReceiptPdf(id: string) {
   return await apiRequest('POST', `/api/documents/receipts/${id}/generate-pdf`);
 }

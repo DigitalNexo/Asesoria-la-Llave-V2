@@ -1,19 +1,21 @@
-import { nanoid } from 'nanoid';
-import prisma from '../prisma-client';
+import { nanoid } from "nanoid";
+import prisma from "../prisma-client";
 
 export class DocumentsService {
   /**
    * Generar siguiente número de recibo
    */
-  private async getNextReceiptNumber(year: number): Promise<{ numero: string; sequential: number }> {
+  private async getNextReceiptNumber(
+    year: number
+  ): Promise<{ numero: string; sequential: number }> {
     const lastReceipt = await prisma.receipts.findFirst({
       where: { year },
-      orderBy: { sequential: 'desc' },
+      orderBy: { sequential: "desc" },
     });
 
     const sequential = lastReceipt ? lastReceipt.sequential + 1 : 1;
-    const numero = `REC-${year}-${sequential.toString().padStart(4, '0')}`;
-    
+    const numero = `REC-${year}-${sequential.toString().padStart(4, "0")}`;
+
     return { numero, sequential };
   }
 
@@ -56,7 +58,7 @@ export class DocumentsService {
         iva_importe,
         total,
         notes: data.notes,
-        status: 'BORRADOR',
+        status: "BORRADOR",
         created_by: data.createdBy,
       },
       include: {
@@ -69,7 +71,11 @@ export class DocumentsService {
   /**
    * Listar recibos
    */
-  async listReceipts(filters?: { status?: string; clientId?: string; year?: number }) {
+  async listReceipts(filters?: {
+    status?: string;
+    clientId?: string;
+    year?: number;
+  }) {
     const where: any = {};
     if (filters?.status) where.status = filters.status;
     if (filters?.clientId) where.client_id = filters.clientId;
@@ -81,7 +87,7 @@ export class DocumentsService {
         clients: true,
         creator: { select: { id: true, username: true, email: true } },
       },
-      orderBy: [{ year: 'desc' }, { sequential: 'desc' }],
+      orderBy: [{ year: "desc" }, { sequential: "desc" }],
     });
   }
 
@@ -96,17 +102,47 @@ export class DocumentsService {
         creator: { select: { id: true, username: true, email: true } },
       },
     });
-    if (!receipt) throw new Error('Recibo no encontrado');
+    if (!receipt) throw new Error("Recibo no encontrado");
     return receipt;
   }
 
   /**
    * Actualizar recibo
    */
-  async updateReceipt(id: string, data: { status?: string; pdf_path?: string; sent_at?: Date }) {
+  async updateReceipt(id: string, data: any) {
+    // Separar clientId del resto de datos
+    const { clientId, ...updateData } = data;
+
+    // Calcular IVA y total si se proporcionan base_imponible o iva_porcentaje
+    if (
+      updateData.base_imponible !== undefined ||
+      updateData.iva_porcentaje !== undefined
+    ) {
+      const receipt = await prisma.receipts.findUnique({ where: { id } });
+      if (!receipt) throw new Error("Recibo no encontrado");
+
+      const base = updateData.base_imponible ?? receipt.base_imponible;
+      const ivaPct = updateData.iva_porcentaje ?? receipt.iva_porcentaje;
+
+      updateData.iva_importe = (Number(base) * Number(ivaPct)) / 100;
+      updateData.total = Number(base) + updateData.iva_importe;
+    }
+
+    // Construir el objeto de actualización
+    const prismaUpdate: any = { ...updateData };
+
+    // Si hay clientId, usar la relación
+    if (clientId !== undefined) {
+      if (clientId) {
+        prismaUpdate.clients = { connect: { id: clientId } };
+      } else {
+        prismaUpdate.clients = { disconnect: true };
+      }
+    }
+
     return await prisma.receipts.update({
       where: { id },
-      data: data as any,
+      data: prismaUpdate,
       include: { clients: true },
     });
   }
@@ -115,17 +151,19 @@ export class DocumentsService {
    * Crear documento
    */
   async createDocument(data: {
-    type: 'DATA_PROTECTION' | 'BANKING_DOMICILIATION';
+    type: "DATA_PROTECTION" | "BANKING_DOMICILIATION";
     clientId: string;
     templateId?: string;
     notes?: string;
     createdBy: string;
   }) {
-    const client = await prisma.clients.findUnique({ where: { id: data.clientId } });
-    if (!client) throw new Error('Cliente no encontrado');
+    const client = await prisma.clients.findUnique({
+      where: { id: data.clientId },
+    });
+    if (!client) throw new Error("Cliente no encontrado");
 
     const docName =
-      data.type === 'DATA_PROTECTION'
+      data.type === "DATA_PROTECTION"
         ? `Protección de Datos - ${client.razonSocial}`
         : `Domiciliación Bancaria - ${client.razonSocial}`;
 
@@ -138,8 +176,8 @@ export class DocumentsService {
         template_id: data.templateId,
         client_id: data.clientId,
         created_by: data.createdBy,
-        status: 'BORRADOR',
-        signature_status: 'PENDIENTE',
+        status: "BORRADOR",
+        signature_status: "PENDIENTE",
       },
       include: {
         clients: true,
@@ -152,7 +190,11 @@ export class DocumentsService {
   /**
    * Listar documentos
    */
-  async listDocuments(filters?: { type?: string; status?: string; clientId?: string }) {
+  async listDocuments(filters?: {
+    type?: string;
+    status?: string;
+    clientId?: string;
+  }) {
     const where: any = {};
     if (filters?.type) where.type = filters.type;
     if (filters?.status) where.status = filters.status;
@@ -165,7 +207,7 @@ export class DocumentsService {
         template: true,
         creator: { select: { id: true, username: true, email: true } },
       },
-      orderBy: { created_at: 'desc' },
+      orderBy: { created_at: "desc" },
     });
   }
 
@@ -182,7 +224,7 @@ export class DocumentsService {
         versions: true,
       },
     });
-    if (!doc) throw new Error('Documento no encontrado');
+    if (!doc) throw new Error("Documento no encontrado");
     return doc;
   }
 
@@ -200,15 +242,19 @@ export class DocumentsService {
   /**
    * Marcar documento como aceptado
    */
-  async markDocumentAsAccepted(documentId: string, signedFilePath: string, userId: string) {
+  async markDocumentAsAccepted(
+    documentId: string,
+    signedFilePath: string,
+    userId: string
+  ) {
     return await prisma.documents.update({
       where: { id: documentId },
       data: {
-        status: 'ACEPTADO',
-        signature_status: 'FIRMADO',
+        status: "ACEPTADO",
+        signature_status: "FIRMADO",
         signature_date: new Date(),
         signed_file_path: signedFilePath,
-        signature_type: 'manual',
+        signature_type: "manual",
         signed_by_name: userId,
       },
       include: { clients: true },
@@ -218,7 +264,12 @@ export class DocumentsService {
   /**
    * CRUD Plantillas
    */
-  async createTemplate(data: { type: string; name: string; content: string; description?: string }) {
+  async createTemplate(data: {
+    type: string;
+    name: string;
+    content: string;
+    description?: string;
+  }) {
     return await prisma.document_templates.create({
       data: {
         id: nanoid(),
@@ -239,17 +290,36 @@ export class DocumentsService {
 
     return await prisma.document_templates.findMany({
       where,
-      orderBy: { created_at: 'desc' },
+      orderBy: { created_at: "desc" },
     });
   }
 
   async getTemplateById(id: string) {
-    const template = await prisma.document_templates.findUnique({ where: { id } });
-    if (!template) throw new Error('Plantilla no encontrada');
+    const template = await prisma.document_templates.findUnique({
+      where: { id },
+    });
+    if (!template) throw new Error("Plantilla no encontrada");
     return template;
   }
 
   async updateTemplate(id: string, data: any) {
+    // Si se está activando una plantilla de recibo, desactivar todas las demás de ese tipo
+    if (data.is_active === true) {
+      const template = await prisma.document_templates.findUnique({
+        where: { id },
+      });
+      if (template && template.type === "RECEIPT") {
+        // Desactivar todas las otras plantillas de recibo
+        await prisma.document_templates.updateMany({
+          where: {
+            type: "RECEIPT",
+            id: { not: id },
+          },
+          data: { is_active: false },
+        });
+      }
+    }
+
     return await prisma.document_templates.update({
       where: { id },
       data: { ...data, updated_at: new Date() },

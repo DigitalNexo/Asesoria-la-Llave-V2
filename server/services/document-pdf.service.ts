@@ -1,6 +1,9 @@
 import puppeteer from 'puppeteer';
 import path from 'path';
 import fs from 'fs/promises';
+import { PrismaClient } from '@prisma/client';
+
+const prisma = new PrismaClient();
 
 export class DocumentPdfService {
   private uploadsDir = path.join(process.cwd(), 'uploads', 'documents');
@@ -21,11 +24,12 @@ export class DocumentPdfService {
    * Generar PDF de recibo
    */
   async generateReceiptPdf(receipt: any): Promise<string> {
-    const html = this.buildReceiptHtml(receipt);
+    const html = await this.buildReceiptHtml(receipt);
     const filename = `recibo-${receipt.numero}.pdf`;
     const pdfPath = path.join(this.uploadsDir, filename);
     await this.generatePdfFromHtml(html, pdfPath);
-    return pdfPath;
+    // Retornar ruta relativa para servir desde /uploads
+    return `/uploads/documents/${filename}`;
   }
 
   /**
@@ -40,18 +44,42 @@ export class DocumentPdfService {
     const filename = `${document.type}-${document.clients.nifCif}-${Date.now()}.pdf`;
     const pdfPath = path.join(this.uploadsDir, filename);
     await this.generatePdfFromHtml(html, pdfPath);
-    return pdfPath;
+    // Retornar ruta relativa para servir desde /uploads
+    return `/uploads/documents/${filename}`;
   }
 
   /**
    * HTML para recibo
    */
-  private buildReceiptHtml(receipt: any): string {
+  private async buildReceiptHtml(receipt: any): Promise<string> {
+    // Buscar plantilla activa tipo RECEIPT
+    const template = await prisma.document_templates.findFirst({
+      where: { type: 'RECEIPT', is_active: true },
+      orderBy: { created_at: 'desc' }
+    });
+
     const client = receipt.clients;
     const nombre = client?.razonSocial || receipt.recipient_name;
     const nif = client?.nifCif || receipt.recipient_nif;
     const email = client?.email || receipt.recipient_email;
 
+    // Si hay plantilla, usar su contenido y reemplazar variables
+    if (template && template.content) {
+      return template.content
+        .replace(/{{NUMERO}}/g, receipt.numero || '')
+        .replace(/{{NOMBRE}}/g, nombre || '')
+        .replace(/{{NIF}}/g, nif || '')
+        .replace(/{{EMAIL}}/g, email || '')
+        .replace(/{{FECHA}}/g, new Date(receipt.created_at).toLocaleDateString('es-ES'))
+        .replace(/{{CONCEPTO}}/g, receipt.concepto || '')
+        .replace(/{{BASE}}/g, Number(receipt.base_imponible).toFixed(2))
+        .replace(/{{IVA_PORCENTAJE}}/g, String(receipt.iva_porcentaje || 21))
+        .replace(/{{IVA_IMPORTE}}/g, Number(receipt.iva_importe).toFixed(2))
+        .replace(/{{TOTAL}}/g, Number(receipt.total).toFixed(2))
+        .replace(/{{NOTAS}}/g, receipt.notes || '');
+    }
+
+    // Plantilla por defecto si no hay en DB
     return `
 <!DOCTYPE html>
 <html>

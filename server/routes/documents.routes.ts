@@ -42,7 +42,7 @@ const upload = multer({
  */
 router.post('/receipts', authenticateToken, async (req: AuthRequest, res) => {
   try {
-    const userId = req.user?.userId;
+    const userId = req.user?.id;
     if (!userId) {
       return res.status(401).json({ error: 'Usuario no autenticado' });
     }
@@ -89,6 +89,32 @@ router.get('/receipts/:id', authenticateToken, async (req: AuthRequest, res) => 
   } catch (error: any) {
     console.error('Error getting receipt:', error);
     res.status(404).json({ error: error.message || 'Recibo no encontrado' });
+  }
+});
+
+/**
+ * Actualizar recibo
+ */
+router.put('/receipts/:id', authenticateToken, async (req: AuthRequest, res) => {
+  try {
+      // Actualizar el recibo
+      let receipt = await documentsService.updateReceipt(req.params.id, req.body);
+
+      // Regenerar siempre el PDF para que refleje los cambios
+      try {
+        const pdfPath = await documentPdfService.generateReceiptPdf(receipt);
+        await documentsService.updateReceipt(req.params.id, { pdf_path: pdfPath, pdf_generated_at: new Date() });
+        receipt.pdf_path = pdfPath;
+        receipt.pdf_generated_at = new Date();
+      } catch (pdfErr: any) {
+        console.error('Error regenerating PDF after update:', pdfErr);
+        // No bloquear la respuesta por un fallo en la generación de PDF
+      }
+
+      res.json(receipt);
+  } catch (error: any) {
+    console.error('Error updating receipt:', error);
+    res.status(500).json({ error: error.message || 'Error al actualizar recibo' });
   }
 });
 
@@ -148,7 +174,7 @@ router.post('/receipts/:id/send', authenticateToken, async (req: AuthRequest, re
  */
 router.post('/documents', authenticateToken, async (req: AuthRequest, res) => {
   try {
-    const userId = req.user?.userId;
+    const userId = req.user?.id;
     if (!userId) {
       return res.status(401).json({ error: 'Usuario no autenticado' });
     }
@@ -258,7 +284,7 @@ router.post(
   upload.single('signedFile'),
   async (req: AuthRequest, res) => {
     try {
-      const userId = req.user?.userId;
+      const userId = req.user?.id;
       if (!userId) {
         return res.status(401).json({ error: 'Usuario no autenticado' });
       }

@@ -279,13 +279,8 @@ model clients {
   responsableAsignado    String?                   @map("responsable_asignado") @db.VarChar(36)
   isActive               Boolean                   @map("is_active") @default(true)
   tax_models              String?                   @db.LongText
-  fechaBaja              DateTime?                 @map("fecha_baja") 
+  fechaBaja              DateTime?@map("fecha_baja") 
   notes                   String?                   @db.Text
-  
-  // NUEVO: Sistema de presupuestos gestorías
-  tipoGestoria            clients_tipo_gestoria?    // 'ASESORIA_LA_LLAVE' | 'GESTORIA_ONLINE'
-  presupuestoOrigenId     String?                   @db.VarChar(36) // ID del presupuesto que lo generó
-  
   client_employees        client_employees[]
   client_tax              client_tax[]
   client_tax_assignments  client_tax_assignments[]
@@ -302,7 +297,6 @@ model clients {
   @@index([isActive])
   @@index([responsableAsignado])
   @@index([tipo])
-  @@index([tipoGestoria])
 }
 
 model declaraciones {
@@ -697,21 +691,8 @@ model system_settings {
 
 model system_updates {
   id            String                @id @db.VarChar(36)
-  
-  // Campos para actualizaciones por versión (legacy)
-  from_version  String?               @db.VarChar(50)
-  to_version    String?               @db.VarChar(50)
-  
-  // Campos para actualizaciones desde GitHub
-  commit_hash   String?               @unique @db.VarChar(40) // SHA del commit
-  commit_message String?              @db.Text // Mensaje del commit
-  commit_author String?               @db.VarChar(255) // Autor del commit
-  commit_date   DateTime?             // Fecha del commit en GitHub
-  branch        String?               @default("main") @db.VarChar(100) // Rama del commit
-  auto_applied  Boolean               @default(false) // Si se aplicó automáticamente
-  
-  update_type   system_update_type    @default(VERSION) // Tipo de actualización
-  
+  from_version  String                @db.VarChar(50)
+  to_version    String                @db.VarChar(50)
   status        system_updates_status @default(CHECKING)
   logs          String?               @db.LongText
   backup_id     String?               @db.VarChar(36)
@@ -724,8 +705,6 @@ model system_updates {
   @@index([createdAt])
   @@index([initiated_by], map: "system_updates_initiated_by_fkey")
   @@index([status])
-  @@index([commit_hash])
-  @@index([update_type])
 }
 
 model task_activities {
@@ -930,12 +909,10 @@ model users {
   task_time_entries       task_time_entries[]
   tasks                   tasks[]
   roles                   roles?                    @relation(fields: [roleId], references: [id])
-  
   // Relaciones con documentos
   created_documents       documents[]               @relation("documents_created_by")
-  sent_documents          documents[]               @relation("documents_sent_by")
+  signed_documents        document_signatures[]     @relation("document_signatures_signed_by")
   document_versions       document_versions[]       @relation("document_versions_created_by")
-  
   // Relaciones con recibos
   created_receipts        receipts[]                @relation("receipts_created_by")
   sent_receipts           receipts[]                @relation("receipts_sent_by")
@@ -980,11 +957,6 @@ enum clients_tipo {
   PARTICULAR
 }
 
-enum clients_tipo_gestoria {
-  ASESORIA_LA_LLAVE
-  GESTORIA_ONLINE
-}
-
 enum client_tax_assignments_periodicidad {
   MENSUAL
   TRIMESTRAL
@@ -1011,33 +983,6 @@ enum system_updates_status {
   COMPLETED
   FAILED
   ROLLED_BACK
-  PENDING    // Para actualizaciones de GitHub pendientes
-  APPLYING   // Aplicando actualización de GitHub
-}
-
-enum system_update_type {
-  VERSION  // Actualización por versión (legacy)
-  GITHUB   // Actualización desde GitHub
-}
-
-// Configuración del sistema de actualizaciones desde GitHub
-model system_update_config {
-  id                    String   @id @db.VarChar(36)
-  
-  githubRepo            String   @map("github_repo") @db.VarChar(255) // "owner/repo"
-  githubBranch          String   @default("main") @map("github_branch") @db.VarChar(100)
-  githubWebhookSecret   String?  @map("github_webhook_secret") @db.VarChar(255) // Para validar webhooks
-  githubToken           String?  @map("github_token") @db.VarChar(255) // Personal Access Token
-  
-  autoUpdateEnabled     Boolean  @default(false) @map("auto_update_enabled") // Auto-aplicar updates
-  
-  lastCheckedAt         DateTime? @map("last_checked_at") // Última vez que se verificó
-  currentCommitHash     String?   @map("current_commit_hash") @db.VarChar(40) // Commit actual
-  
-  createdAt             DateTime  @default(now()) @map("created_at")
-  updatedAt             DateTime  @updatedAt @map("updated_at")
-  
-  @@map("system_update_config")
 }
 
 enum obligaciones_fiscales_periodicidad {
@@ -1122,142 +1067,125 @@ enum budgets_status {
   ARCHIVED
 }
 
-// ============ DOCUMENTOS MODULE ============
-// Sistema completo de documentación: Recibos, Protección de Datos, Domiciliación Bancaria
-
-// ========== RECIBOS ==========
-model receipts {
-  id                String                    @id @default(cuid())
-  numero            String                    @unique // REC-2025-001 (auto-generado)
-  year              Int                       // Año para numeración
-  sequential        Int                       // Número secuencial del año
-  
-  // Destinatario (cliente registrado O externo)
-  client_id         String?                   // NULL si es externo
-  recipient_name    String                    // Nombre (para externos o override)
-  recipient_nif     String                    // NIF/CIF
-  recipient_email   String                    // Email para envío
-  recipient_address String?                   @db.Text
-  
-  // Datos del recibo
-  concepto          String                    @db.Text
-  base_imponible    Decimal                   @db.Decimal(12, 2)
-  iva_porcentaje    Decimal                   @db.Decimal(5, 2) @default(21.00)
-  iva_importe       Decimal                   @db.Decimal(12, 2)
-  total             Decimal                   @db.Decimal(12, 2)
-  
-  // Estado y tracking
-  status            receipt_status            @default(BORRADOR)
-  sent_at           DateTime?
-  sent_by           String?
-  pdf_path          String?
-  pdf_generated_at  DateTime?
-  
-  // Metadata
-  notes             String?                   @db.Text
-  created_by        String
-  created_at        DateTime                  @default(now())
-  updated_at        DateTime                  @updatedAt
-  
-  // Relaciones
-  clients           clients?                  @relation(fields: [client_id], references: [id])
-  creator           users                     @relation("receipts_created_by", fields: [created_by], references: [id])
-  sender            users?                    @relation("receipts_sent_by", fields: [sent_by], references: [id])
-  
-  @@index([client_id])
-  @@index([created_by])
-  @@index([status])
-  @@index([year, sequential])
-  @@index([recipient_nif])
-  @@map("receipts")
+enum document_type {
+  DATA_PROTECTION
+  BANKING_DOMICILIATION
+  RECEIPT
 }
 
-// ========== DOCUMENTOS (Protección Datos, Domiciliación, etc.) ==========
+// ============ DOCUMENTOS MODULE ============
+
 model documents {
   id                String                    @id @default(cuid())
-  type              document_type             // "DATA_PROTECTION", "BANKING_DOMICILIATION"
+  type              String                    // "payment_receipt", "data_protection", "banking_domiciliation", "other"
   name              String
   description       String?                   @db.Text
   template_id       String?
-  
-  // SOLO clientes registrados (NO externos)
-  client_id         String
-  
-  // Contenido generado
-  generated_content String?                   @db.LongText
-  
-  // Archivos
-  file_path         String?                   // PDF generado inicial
-  signed_file_path  String?                   // PDF firmado subido
+  client_id         String?
+  created_by        String
+  file_path         String?
   file_name         String?
   file_size         Int?
   file_type         String?
-  
-  // Estado del documento
-  status            document_status           @default(BORRADOR)
-  
-  // Firma
-  signature_status  signature_status          @default(PENDIENTE)
+  status            String                    @default("draft") // "draft", "pending_signature", "signed", "active", "archived", "cancelled"
+  signature_status  String?                   @default("unsigned") // "unsigned", "signed"
   signature_date    DateTime?
-  signature_type    String?                   // "digital", "electronic", "manual"
-  signed_by_name    String?                   // Nombre de quien firmó
-  
-  // Envío
-  sent_at           DateTime?
-  sent_by           String?
-  
-  // Metadata
-  created_by        String
+  signed_by         String?
   created_at        DateTime                  @default(now())
   updated_at        DateTime                  @updatedAt
-  
+
   // Relaciones
-  clients           clients                   @relation(fields: [client_id], references: [id], onDelete: Cascade)
-  creator           users                     @relation("documents_created_by", fields: [created_by], references: [id])
-  sender            users?                    @relation("documents_sent_by", fields: [sent_by], references: [id])
-  template          document_templates?       @relation(fields: [template_id], references: [id])
+  clients           clients?                  @relation(fields: [client_id], references: [id])
+  users             users                     @relation("documents_created_by", fields: [created_by], references: [id])
+  template          document_templates?      @relation(fields: [template_id], references: [id])
+  signatures        document_signatures[]
   versions          document_versions[]
-  
+
   @@index([client_id])
   @@index([created_by])
   @@index([template_id])
   @@index([status])
   @@index([type])
-  @@index([signature_status])
   @@map("documents")
 }
 
-// ========== PLANTILLAS DE DOCUMENTOS ==========
+model receipts {
+  id                String    @id
+  numero            String    @unique
+  year              Int
+  sequential        Int
+  client_id         String?
+  recipient_name    String
+  recipient_nif     String
+  recipient_email   String
+  recipient_address String?   @db.Text
+  concepto          String    @db.Text
+  base_imponible    Decimal   @db.Decimal(12, 2)
+  iva_porcentaje    Decimal   @default(21.00) @db.Decimal(5, 2)
+  iva_importe       Decimal   @db.Decimal(12, 2)
+  total             Decimal   @db.Decimal(12, 2)
+  status            String    @default("BORRADOR") // BORRADOR, ENVIADO, ARCHIVADO
+  sent_at           DateTime?
+  sent_by           String?
+  pdf_path          String?
+  pdf_generated_at  DateTime?
+  notes             String?   @db.Text
+  created_by        String
+  created_at        DateTime  @default(now())
+  updated_at        DateTime  @updatedAt
+
+  // Relaciones
+  clients           clients?  @relation(fields: [client_id], references: [id])
+  creator           users     @relation("receipts_created_by", fields: [created_by], references: [id])
+  sender            users?    @relation("receipts_sent_by", fields: [sent_by], references: [id])
+
+  @@index([year, sequential])
+  @@index([client_id])
+  @@index([recipient_nif])
+  @@index([status])
+  @@index([created_by])
+  @@index([sent_by])
+  @@map("receipts")
+}
+
 model document_templates {
   id                String                    @id @default(cuid())
-  type              document_type             // "DATA_PROTECTION", "BANKING_DOMICILIATION"
+  type              document_type             // Enum: DATA_PROTECTION, BANKING_DOMICILIATION, RECEIPT
   name              String                    @unique
   description       String?                   @db.Text
-  
-  // Contenido (TipTap JSON o HTML)
-  content           String                    @db.LongText // TipTap JSON
-  html_content      String?                   @db.LongText // HTML con variables {{VAR}}
-  
-  // Variables disponibles
-  available_vars    Json?                     // ["NOMBRE_CLIENTE", "NIF", "FECHA", etc.]
-  
-  // Estado
+  content           String                    @db.LongText
+  available_vars    Json?                     @map("available_vars")
   is_active         Boolean                   @default(true)
-  
-  // Metadata
-  created_by        String?
   created_at        DateTime                  @default(now())
   updated_at        DateTime                  @updatedAt
-  
+
   // Relaciones
   documents         documents[]
-  
+
   @@index([type])
   @@index([is_active])
   @@map("document_templates")
 }
 
-// ========== VERSIONES DE DOCUMENTOS ==========
+model document_signatures {
+  id                String                    @id @default(cuid())
+  document_id       String
+  signed_by         String                    // ID del usuario que firma
+  signature_date    DateTime                  @default(now())
+  signature_type    String                    // "digital", "electronic", "manual"
+  ip_address        String?
+  user_agent        String?                   @db.Text
+  created_at        DateTime                  @default(now())
+
+  // Relaciones
+  documents         documents                 @relation(fields: [document_id], references: [id], onDelete: Cascade)
+  users             users                     @relation("document_signatures_signed_by", fields: [signed_by], references: [id])
+
+  @@index([document_id])
+  @@index([signed_by])
+  @@map("document_signatures")
+}
+
 model document_versions {
   id                String                    @id @default(cuid())
   document_id       String
@@ -1265,371 +1193,13 @@ model document_versions {
   content           String                    @db.LongText
   created_by        String
   created_at        DateTime                  @default(now())
-  
+
   // Relaciones
   documents         documents                 @relation(fields: [document_id], references: [id], onDelete: Cascade)
   users             users                     @relation("document_versions_created_by", fields: [created_by], references: [id])
-  
+
   @@unique([document_id, version])
   @@index([document_id])
   @@index([created_by])
   @@map("document_versions")
-}
-
-// ========== ENUMS ==========
-enum receipt_status {
-  BORRADOR
-  ENVIADO
-  ARCHIVADO
-}
-
-enum document_type {
-  DATA_PROTECTION      // Protección de datos
-  BANKING_DOMICILIATION // Domiciliación bancaria
-}
-
-enum document_status {
-  BORRADOR
-  ENVIADO
-  ACEPTADO
-  RECHAZADO
-  ARCHIVADO
-}
-
-enum signature_status {
-  PENDIENTE
-  FIRMADO
-  RECHAZADO
-}
-
-// ============ SISTEMA DE PRESUPUESTOS GESTORÍAS ============
-
-model gestoria_budget_configurations {
-  id                          String   @id @default(cuid())
-  tipo                        gestoria_budget_configurations_tipo   // 'ASESORIA_LA_LLAVE' | 'GESTORIA_ONLINE'
-  nombre                      String
-  activo                      Boolean  @default(true)
-  
-  // Precios base
-  precioBasePorFactura        Decimal  @db.Decimal(10, 2)
-  precioBasePorNomina         Decimal  @db.Decimal(10, 2)
-  
-  // Porcentajes sistema tributario
-  porcentajeRegimenGeneral    Decimal  @db.Decimal(5, 2)
-  porcentajeModulos           Decimal  @db.Decimal(5, 2)
-  porcentajeEDN               Decimal  @db.Decimal(5, 2)
-  
-  // Recargos período
-  recargoPeriodoMensual       Decimal  @db.Decimal(5, 2)
-  minimoMensual               Decimal  @db.Decimal(10, 2)
-  
-  // Precios modelos
-  precioModelo303             Decimal  @db.Decimal(10, 2)
-  precioModelo111             Decimal  @db.Decimal(10, 2)
-  precioModelo115             Decimal  @db.Decimal(10, 2)
-  precioModelo130             Decimal  @db.Decimal(10, 2)
-  precioModelo100             Decimal  @db.Decimal(10, 2)
-  precioModelo349             Decimal  @db.Decimal(10, 2)
-  precioModelo347             Decimal  @db.Decimal(10, 2)
-  
-  // Servicios adicionales fijos
-  precioCertificados          Decimal  @db.Decimal(10, 2)
-  precioCensos                Decimal  @db.Decimal(10, 2)
-  precioNotificaciones        Decimal  @db.Decimal(10, 2)
-  precioEstadisticas          Decimal  @db.Decimal(10, 2)
-  precioAyudas                Decimal  @db.Decimal(10, 2)
-  
-  // Datos de empresa
-  nombreEmpresa               String
-  nifEmpresa                  String
-  direccionEmpresa            String
-  telefonoEmpresa             String
-  emailEmpresa                String
-  logoPath                    String?
-  colorPrimario               String   @default("#1e40af")
-  colorSecundario             String   @default("#3b82f6")
-  
-  fechaCreacion               DateTime @default(now())
-  fechaModificacion           DateTime @updatedAt
-  creadoPor                   String
-  
-  gestoria_budgets            gestoria_budgets[]
-  
-  @@map("gestoria_budget_configurations")
-}
-
-model gestoria_budgets {
-  id                          String   @id @default(cuid())
-  numero                      String   @unique  // PRE-2025-001
-  tipoGestoria                gestoria_budgets_tipo_gestoria   // 'ASESORIA_LA_LLAVE' | 'GESTORIA_ONLINE'
-  tipoPresupuesto             gestoria_budget_tipo_presupuesto @default(AUTONOMO) // AUTONOMO, PYME, EMPRESA, etc.
-  estado                      gestoria_budgets_estado   // 'BORRADOR' | 'ENVIADO' | 'ACEPTADO' | 'RECHAZADO' | 'FACTURADO'
-  manualOverride              Boolean  @default(false)  // Si true, los cálculos fueron editados manualmente
-  
-  // Datos del cliente potencial
-  nombreCliente               String
-  nifCif                      String
-  email                       String
-  telefono                    String?
-  direccion                   String?
-  personaContacto             String?
-  
-  // Datos del presupuesto
-  facturasMes                 Int
-  nominasMes                  Int      @default(0)
-  facturacion                 Decimal  @db.Decimal(12, 2)
-  sistemaTributacion          String
-  periodoDeclaraciones        String
-  
-  // Modelos incluidos
-  modelo303                   Boolean  @default(false)
-  modelo111                   Boolean  @default(false)
-  modelo115                   Boolean  @default(false)
-  modelo130                   Boolean  @default(false)
-  modelo100                   Boolean  @default(false)
-  modelo349                   Boolean  @default(false)
-  modelo347                   Boolean  @default(false)
-  
-  // Servicios adicionales fijos
-  solicitudCertificados       Boolean  @default(false)
-  censosAEAT                  Boolean  @default(false)
-  recepcionNotificaciones     Boolean  @default(false)
-  estadisticasINE             Boolean  @default(false)
-  solicitudAyudas             Boolean  @default(false)
-  conLaboralSocial            Boolean  @default(false)
-  
-  // Cálculos
-  totalContabilidad           Decimal  @db.Decimal(12, 2)
-  totalLaboral                Decimal  @db.Decimal(12, 2) @default(0)
-  aplicaDescuento             Boolean  @default(false)
-  tipoDescuento               String?  // 'PORCENTAJE' | 'FIJO'
-  valorDescuento              Decimal? @db.Decimal(10, 2)
-  descuentoCalculado          Decimal  @db.Decimal(10, 2) @default(0)
-  totalFinal                  Decimal  @db.Decimal(12, 2)
-  
-  // Tracking
-  fechaCreacion               DateTime @default(now())
-  fechaEnvio                  DateTime?
-  fechaAceptacion             DateTime?
-  fechaRechazo                DateTime?
-  motivoRechazo               String?  @db.Text
-  creadoPor                   String
-  modificadoPor               String?
-  
-  // Relaciones
-  clienteId                   String?
-  configId                    String
-  configuracion               gestoria_budget_configurations @relation(fields: [configId], references: [id])
-  serviciosAdicionales        gestoria_budget_additional_services[]
-  eventos                     gestoria_budget_statistics_events[]
-  
-  pdfPath                     String?  // Ruta al PDF generado
-  
-  @@index([estado])
-  @@index([tipoGestoria])
-  @@index([nifCif])
-  @@index([fechaCreacion])
-  @@index([clienteId])
-  @@map("gestoria_budgets")
-}
-
-model gestoria_budget_additional_services {
-  id                          String   @id @default(cuid())
-  budgetId                    String
-  budget                      gestoria_budgets  @relation(fields: [budgetId], references: [id], onDelete: Cascade)
-  
-  nombre                      String
-  descripcion                 String?
-  precio                      Decimal  @db.Decimal(10, 2)
-  tipoServicio                gestoria_budget_additional_services_tipo_servicio   // 'MENSUAL' | 'PUNTUAL'
-  incluido                    Boolean  @default(true)
-  
-  @@index([budgetId])
-  @@map("gestoria_budget_additional_services")
-}
-
-model gestoria_budget_statistics_events {
-  id                          String   @id @default(cuid())
-  budgetId                    String
-  budget                      gestoria_budgets  @relation(fields: [budgetId], references: [id], onDelete: Cascade)
-  
-  evento                      gestoria_budget_statistics_events_evento   // 'CREADO' | 'ENVIADO' | 'ACEPTADO' | 'RECHAZADO' | 'CONVERTIDO'
-  fecha                       DateTime @default(now())
-  userId                      String?
-  metadata                    String?  @db.Text // JSON con info adicional
-  
-  @@index([budgetId])
-  @@index([evento])
-  @@index([fecha])
-  @@map("gestoria_budget_statistics_events")
-}
-
-// Enums para el sistema de presupuestos de gestorías
-
-enum gestoria_budget_configurations_tipo {
-  ASESORIA_LA_LLAVE
-  GESTORIA_ONLINE
-}
-
-enum gestoria_budgets_tipo_gestoria {
-  ASESORIA_LA_LLAVE
-  GESTORIA_ONLINE
-}
-
-enum gestoria_budgets_estado {
-  BORRADOR
-  ENVIADO
-  ACEPTADO
-  RECHAZADO
-  FACTURADO
-}
-
-enum gestoria_budget_additional_services_tipo_servicio {
-  MENSUAL
-  PUNTUAL
-}
-
-enum gestoria_budget_statistics_events_evento {
-  CREADO
-  ENVIADO
-  ACEPTADO
-  RECHAZADO
-  CONVERTIDO
-}
-
-// ============================================================================
-// SISTEMA DE PRESUPUESTOS DINÁMICO (BASU PORT)
-// Sistema completamente flexible de tramos y precios configurables
-// ============================================================================
-
-enum gestoria_budget_tipo_presupuesto {
-  AUTONOMO
-  PYME
-  EMPRESA
-  LABORAL
-  HERENCIA
-  RENTAS
-  OTROS
-}
-
-// Configuración principal para presupuestos de Autónomos
-model gestoria_budget_autonomo_config {
-  id                          String   @id @default(cuid())
-  nombre                      String   @default("Configuración Autónomos")
-  activo                      Boolean  @default(true)
-  
-  // Porcentajes de ajuste por características del cliente
-  porcentajePeriodoMensual    Decimal  @db.Decimal(5, 2) @default(20.00)  // +20% si es mensual
-  porcentajeEDN               Decimal  @db.Decimal(5, 2) @default(10.00)  // +10% estimación directa normal
-  porcentajeModulos           Decimal  @db.Decimal(5, 2) @default(-10.00) // -10% régimen módulos
-  
-  // Mínimos
-  minimoMensual               Decimal  @db.Decimal(10, 2) @default(50.00)
-  
-  // Metadata
-  fechaCreacion               DateTime @default(now())
-  fechaModificacion           DateTime @updatedAt
-  creadoPor                   String
-  modificadoPor               String?
-  
-  // Relaciones con tramos dinámicos
-  tramosFacturas              gestoria_budget_invoice_tiers[]
-  tramosNominas               gestoria_budget_payroll_tiers[]
-  tramosFacturacionAnual      gestoria_budget_annual_billing_tiers[]
-  preciosModelosFiscales      gestoria_budget_fiscal_model_pricing[]
-  preciosServiciosAdicionales gestoria_budget_additional_service_pricing[]
-  
-  @@map("gestoria_budget_autonomo_config")
-}
-
-// Tramos de precios según número de facturas mensuales (DINÁMICO)
-model gestoria_budget_invoice_tiers {
-  id                          String   @id @default(cuid())
-  configId                    String
-  config                      gestoria_budget_autonomo_config @relation(fields: [configId], references: [id], onDelete: Cascade)
-  
-  orden                       Int      // Para mantener el orden visual (1, 2, 3...)
-  minFacturas                 Int      // Ej: 0, 26, 51, 101, 151
-  maxFacturas                 Int?     // Ej: 25, 50, 100, 150, null (null = infinito)
-  precio                      Decimal  @db.Decimal(10, 2)
-  etiqueta                    String?  // Ej: "Hasta 25 facturas", "De 26 a 50"
-  
-  @@unique([configId, orden])
-  @@index([configId])
-  @@map("gestoria_budget_invoice_tiers")
-}
-
-// Tramos de precios según número de nóminas mensuales (DINÁMICO)
-model gestoria_budget_payroll_tiers {
-  id                          String   @id @default(cuid())
-  configId                    String
-  config                      gestoria_budget_autonomo_config @relation(fields: [configId], references: [id], onDelete: Cascade)
-  
-  orden                       Int
-  minNominas                  Int      // Ej: 0, 11, 21, 31, 41, 51
-  maxNominas                  Int?     // Ej: 10, 20, 30, 40, 50, null
-  precio                      Decimal  @db.Decimal(10, 2)
-  etiqueta                    String?  // Ej: "Hasta 10 nóminas", "De 11 a 20"
-  
-  @@unique([configId, orden])
-  @@index([configId])
-  @@map("gestoria_budget_payroll_tiers")
-}
-
-// Tramos de multiplicadores según facturación anual (DINÁMICO)
-model gestoria_budget_annual_billing_tiers {
-  id                          String   @id @default(cuid())
-  configId                    String
-  config                      gestoria_budget_autonomo_config @relation(fields: [configId], references: [id], onDelete: Cascade)
-  
-  orden                       Int
-  minFacturacion              Decimal  @db.Decimal(12, 2) // Ej: 0, 50000, 100000
-  maxFacturacion              Decimal? @db.Decimal(12, 2) // Ej: 49999.99, 99999.99, null
-  multiplicador               Decimal  @db.Decimal(4, 2)  // Ej: 1.00, 1.10, 1.15, 1.40
-  etiqueta                    String?  // Ej: "Hasta 50.000€", "De 50k a 100k"
-  
-  @@unique([configId, orden])
-  @@index([configId])
-  @@map("gestoria_budget_annual_billing_tiers")
-}
-
-// Precios de modelos fiscales (DINÁMICO - permite añadir nuevos modelos)
-model gestoria_budget_fiscal_model_pricing {
-  id                          String   @id @default(cuid())
-  configId                    String
-  config                      gestoria_budget_autonomo_config @relation(fields: [configId], references: [id], onDelete: Cascade)
-  
-  codigoModelo                String   // "303", "111", "115", "130", "100", "349", "347"
-  nombreModelo                String   // "IVA Trimestral", "IRPF Trabajadores"
-  precio                      Decimal  @db.Decimal(10, 2)
-  activo                      Boolean  @default(true)
-  orden                       Int      @default(0)
-  
-  @@unique([configId, codigoModelo])
-  @@index([configId])
-  @@map("gestoria_budget_fiscal_model_pricing")
-}
-
-// Precios de servicios adicionales mensuales (DINÁMICO)
-model gestoria_budget_additional_service_pricing {
-  id                          String   @id @default(cuid())
-  configId                    String
-  config                      gestoria_budget_autonomo_config @relation(fields: [configId], references: [id], onDelete: Cascade)
-  
-  codigo                      String   // "irpf_alquileres", "iva_intracomunitario", etc.
-  nombre                      String   // "IRPF Alquileres", "IVA Intracomunitario"
-  descripcion                 String?  @db.Text
-  precio                      Decimal  @db.Decimal(10, 2)
-  tipoServicio                gestoria_budget_additional_service_pricing_tipo // MENSUAL, PUNTUAL
-  activo                      Boolean  @default(true)
-  orden                       Int      @default(0)
-  
-  @@unique([configId, codigo])
-  @@index([configId])
-  @@map("gestoria_budget_additional_service_pricing")
-}
-
-enum gestoria_budget_additional_service_pricing_tipo {
-  MENSUAL
-  PUNTUAL
 }

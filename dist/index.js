@@ -420,7 +420,7 @@ __export(git_update_service_exports, {
   checkForUpdates: () => checkForUpdates,
   executeGitUpdate: () => executeGitUpdate
 });
-import { PrismaClient as PrismaClient12 } from "@prisma/client";
+import { PrismaClient as PrismaClient13 } from "@prisma/client";
 import { exec } from "child_process";
 import { promisify } from "util";
 async function executeGitUpdate(updateId) {
@@ -433,7 +433,7 @@ async function executeGitUpdate(updateId) {
   };
   try {
     addLog("=== INICIO DE ACTUALIZACI\xD3N DESDE GITHUB ===");
-    const update = await prisma12.system_updates.findUnique({
+    const update = await prisma13.system_updates.findUnique({
       where: { id: updateId }
     });
     if (!update) {
@@ -446,7 +446,7 @@ async function executeGitUpdate(updateId) {
     addLog(`Mensaje: ${update.commit_message}`);
     addLog(`Autor: ${update.commit_author}`);
     addLog("");
-    await prisma12.system_updates.update({
+    await prisma13.system_updates.update({
       where: { id: updateId },
       data: {
         status: "APPLYING",
@@ -560,7 +560,7 @@ async function executeGitUpdate(updateId) {
     }
     addLog("");
     addLog("=== ACTUALIZACI\xD3N COMPLETADA EXITOSAMENTE ===");
-    await prisma12.system_updates.update({
+    await prisma13.system_updates.update({
       where: { id: updateId },
       data: {
         status: "COMPLETED",
@@ -569,9 +569,9 @@ async function executeGitUpdate(updateId) {
         error_message: null
       }
     });
-    const config = await prisma12.system_update_config.findFirst();
+    const config = await prisma13.system_update_config.findFirst();
     if (config) {
-      await prisma12.system_update_config.update({
+      await prisma13.system_update_config.update({
         where: { id: config.id },
         data: {
           currentCommitHash: update.commit_hash,
@@ -588,7 +588,7 @@ async function executeGitUpdate(updateId) {
       addLog("Stack trace:");
       addLog(error.stack);
     }
-    await prisma12.system_updates.update({
+    await prisma13.system_updates.update({
       where: { id: updateId },
       data: {
         status: "FAILED",
@@ -602,7 +602,7 @@ async function executeGitUpdate(updateId) {
 }
 async function checkForUpdates() {
   try {
-    const config = await prisma12.system_update_config.findFirst();
+    const config = await prisma13.system_update_config.findFirst();
     if (!config || !config.githubRepo) {
       console.log("No GitHub config found");
       return;
@@ -624,12 +624,12 @@ async function checkForUpdates() {
       { cwd: PROJECT_PATH }
     );
     const [author, date, message] = commitInfo.split("|");
-    const existingUpdate = await prisma12.system_updates.findFirst({
+    const existingUpdate = await prisma13.system_updates.findFirst({
       where: { commit_hash: remoteHash }
     });
     if (!existingUpdate) {
       const { v4: uuidv42 } = __require("uuid");
-      await prisma12.system_updates.create({
+      await prisma13.system_updates.create({
         data: {
           id: uuidv42(),
           update_type: "GITHUB",
@@ -649,11 +649,11 @@ async function checkForUpdates() {
     throw error;
   }
 }
-var execAsync, prisma12, PROJECT_PATH, SYSTEMD_SERVICE;
+var execAsync, prisma13, PROJECT_PATH, SYSTEMD_SERVICE;
 var init_git_update_service = __esm({
   "server/services/git-update.service.ts"() {
     execAsync = promisify(exec);
-    prisma12 = new PrismaClient12();
+    prisma13 = new PrismaClient13();
     PROJECT_PATH = "/root/www/Asesoria-la-Llave-V2";
     SYSTEMD_SERVICE = "asesoria-llave.service";
   }
@@ -4626,7 +4626,7 @@ var PrismaStorage = class {
 var prismaStorage = new PrismaStorage();
 
 // server/routes.ts
-import { PrismaClient as PrismaClient16 } from "@prisma/client";
+import { PrismaClient as PrismaClient17 } from "@prisma/client";
 import bcrypt from "bcrypt";
 import jwt3 from "jsonwebtoken";
 import { randomUUID as randomUUID8 } from "crypto";
@@ -11756,9 +11756,26 @@ var DocumentsService = class {
    * Actualizar recibo
    */
   async updateReceipt(id, data) {
+    const { clientId, ...updateData } = data;
+    if (updateData.base_imponible !== void 0 || updateData.iva_porcentaje !== void 0) {
+      const receipt = await prisma_client_default.receipts.findUnique({ where: { id } });
+      if (!receipt) throw new Error("Recibo no encontrado");
+      const base = updateData.base_imponible ?? receipt.base_imponible;
+      const ivaPct = updateData.iva_porcentaje ?? receipt.iva_porcentaje;
+      updateData.iva_importe = Number(base) * Number(ivaPct) / 100;
+      updateData.total = Number(base) + updateData.iva_importe;
+    }
+    const prismaUpdate = { ...updateData };
+    if (clientId !== void 0) {
+      if (clientId) {
+        prismaUpdate.clients = { connect: { id: clientId } };
+      } else {
+        prismaUpdate.clients = { disconnect: true };
+      }
+    }
     return await prisma_client_default.receipts.update({
       where: { id },
-      data,
+      data: prismaUpdate,
       include: { clients: true }
     });
   }
@@ -11900,6 +11917,8 @@ var documentsService = new DocumentsService();
 import puppeteer3 from "puppeteer";
 import path5 from "path";
 import fs5 from "fs/promises";
+import { PrismaClient as PrismaClient12 } from "@prisma/client";
+var prisma12 = new PrismaClient12();
 var DocumentPdfService = class {
   constructor() {
     this.uploadsDir = path5.join(process.cwd(), "uploads", "documents");
@@ -11916,11 +11935,11 @@ var DocumentPdfService = class {
    * Generar PDF de recibo
    */
   async generateReceiptPdf(receipt) {
-    const html = this.buildReceiptHtml(receipt);
+    const html = await this.buildReceiptHtml(receipt);
     const filename = `recibo-${receipt.numero}.pdf`;
     const pdfPath = path5.join(this.uploadsDir, filename);
     await this.generatePdfFromHtml(html, pdfPath);
-    return pdfPath;
+    return `/uploads/documents/${filename}`;
   }
   /**
    * Generar PDF de documento
@@ -11933,16 +11952,23 @@ var DocumentPdfService = class {
     const filename = `${document.type}-${document.clients.nifCif}-${Date.now()}.pdf`;
     const pdfPath = path5.join(this.uploadsDir, filename);
     await this.generatePdfFromHtml(html, pdfPath);
-    return pdfPath;
+    return `/uploads/documents/${filename}`;
   }
   /**
    * HTML para recibo
    */
-  buildReceiptHtml(receipt) {
+  async buildReceiptHtml(receipt) {
+    const template = await prisma12.document_templates.findFirst({
+      where: { type: "RECEIPT", is_active: true },
+      orderBy: { created_at: "desc" }
+    });
     const client = receipt.clients;
     const nombre = client?.razonSocial || receipt.recipient_name;
     const nif = client?.nifCif || receipt.recipient_nif;
     const email = client?.email || receipt.recipient_email;
+    if (template && template.content) {
+      return template.content.replace(/{{NUMERO}}/g, receipt.numero || "").replace(/{{NOMBRE}}/g, nombre || "").replace(/{{NIF}}/g, nif || "").replace(/{{EMAIL}}/g, email || "").replace(/{{FECHA}}/g, new Date(receipt.created_at).toLocaleDateString("es-ES")).replace(/{{CONCEPTO}}/g, receipt.concepto || "").replace(/{{BASE}}/g, Number(receipt.base_imponible).toFixed(2)).replace(/{{IVA_PORCENTAJE}}/g, String(receipt.iva_porcentaje || 21)).replace(/{{IVA_IMPORTE}}/g, Number(receipt.iva_importe).toFixed(2)).replace(/{{TOTAL}}/g, Number(receipt.total).toFixed(2)).replace(/{{NOTAS}}/g, receipt.notes || "");
+    }
     return `
 <!DOCTYPE html>
 <html>
@@ -12165,7 +12191,7 @@ var upload = multer({
 });
 router8.post("/receipts", authenticateToken, async (req, res) => {
   try {
-    const userId = req.user?.userId;
+    const userId = req.user?.id;
     if (!userId) {
       return res.status(401).json({ error: "Usuario no autenticado" });
     }
@@ -12202,6 +12228,23 @@ router8.get("/receipts/:id", authenticateToken, async (req, res) => {
     res.status(404).json({ error: error.message || "Recibo no encontrado" });
   }
 });
+router8.put("/receipts/:id", authenticateToken, async (req, res) => {
+  try {
+    let receipt = await documentsService.updateReceipt(req.params.id, req.body);
+    try {
+      const pdfPath = await documentPdfService.generateReceiptPdf(receipt);
+      await documentsService.updateReceipt(req.params.id, { pdf_path: pdfPath, pdf_generated_at: /* @__PURE__ */ new Date() });
+      receipt.pdf_path = pdfPath;
+      receipt.pdf_generated_at = /* @__PURE__ */ new Date();
+    } catch (pdfErr) {
+      console.error("Error regenerating PDF after update:", pdfErr);
+    }
+    res.json(receipt);
+  } catch (error) {
+    console.error("Error updating receipt:", error);
+    res.status(500).json({ error: error.message || "Error al actualizar recibo" });
+  }
+});
 router8.post("/receipts/:id/generate-pdf", authenticateToken, async (req, res) => {
   try {
     const receipt = await documentsService.getReceiptById(req.params.id);
@@ -12236,7 +12279,7 @@ router8.post("/receipts/:id/send", authenticateToken, async (req, res) => {
 });
 router8.post("/documents", authenticateToken, async (req, res) => {
   try {
-    const userId = req.user?.userId;
+    const userId = req.user?.id;
     if (!userId) {
       return res.status(401).json({ error: "Usuario no autenticado" });
     }
@@ -12315,7 +12358,7 @@ router8.post(
   upload.single("signedFile"),
   async (req, res) => {
     try {
-      const userId = req.user?.userId;
+      const userId = req.user?.id;
       if (!userId) {
         return res.status(401).json({ error: "Usuario no autenticado" });
       }
@@ -12391,12 +12434,12 @@ var documents_routes_default = router8;
 
 // server/routes/github-updates.routes.ts
 import express7 from "express";
-import { PrismaClient as PrismaClient13 } from "@prisma/client";
+import { PrismaClient as PrismaClient14 } from "@prisma/client";
 import crypto3 from "crypto";
 import { v4 as uuidv4 } from "uuid";
 import { execSync } from "child_process";
 var router9 = express7.Router();
-var prisma13 = new PrismaClient13();
+var prisma14 = new PrismaClient14();
 function verifyGitHubSignature(payload, signature, secret) {
   const hmac = crypto3.createHmac("sha256", secret);
   const digest = "sha256=" + hmac.update(payload).digest("hex");
@@ -12409,7 +12452,7 @@ router9.post("/webhook", async (req, res) => {
     if (event !== "push") {
       return res.status(200).json({ message: "Event ignored" });
     }
-    const config = await prisma13.system_update_config.findFirst();
+    const config = await prisma14.system_update_config.findFirst();
     if (!config) {
       console.error("No GitHub config found");
       return res.status(500).json({ error: "Configuration not found" });
@@ -12437,14 +12480,14 @@ router9.post("/webhook", async (req, res) => {
     const commitAuthor = lastCommit.author?.name || pusher?.name || "Unknown";
     const commitDate = new Date(lastCommit.timestamp);
     console.log(`Received GitHub webhook for commit ${commitHash.substring(0, 7)}: ${commitMessage}`);
-    const existingUpdate = await prisma13.system_updates.findFirst({
+    const existingUpdate = await prisma14.system_updates.findFirst({
       where: { commit_hash: commitHash }
     });
     if (existingUpdate) {
       console.log(`Update for commit ${commitHash.substring(0, 7)} already exists`);
       return res.status(200).json({ message: "Update already exists", updateId: existingUpdate.id });
     }
-    const update = await prisma13.system_updates.create({
+    const update = await prisma14.system_updates.create({
       data: {
         id: uuidv4(),
         update_type: "GITHUB",
@@ -12488,7 +12531,7 @@ Mensaje: ${commitMessage}
 });
 router9.get("/updates", async (req, res) => {
   try {
-    const updates = await prisma13.system_updates.findMany({
+    const updates = await prisma14.system_updates.findMany({
       where: { update_type: "GITHUB" },
       orderBy: { createdAt: "desc" },
       take: 50,
@@ -12512,7 +12555,7 @@ router9.post("/updates/:id/apply", async (req, res) => {
   try {
     const { id } = req.params;
     const userId = req.user?.id;
-    const update = await prisma13.system_updates.findUnique({
+    const update = await prisma14.system_updates.findUnique({
       where: { id }
     });
     if (!update) {
@@ -12521,7 +12564,7 @@ router9.post("/updates/:id/apply", async (req, res) => {
     if (update.status !== "PENDING" && update.status !== "FAILED") {
       return res.status(400).json({ error: `Cannot apply update with status ${update.status}` });
     }
-    await prisma13.system_updates.update({
+    await prisma14.system_updates.update({
       where: { id },
       data: {
         initiated_by: userId,
@@ -12541,7 +12584,7 @@ router9.post("/updates/:id/apply", async (req, res) => {
 router9.get("/updates/:id/logs", async (req, res) => {
   try {
     const { id } = req.params;
-    const update = await prisma13.system_updates.findUnique({
+    const update = await prisma14.system_updates.findUnique({
       where: { id },
       select: {
         id: true,
@@ -12565,9 +12608,9 @@ router9.get("/updates/:id/logs", async (req, res) => {
 });
 router9.get("/config", async (req, res) => {
   try {
-    let config = await prisma13.system_update_config.findFirst();
+    let config = await prisma14.system_update_config.findFirst();
     if (!config) {
-      config = await prisma13.system_update_config.create({
+      config = await prisma14.system_update_config.create({
         data: {
           id: uuidv4(),
           githubRepo: "",
@@ -12586,7 +12629,7 @@ router9.get("/config", async (req, res) => {
 router9.put("/config", async (req, res) => {
   try {
     const { githubRepo, githubBranch, autoUpdateEnabled, githubToken, githubWebhookSecret } = req.body;
-    let config = await prisma13.system_update_config.findFirst();
+    let config = await prisma14.system_update_config.findFirst();
     const data = {};
     if (githubRepo !== void 0) data.githubRepo = githubRepo;
     if (githubBranch !== void 0) data.githubBranch = githubBranch;
@@ -12594,12 +12637,12 @@ router9.put("/config", async (req, res) => {
     if (githubToken !== void 0) data.githubToken = githubToken;
     if (githubWebhookSecret !== void 0) data.githubWebhookSecret = githubWebhookSecret;
     if (config) {
-      config = await prisma13.system_update_config.update({
+      config = await prisma14.system_update_config.update({
         where: { id: config.id },
         data
       });
     } else {
-      config = await prisma13.system_update_config.create({
+      config = await prisma14.system_update_config.create({
         data: {
           id: uuidv4(),
           githubRepo: githubRepo || "",
@@ -12736,7 +12779,7 @@ var getUpdateHistory = async (...args) => {
 };
 
 // server/services/storage-factory.ts
-import { PrismaClient as PrismaClient14 } from "@prisma/client";
+import { PrismaClient as PrismaClient15 } from "@prisma/client";
 
 // server/services/storage-provider.ts
 import fs7 from "fs/promises";
@@ -13153,7 +13196,7 @@ var SMBStorageProvider = class {
 // server/services/storage-factory.ts
 import crypto4 from "crypto";
 import path10 from "path";
-var prisma14 = new PrismaClient14();
+var prisma15 = new PrismaClient15();
 var ALGORITHM2 = "aes-256-gcm";
 function getEncryptionKey2() {
   const envKey = process.env.STORAGE_ENCRYPTION_KEY;
@@ -13199,7 +13242,7 @@ var StorageFactory = class {
   }
   // Obtener el provider de almacenamiento activo
   static async getActiveProvider() {
-    const activeConfig = await prisma14.storage_configs.findFirst({
+    const activeConfig = await prisma15.storage_configs.findFirst({
       where: { isActive: true }
     });
     if (!activeConfig || this.currentConfigId !== activeConfig.id || !this.instance) {
@@ -13210,7 +13253,7 @@ var StorageFactory = class {
   }
   // Obtener provider para una configuración específica por ID
   static async getProviderById(configId) {
-    const config = await prisma14.storage_configs.findUnique({
+    const config = await prisma15.storage_configs.findUnique({
       where: { id: configId }
     });
     if (!config) {
@@ -13262,7 +13305,7 @@ var StorageFactory = class {
   }
   // Probar conexión con una configuración específica guardada
   static async testConfiguration(configId) {
-    const config = await prisma14.storage_configs.findUnique({
+    const config = await prisma15.storage_configs.findUnique({
       where: { id: configId }
     });
     if (!config) {
@@ -13301,7 +13344,7 @@ var StorageFactory = class {
   }
   // Crear provider para una configuración específica (sin activarla)
   static async createProviderForConfig(configId) {
-    const config = await prisma14.storage_configs.findUnique({
+    const config = await prisma15.storage_configs.findUnique({
       where: { id: configId }
     });
     if (!config) {
@@ -13809,12 +13852,12 @@ var budgetCalculationLimiter = rateLimit({
 });
 
 // server/epic-tasks-routes.ts
-import { PrismaClient as PrismaClient15 } from "@prisma/client";
+import { PrismaClient as PrismaClient16 } from "@prisma/client";
 import multer2 from "multer";
 import path12 from "path";
 import fs9 from "fs";
 import { randomUUID as randomUUID7 } from "crypto";
-var prisma15 = new PrismaClient15();
+var prisma16 = new PrismaClient16();
 var tasksUploadsDir = path12.join(process.cwd(), "uploads", "tasks", "attachments");
 if (!fs9.existsSync(tasksUploadsDir)) {
   fs9.mkdirSync(tasksUploadsDir, { recursive: true });
@@ -13837,7 +13880,7 @@ function registerEpicTasksRoutes(app2) {
   app2.get("/api/tasks/:taskId/comments", authenticateToken, async (req, res) => {
     try {
       const { taskId } = req.params;
-      const comments = await prisma15.task_comments.findMany({
+      const comments = await prisma16.task_comments.findMany({
         where: { taskId },
         include: {
           users: {
@@ -13863,11 +13906,11 @@ function registerEpicTasksRoutes(app2) {
       if (!contenido || contenido.trim() === "") {
         return res.status(400).json({ error: "El contenido del comentario es requerido" });
       }
-      const task = await prisma15.tasks.findUnique({ where: { id: taskId } });
+      const task = await prisma16.tasks.findUnique({ where: { id: taskId } });
       if (!task) {
         return res.status(404).json({ error: "Tarea no encontrada" });
       }
-      const comment = await prisma15.task_comments.create({
+      const comment = await prisma16.task_comments.create({
         data: {
           id: randomUUID7(),
           tasks: { connect: { id: taskId } },
@@ -13885,7 +13928,7 @@ function registerEpicTasksRoutes(app2) {
           }
         }
       });
-      await prisma15.task_activities.create({
+      await prisma16.task_activities.create({
         data: {
           id: randomUUID7(),
           taskId,
@@ -13905,7 +13948,7 @@ function registerEpicTasksRoutes(app2) {
     try {
       const { taskId, commentId } = req.params;
       const { contenido } = req.body;
-      const comment = await prisma15.task_comments.findUnique({
+      const comment = await prisma16.task_comments.findUnique({
         where: { id: commentId }
       });
       if (!comment) {
@@ -13914,7 +13957,7 @@ function registerEpicTasksRoutes(app2) {
       if (comment.userId !== req.user.id) {
         return res.status(403).json({ error: "No tienes permiso para editar este comentario" });
       }
-      const updated = await prisma15.task_comments.update({
+      const updated = await prisma16.task_comments.update({
         where: { id: commentId },
         data: {
           contenido,
@@ -13939,7 +13982,7 @@ function registerEpicTasksRoutes(app2) {
   app2.delete("/api/tasks/:taskId/comments/:commentId", authenticateToken, async (req, res) => {
     try {
       const { commentId } = req.params;
-      const comment = await prisma15.task_comments.findUnique({
+      const comment = await prisma16.task_comments.findUnique({
         where: { id: commentId }
       });
       if (!comment) {
@@ -13948,7 +13991,7 @@ function registerEpicTasksRoutes(app2) {
       if (comment.userId !== req.user.id && !req.user.permissions.includes("admin:settings")) {
         return res.status(403).json({ error: "No tienes permiso para eliminar este comentario" });
       }
-      await prisma15.task_comments.delete({
+      await prisma16.task_comments.delete({
         where: { id: commentId }
       });
       res.status(204).end();
@@ -13960,7 +14003,7 @@ function registerEpicTasksRoutes(app2) {
   app2.get("/api/tasks/:taskId/attachments", authenticateToken, async (req, res) => {
     try {
       const { taskId } = req.params;
-      const attachments = await prisma15.task_attachments.findMany({
+      const attachments = await prisma16.task_attachments.findMany({
         where: { taskId },
         include: {
           users: {
@@ -13984,11 +14027,11 @@ function registerEpicTasksRoutes(app2) {
       if (!req.file) {
         return res.status(400).json({ error: "No se proporcion\xF3 ning\xFAn archivo" });
       }
-      const task = await prisma15.tasks.findUnique({ where: { id: taskId } });
+      const task = await prisma16.tasks.findUnique({ where: { id: taskId } });
       if (!task) {
         return res.status(404).json({ error: "Tarea no encontrada" });
       }
-      const attachment = await prisma15.task_attachments.create({
+      const attachment = await prisma16.task_attachments.create({
         data: {
           id: randomUUID7(),
           tasks: { connect: { id: taskId } },
@@ -14008,7 +14051,7 @@ function registerEpicTasksRoutes(app2) {
           }
         }
       });
-      await prisma15.task_activities.create({
+      await prisma16.task_activities.create({
         data: {
           id: randomUUID7(),
           taskId,
@@ -14027,7 +14070,7 @@ function registerEpicTasksRoutes(app2) {
   app2.delete("/api/tasks/:taskId/attachments/:attachmentId", authenticateToken, async (req, res) => {
     try {
       const { attachmentId } = req.params;
-      const attachment = await prisma15.task_attachments.findUnique({
+      const attachment = await prisma16.task_attachments.findUnique({
         where: { id: attachmentId }
       });
       if (!attachment) {
@@ -14040,7 +14083,7 @@ function registerEpicTasksRoutes(app2) {
       if (fs9.existsSync(filePath)) {
         fs9.unlinkSync(filePath);
       }
-      await prisma15.task_attachments.delete({
+      await prisma16.task_attachments.delete({
         where: { id: attachmentId }
       });
       res.status(204).end();
@@ -14052,7 +14095,7 @@ function registerEpicTasksRoutes(app2) {
   app2.get("/api/tasks/:taskId/time-entries", authenticateToken, async (req, res) => {
     try {
       const { taskId } = req.params;
-      const entries = await prisma15.task_time_entries.findMany({
+      const entries = await prisma16.task_time_entries.findMany({
         where: { taskId },
         include: {
           users: {
@@ -14077,11 +14120,11 @@ function registerEpicTasksRoutes(app2) {
       if (!minutos || minutos <= 0) {
         return res.status(400).json({ error: "Los minutos deben ser mayores a 0" });
       }
-      const task = await prisma15.tasks.findUnique({ where: { id: taskId } });
+      const task = await prisma16.tasks.findUnique({ where: { id: taskId } });
       if (!task) {
         return res.status(404).json({ error: "Tarea no encontrada" });
       }
-      const entry = await prisma15.task_time_entries.create({
+      const entry = await prisma16.task_time_entries.create({
         data: {
           id: randomUUID7(),
           tasks: { connect: { id: taskId } },
@@ -14100,13 +14143,13 @@ function registerEpicTasksRoutes(app2) {
           }
         }
       });
-      await prisma15.tasks.update({
+      await prisma16.tasks.update({
         where: { id: taskId },
         data: {
           tiempo_invertido: task.tiempo_invertido + minutos
         }
       });
-      await prisma15.task_activities.create({
+      await prisma16.task_activities.create({
         data: {
           id: randomUUID7(),
           taskId,
@@ -14125,7 +14168,7 @@ function registerEpicTasksRoutes(app2) {
   app2.delete("/api/tasks/:taskId/time-entries/:entryId", authenticateToken, async (req, res) => {
     try {
       const { taskId, entryId } = req.params;
-      const entry = await prisma15.task_time_entries.findUnique({
+      const entry = await prisma16.task_time_entries.findUnique({
         where: { id: entryId }
       });
       if (!entry) {
@@ -14134,16 +14177,16 @@ function registerEpicTasksRoutes(app2) {
       if (entry.userId !== req.user.id) {
         return res.status(403).json({ error: "No tienes permiso para eliminar este registro" });
       }
-      const task = await prisma15.tasks.findUnique({ where: { id: taskId } });
+      const task = await prisma16.tasks.findUnique({ where: { id: taskId } });
       if (task) {
-        await prisma15.tasks.update({
+        await prisma16.tasks.update({
           where: { id: taskId },
           data: {
             tiempo_invertido: Math.max(0, task.tiempo_invertido - entry.minutos)
           }
         });
       }
-      await prisma15.task_time_entries.delete({
+      await prisma16.task_time_entries.delete({
         where: { id: entryId }
       });
       res.status(204).end();
@@ -14155,7 +14198,7 @@ function registerEpicTasksRoutes(app2) {
   app2.get("/api/tasks/:taskId/activities", authenticateToken, async (req, res) => {
     try {
       const { taskId } = req.params;
-      const activities = await prisma15.task_activities.findMany({
+      const activities = await prisma16.task_activities.findMany({
         where: { taskId },
         include: {
           users: {
@@ -14178,7 +14221,7 @@ function registerEpicTasksRoutes(app2) {
   app2.get("/api/tasks/:taskId/subtasks", authenticateToken, async (req, res) => {
     try {
       const { taskId } = req.params;
-      const subtasks = await prisma15.tasks.findMany({
+      const subtasks = await prisma16.tasks.findMany({
         where: { parent_task_id: taskId },
         include: {
           users: {
@@ -14200,11 +14243,11 @@ function registerEpicTasksRoutes(app2) {
     try {
       const { taskId } = req.params;
       const { estado, orden } = req.body;
-      const task = await prisma15.tasks.findUnique({ where: { id: taskId } });
+      const task = await prisma16.tasks.findUnique({ where: { id: taskId } });
       if (!task) {
         return res.status(404).json({ error: "Tarea no encontrada" });
       }
-      const updatedTask = await prisma15.tasks.update({
+      const updatedTask = await prisma16.tasks.update({
         where: { id: taskId },
         data: {
           ...estado !== void 0 && { estado },
@@ -14213,7 +14256,7 @@ function registerEpicTasksRoutes(app2) {
         }
       });
       if (estado && estado !== task.estado) {
-        await prisma15.task_activities.create({
+        await prisma16.task_activities.create({
           data: {
             id: randomUUID7(),
             taskId,
@@ -14241,23 +14284,23 @@ function registerEpicTasksRoutes(app2) {
         porPrioridad,
         porUsuario
       ] = await Promise.all([
-        prisma15.tasks.count({ where: { is_archived: false } }),
-        prisma15.tasks.count({ where: { estado: "PENDIENTE", is_archived: false } }),
-        prisma15.tasks.count({ where: { estado: "EN_PROGRESO", is_archived: false } }),
-        prisma15.tasks.count({ where: { estado: "COMPLETADA", is_archived: false } }),
-        prisma15.tasks.count({
+        prisma16.tasks.count({ where: { is_archived: false } }),
+        prisma16.tasks.count({ where: { estado: "PENDIENTE", is_archived: false } }),
+        prisma16.tasks.count({ where: { estado: "EN_PROGRESO", is_archived: false } }),
+        prisma16.tasks.count({ where: { estado: "COMPLETADA", is_archived: false } }),
+        prisma16.tasks.count({
           where: {
             fecha_vencimiento: { lt: /* @__PURE__ */ new Date() },
             estado: { not: "COMPLETADA" },
             is_archived: false
           }
         }),
-        prisma15.tasks.groupBy({
+        prisma16.tasks.groupBy({
           by: ["prioridad"],
           where: { is_archived: false },
           _count: true
         }),
-        prisma15.tasks.groupBy({
+        prisma16.tasks.groupBy({
           by: ["asignado_a"],
           where: { is_archived: false, asignado_a: { not: null } },
           _count: true
@@ -14293,7 +14336,7 @@ import nodemailer6 from "nodemailer";
 import { exec as exec2 } from "child_process";
 import { promisify as promisify2 } from "util";
 var execPromise = promisify2(exec2);
-var prisma16 = new PrismaClient16();
+var prisma17 = new PrismaClient17();
 if (!process.env.JWT_SECRET) {
   throw new Error("FATAL: JWT_SECRET no est\xE1 configurado. Este valor es OBLIGATORIO para la seguridad del sistema.");
 }
@@ -14524,7 +14567,7 @@ async function registerRoutes(app2, options) {
         }
         let defaultRoleId = roleId;
         if (!defaultRoleId) {
-          const defaultRole = await prisma16.roles.findUnique({
+          const defaultRole = await prisma17.roles.findUnique({
             where: { name: "Gestor" }
           });
           if (defaultRole) {
@@ -14601,7 +14644,7 @@ async function registerRoutes(app2, options) {
   });
   app2.get("/api/users", authenticateToken2, async (req, res) => {
     try {
-      const users = await prisma16.users.findMany({
+      const users = await prisma17.users.findMany({
         select: {
           id: true,
           username: true,
@@ -14703,7 +14746,7 @@ async function registerRoutes(app2, options) {
       try {
         const { id } = req.params;
         const currentUserId = req.user.id;
-        const currentUser = await prisma16.users.findUnique({
+        const currentUser = await prisma17.users.findUnique({
           where: { id: currentUserId },
           select: { is_owner: true }
         });
@@ -14713,7 +14756,7 @@ async function registerRoutes(app2, options) {
             code: "NOT_OWNER"
           });
         }
-        const targetUser = await prisma16.users.findUnique({
+        const targetUser = await prisma17.users.findUnique({
           where: { id }
         });
         if (!targetUser) {
@@ -14722,11 +14765,11 @@ async function registerRoutes(app2, options) {
         if (targetUser.id === currentUserId) {
           return res.status(400).json({ error: "No puedes transferir el rol a ti mismo" });
         }
-        await prisma16.users.update({
+        await prisma17.users.update({
           where: { id: currentUserId },
           data: { is_owner: false }
         });
-        const newOwner = await prisma16.users.update({
+        const newOwner = await prisma17.users.update({
           where: { id },
           data: { is_owner: true }
         });
@@ -14754,7 +14797,7 @@ async function registerRoutes(app2, options) {
       try {
         const { id } = req.params;
         const currentUserId = req.user.id;
-        const targetUser = await prisma16.users.findUnique({
+        const targetUser = await prisma17.users.findUnique({
           where: { id },
           select: { id: true, username: true, email: true, is_owner: true }
         });
@@ -14764,11 +14807,11 @@ async function registerRoutes(app2, options) {
         if (targetUser.is_owner) {
           return res.status(400).json({ error: "Este usuario ya es Owner" });
         }
-        await prisma16.users.updateMany({
+        await prisma17.users.updateMany({
           where: { is_owner: true },
           data: { is_owner: false }
         });
-        const newOwner = await prisma16.users.update({
+        const newOwner = await prisma17.users.update({
           where: { id },
           data: { is_owner: true }
         });
@@ -14799,7 +14842,7 @@ async function registerRoutes(app2, options) {
         if (!user) {
           return res.status(404).json({ error: "Usuario no encontrado" });
         }
-        const userToDelete = await prisma16.users.findUnique({
+        const userToDelete = await prisma17.users.findUnique({
           where: { id },
           select: { is_owner: true, username: true }
         });
@@ -14809,9 +14852,9 @@ async function registerRoutes(app2, options) {
             code: "CANNOT_DELETE_OWNER"
           });
         }
-        const manuals = await prisma16.manuals.count({ where: { autor_id: id } });
-        const activityLogs = await prisma16.activity_logs.count({ where: { usuarioId: id } });
-        const auditTrails = await prisma16.audit_trail.count({ where: { usuarioId: id } });
+        const manuals = await prisma17.manuals.count({ where: { autor_id: id } });
+        const activityLogs = await prisma17.activity_logs.count({ where: { usuarioId: id } });
+        const auditTrails = await prisma17.audit_trail.count({ where: { usuarioId: id } });
         if (manuals > 0) {
           return res.status(409).json({
             error: `No se puede eliminar: el usuario tiene ${manuals} manual(es) asignado(s) que se borrar\xEDan permanentemente. Reasigne los manuales a otro usuario primero.`
@@ -15002,10 +15045,10 @@ async function registerRoutes(app2, options) {
         if (!client) {
           return res.status(404).json({ error: "Cliente no encontrado" });
         }
-        const clientTaxes = await prisma16.client_tax.findMany({
+        const clientTaxes = await prisma17.client_tax.findMany({
           where: { clientId: id }
         });
-        const assignmentCount = await prisma16.client_tax_assignments.count({
+        const assignmentCount = await prisma17.client_tax_assignments.count({
           where: { clientId: id }
         });
         if (clientTaxes.length > 0 || assignmentCount > 0) {
@@ -15351,11 +15394,11 @@ async function registerRoutes(app2, options) {
         if (!client) {
           return res.status(404).json({ error: "Cliente no encontrado" });
         }
-        await prisma16.client_employees.deleteMany({
+        await prisma17.client_employees.deleteMany({
           where: { clientId: id }
         });
         if (employeeIds && Array.isArray(employeeIds) && employeeIds.length > 0) {
-          await prisma16.client_employees.createMany({
+          await prisma17.client_employees.createMany({
             data: employeeIds.map((userId) => ({
               clientId: id,
               userId,
@@ -15398,12 +15441,12 @@ async function registerRoutes(app2, options) {
           return res.status(404).json({ error: "Usuario no encontrado" });
         }
         if (isPrimary) {
-          await prisma16.client_employees.updateMany({
+          await prisma17.client_employees.updateMany({
             where: { clientId: id },
             data: { is_primary: false }
           });
         }
-        await prisma16.client_employees.upsert({
+        await prisma17.client_employees.upsert({
           where: {
             clientId_userId: {
               clientId: id,
@@ -15422,7 +15465,7 @@ async function registerRoutes(app2, options) {
         if (isPrimary) {
           await prismaStorage.updateClient(id, { responsableAsignado: userId });
         } else {
-          const primaryEmployee = await prisma16.client_employees.findFirst({
+          const primaryEmployee = await prisma17.client_employees.findFirst({
             where: { clientId: id, is_primary: true }
           });
           await prismaStorage.updateClient(id, {
@@ -15454,7 +15497,7 @@ async function registerRoutes(app2, options) {
           return res.status(404).json({ error: "Cliente no encontrado" });
         }
         const user = await prismaStorage.getUser(userId);
-        const employeeToDelete = await prisma16.client_employees.findUnique({
+        const employeeToDelete = await prisma17.client_employees.findUnique({
           where: {
             clientId_userId: {
               clientId: id,
@@ -15462,7 +15505,7 @@ async function registerRoutes(app2, options) {
             }
           }
         });
-        await prisma16.client_employees.delete({
+        await prisma17.client_employees.delete({
           where: {
             clientId_userId: {
               clientId: id,
@@ -15471,11 +15514,11 @@ async function registerRoutes(app2, options) {
           }
         });
         if (employeeToDelete?.is_primary) {
-          const remainingEmployee = await prisma16.client_employees.findFirst({
+          const remainingEmployee = await prisma17.client_employees.findFirst({
             where: { clientId: id }
           });
           if (remainingEmployee) {
-            await prisma16.client_employees.update({
+            await prisma17.client_employees.update({
               where: {
                 clientId_userId: {
                   clientId: id,
@@ -16079,7 +16122,7 @@ async function registerRoutes(app2, options) {
   );
   app2.get("/api/admin/online-count", authenticateToken2, async (req, res) => {
     try {
-      const count = await prisma16.sessions.count({
+      const count = await prisma17.sessions.count({
         where: { ended_at: null }
       });
       res.json({ count });
@@ -16095,7 +16138,7 @@ async function registerRoutes(app2, options) {
   app2.use("/api/gestoria-budgets", gestoria_budgets_default);
   app2.use("/api/budget-parameters", budget_parameters_default);
   app2.use("/api/budget-templates", budget_templates_default);
-  app2.use("/api/documents", authenticateToken2, documents_routes_default);
+  app2.use("/api/documents", documents_routes_default);
   app2.use("/api/system/github", github_updates_routes_default);
   app2.get(
     "/api/admin/smtp-accounts",
@@ -16263,15 +16306,15 @@ async function registerRoutes(app2, options) {
     async (req, res) => {
       try {
         console.log("\u{1F680} Iniciando migraciones...");
-        const updatedUsers = await prisma16.users.updateMany({
+        const updatedUsers = await prisma17.users.updateMany({
           where: { username: "CarlosAdmin" },
           data: { is_owner: true }
         });
-        const adminUser = await prisma16.users.findFirst({
+        const adminUser = await prisma17.users.findFirst({
           where: { username: "CarlosAdmin" },
           select: { username: true, email: true, is_owner: true }
         });
-        const roles = await prisma16.roles.findMany({
+        const roles = await prisma17.roles.findMany({
           select: {
             id: true,
             name: true,
@@ -16303,7 +16346,7 @@ async function registerRoutes(app2, options) {
     checkPermission("admin:system"),
     async (req, res) => {
       try {
-        const config = await prisma16.storage_configs.findFirst({
+        const config = await prisma17.storage_configs.findFirst({
           where: { isActive: true },
           orderBy: { createdAt: "desc" }
         });
@@ -16348,11 +16391,11 @@ async function registerRoutes(app2, options) {
           }
         }
         const encryptedPassword = password ? encryptPassword2(password) : null;
-        await prisma16.storage_configs.updateMany({
+        await prisma17.storage_configs.updateMany({
           where: { isActive: true },
           data: { isActive: false }
         });
-        const config = await prisma16.storage_configs.create({
+        const config = await prisma17.storage_configs.create({
           data: {
             id: randomUUID8(),
             type,
@@ -16500,7 +16543,7 @@ async function registerRoutes(app2, options) {
     checkPermission("admin:settings"),
     async (req, res) => {
       try {
-        const configs = await prisma16.system_config.findMany({
+        const configs = await prisma17.system_config.findMany({
           orderBy: { key: "asc" }
         });
         res.json(configs);
@@ -16515,7 +16558,7 @@ async function registerRoutes(app2, options) {
     checkPermission("admin:settings"),
     async (req, res) => {
       try {
-        const config = await prisma16.system_config.findUnique({
+        const config = await prisma17.system_config.findUnique({
           where: { key: req.params.key }
         });
         if (!config) {
@@ -16537,7 +16580,7 @@ async function registerRoutes(app2, options) {
         if (value === void 0 || value === null) {
           return res.status(400).json({ error: "El valor de la configuraci\xF3n es requerido" });
         }
-        const existing = await prisma16.system_config.findUnique({
+        const existing = await prisma17.system_config.findUnique({
           where: { key: req.params.key }
         });
         if (!existing) {
@@ -16546,7 +16589,7 @@ async function registerRoutes(app2, options) {
         if (!existing.is_editable) {
           return res.status(403).json({ error: "Esta configuraci\xF3n no es editable" });
         }
-        const config = await prisma16.system_config.update({
+        const config = await prisma17.system_config.update({
           where: { key: req.params.key },
           data: { value: String(value) }
         });
@@ -16568,10 +16611,10 @@ async function registerRoutes(app2, options) {
     checkPermission("admin:settings"),
     async (req, res) => {
       try {
-        const repoConfig = await prisma16.system_config.findUnique({
+        const repoConfig = await prisma17.system_config.findUnique({
           where: { key: "github_repo_url" }
         });
-        const branchConfig = await prisma16.system_config.findUnique({
+        const branchConfig = await prisma17.system_config.findUnique({
           where: { key: "github_branch" }
         });
         res.json({
@@ -16621,7 +16664,7 @@ async function registerRoutes(app2, options) {
           }
         }
         if (repoUrl !== void 0) {
-          await prisma16.system_config.upsert({
+          await prisma17.system_config.upsert({
             where: { key: "github_repo_url" },
             create: {
               id: randomUUID8(),
@@ -16635,7 +16678,7 @@ async function registerRoutes(app2, options) {
           });
         }
         if (branch !== void 0) {
-          await prisma16.system_config.upsert({
+          await prisma17.system_config.upsert({
             where: { key: "github_branch" },
             create: {
               id: randomUUID8(),
@@ -16672,7 +16715,7 @@ async function registerRoutes(app2, options) {
     async (req, res) => {
       try {
         const currentVersion = await getCurrentVersion();
-        const repoConfig = await prisma16.system_config.findUnique({
+        const repoConfig = await prisma17.system_config.findUnique({
           where: { key: "github_repo_url" }
         });
         if (!repoConfig?.value) {
@@ -16881,13 +16924,13 @@ async function registerRoutes(app2, options) {
         if (!name) {
           return res.status(400).json({ error: "El nombre del rol es requerido" });
         }
-        const existingRole = await prisma16.roles.findUnique({
+        const existingRole = await prisma17.roles.findUnique({
           where: { name }
         });
         if (existingRole) {
           return res.status(400).json({ error: "Ya existe un rol con ese nombre" });
         }
-        const role = await prisma16.roles.create({
+        const role = await prisma17.roles.create({
           data: {
             id: randomUUID8(),
             name,
@@ -16951,7 +16994,7 @@ async function registerRoutes(app2, options) {
           can_manage_roles,
           is_active
         } = req.body;
-        const existingRole = await prisma16.roles.findUnique({
+        const existingRole = await prisma17.roles.findUnique({
           where: { id }
         });
         if (!existingRole) {
@@ -16964,7 +17007,7 @@ async function registerRoutes(app2, options) {
           });
         }
         if (name && name !== existingRole.name) {
-          const duplicateRole = await prisma16.roles.findUnique({
+          const duplicateRole = await prisma17.roles.findUnique({
             where: { name }
           });
           if (duplicateRole) {
@@ -16983,7 +17026,7 @@ async function registerRoutes(app2, options) {
         if (can_delete_users !== void 0) additionalFields.can_delete_users = can_delete_users;
         if (can_manage_roles !== void 0) additionalFields.can_manage_roles = can_manage_roles;
         if (is_active !== void 0) additionalFields.is_active = is_active;
-        const role = await prisma16.roles.update({
+        const role = await prisma17.roles.update({
           where: { id },
           data: updateData,
           include: {
@@ -17024,7 +17067,7 @@ async function registerRoutes(app2, options) {
     async (req, res) => {
       try {
         const { id } = req.params;
-        const role = await prisma16.roles.findUnique({
+        const role = await prisma17.roles.findUnique({
           where: { id }
         });
         if (!role) {
@@ -17036,7 +17079,7 @@ async function registerRoutes(app2, options) {
             code: "SYSTEM_ROLE_PROTECTED"
           });
         }
-        const usersWithRole = await prisma16.users.count({
+        const usersWithRole = await prisma17.users.count({
           where: { roleId: id }
         });
         if (usersWithRole > 0) {
@@ -17045,10 +17088,10 @@ async function registerRoutes(app2, options) {
             code: "ROLE_IN_USE"
           });
         }
-        await prisma16.role_permissions.deleteMany({
+        await prisma17.role_permissions.deleteMany({
           where: { roleId: id }
         });
-        await prisma16.roles.delete({
+        await prisma17.roles.delete({
           where: { id }
         });
         await prismaStorage.createActivityLog({
@@ -17114,7 +17157,7 @@ async function registerRoutes(app2, options) {
         if (!Array.isArray(permissionIds)) {
           return res.status(400).json({ error: "permissionIds debe ser un array" });
         }
-        const role = await prisma16.roles.findUnique({
+        const role = await prisma17.roles.findUnique({
           where: { id }
         });
         if (!role) {
@@ -17126,12 +17169,12 @@ async function registerRoutes(app2, options) {
             code: "SYSTEM_ROLE_PROTECTED"
           });
         }
-        await prisma16.role_permissions.deleteMany({
+        await prisma17.role_permissions.deleteMany({
           where: { roleId: id }
         });
         const rolePermissions = await Promise.all(
           permissionIds.map(
-            (permissionId) => prisma16.role_permissions.create({
+            (permissionId) => prisma17.role_permissions.create({
               data: {
                 id: randomUUID8(),
                 roleId: id,
@@ -17140,7 +17183,7 @@ async function registerRoutes(app2, options) {
             })
           )
         );
-        const updatedRole = await prisma16.roles.findUnique({
+        const updatedRole = await prisma17.roles.findUnique({
           where: { id },
           include: {
             role_permissions: {
@@ -17237,7 +17280,7 @@ async function registerRoutes(app2, options) {
   );
   app2.get("/api/tax-requirements", authenticateToken2, async (req, res) => {
     try {
-      const requirements = await prisma16.client_tax_requirements.findMany({
+      const requirements = await prisma17.client_tax_requirements.findMany({
         include: { clients: true }
       });
       res.json(requirements);
@@ -17248,7 +17291,7 @@ async function registerRoutes(app2, options) {
   app2.post("/api/tax-requirements", authenticateToken2, checkPermission("taxes:create"), async (req, res) => {
     try {
       const { clientId, taxModelCode, impuesto, required = true, note, colorTag, detalle } = req.body;
-      const requirement = await prisma16.client_tax_requirements.create({
+      const requirement = await prisma17.client_tax_requirements.create({
         data: {
           id: randomUUID8(),
           clientId,
@@ -17269,11 +17312,11 @@ async function registerRoutes(app2, options) {
   app2.patch("/api/tax-requirements/:id/toggle", authenticateToken2, checkPermission("taxes:update"), async (req, res) => {
     try {
       const { id } = req.params;
-      const current = await prisma16.client_tax_requirements.findUnique({ where: { id } });
+      const current = await prisma17.client_tax_requirements.findUnique({ where: { id } });
       if (!current) {
         return res.status(404).json({ error: "Requisito no encontrado" });
       }
-      const updated = await prisma16.client_tax_requirements.update({
+      const updated = await prisma17.client_tax_requirements.update({
         where: { id },
         data: { required: !current.required },
         include: { clients: true }
@@ -17287,7 +17330,7 @@ async function registerRoutes(app2, options) {
     try {
       const { id } = req.params;
       const { note, color_tag: colorTag } = req.body;
-      const updated = await prisma16.client_tax_requirements.update({
+      const updated = await prisma17.client_tax_requirements.update({
         where: { id },
         data: { note, color_tag: colorTag },
         include: { clients: true }
@@ -17299,7 +17342,7 @@ async function registerRoutes(app2, options) {
   });
   app2.get("/api/fiscal-periods", authenticateToken2, async (req, res) => {
     try {
-      const periods = await prisma16.fiscal_periods.findMany({
+      const periods = await prisma17.fiscal_periods.findMany({
         orderBy: [{ year: "desc" }, { quarter: "asc" }]
       });
       res.json(periods);
@@ -17519,7 +17562,7 @@ async function registerRoutes(app2, options) {
         if (periodicity === "annual") where.period = "ANUAL";
         if (periodicity === "special") where.period = { in: ["M04", "M10", "M12"] };
         if (status && ["PENDIENTE", "ABIERTO", "CERRADO"].includes(status)) where.status = status;
-        const list = await prisma16.tax_calendar.findMany({ where, orderBy: [{ endDate: "asc" }] });
+        const list = await prisma17.tax_calendar.findMany({ where, orderBy: [{ endDate: "asc" }] });
         const rows = list.map((r) => ({
           id: r.id,
           modelCode: r.modelCode,
@@ -17676,7 +17719,7 @@ async function registerRoutes(app2, options) {
       try {
         const y = Number(req.params.year);
         if (!Number.isFinite(y)) return res.status(400).send("");
-        const rows = await prisma16.tax_calendar.findMany({ where: { year: y }, orderBy: [{ startDate: "asc" }] });
+        const rows = await prisma17.tax_calendar.findMany({ where: { year: y }, orderBy: [{ startDate: "asc" }] });
         const toICSDate = (d) => {
           const pad = (n) => String(n).padStart(2, "0");
           const yyyy = d.getUTCFullYear();
@@ -18034,21 +18077,21 @@ async function registerRoutes(app2, options) {
     async (req, res) => {
       try {
         const year = req.query.year ? Number(req.query.year) : (/* @__PURE__ */ new Date()).getFullYear();
-        const totalFilings = await prisma16.client_tax_filings.count();
-        const filingsWithPeriods = await prisma16.client_tax_filings.count({
+        const totalFilings = await prisma17.client_tax_filings.count();
+        const filingsWithPeriods = await prisma17.client_tax_filings.count({
           where: { fiscal_periods: { isNot: null } }
         });
-        const totalPeriods = await prisma16.fiscal_periods.count();
-        const periodsThisYear = await prisma16.fiscal_periods.count({ where: { year } });
-        const periods = await prisma16.fiscal_periods.findMany({
+        const totalPeriods = await prisma17.fiscal_periods.count();
+        const periodsThisYear = await prisma17.fiscal_periods.count({ where: { year } });
+        const periods = await prisma17.fiscal_periods.findMany({
           select: { year: true },
           distinct: ["year"],
           orderBy: { year: "desc" }
         });
-        const filingsThisYear = await prisma16.client_tax_filings.count({
+        const filingsThisYear = await prisma17.client_tax_filings.count({
           where: { fiscal_periods: { year } }
         });
-        const sampleFilings = await prisma16.client_tax_filings.findMany({
+        const sampleFilings = await prisma17.client_tax_filings.findMany({
           take: 3,
           include: {
             fiscal_periods: true,
@@ -18155,12 +18198,12 @@ async function registerRoutes(app2, options) {
     checkPermission("taxes:delete"),
     async (req, res) => {
       try {
-        const allFilings = await prisma16.client_tax_filings.findMany({
+        const allFilings = await prisma17.client_tax_filings.findMany({
           include: {
             fiscal_periods: true
           }
         });
-        const assignments = await prisma16.client_tax_assignments.findMany({
+        const assignments = await prisma17.client_tax_assignments.findMany({
           where: { activeFlag: true }
         });
         const assignmentMap = /* @__PURE__ */ new Map();
@@ -18194,7 +18237,7 @@ async function registerRoutes(app2, options) {
           }
         }
         if (orphanIds.length > 0) {
-          await prisma16.client_tax_filings.deleteMany({
+          await prisma17.client_tax_filings.deleteMany({
             where: { id: { in: orphanIds } }
           });
         }
@@ -18474,7 +18517,7 @@ async function registerRoutes(app2, options) {
     let lastHeartbeat = Date.now();
     heartbeatInterval = setInterval(async () => {
       try {
-        await prisma16.sessions.updateMany({
+        await prisma17.sessions.updateMany({
           where: { socket_id: socket.id, ended_at: null },
           data: { last_seen_at: /* @__PURE__ */ new Date() }
         });
@@ -18490,7 +18533,7 @@ async function registerRoutes(app2, options) {
     socket.on("heartbeat-response", async () => {
       lastHeartbeat = Date.now();
       try {
-        await prisma16.sessions.updateMany({
+        await prisma17.sessions.updateMany({
           where: { socket_id: socket.id, ended_at: null },
           data: { last_seen_at: /* @__PURE__ */ new Date() }
         });
@@ -18525,7 +18568,7 @@ async function registerRoutes(app2, options) {
         const ipHeader = socket.handshake.headers["x-forwarded-for"] || "";
         const ip = ipHeader ? ipHeader.split(",")[0].trim() : socket.handshake.address;
         const userAgent = String(socket.handshake.headers["user-agent"] || "");
-        await prisma16.sessions.create({
+        await prisma17.sessions.create({
           data: {
             id: randomUUID8(),
             userId: user.id,
@@ -18562,7 +18605,7 @@ async function registerRoutes(app2, options) {
         });
         (async () => {
           try {
-            await prisma16.sessions.updateMany({
+            await prisma17.sessions.updateMany({
               where: { socket_id: socket.id, ended_at: null },
               data: { ended_at: /* @__PURE__ */ new Date(), last_seen_at: /* @__PURE__ */ new Date() }
             });
@@ -18690,13 +18733,13 @@ import cors from "cors";
 
 // server/jobs.ts
 import cron from "node-cron";
-import { PrismaClient as PrismaClient17 } from "@prisma/client";
+import { PrismaClient as PrismaClient18 } from "@prisma/client";
 import nodemailer7 from "nodemailer";
 import { addDays, format } from "date-fns";
 import { es } from "date-fns/locale";
-var prisma17;
+var prisma18;
 function initializeJobs(client) {
-  prisma17 = client;
+  prisma18 = client;
 }
 var smtpPassword = process.env.SMTP_PASS || process.env.SMTP_PASSWORD;
 if (process.env.SMTP_USER && !smtpPassword) {
@@ -18743,7 +18786,7 @@ var taskRemindersJob = cron.createTask("0 9 * * *", async () => {
   try {
     const tomorrow = addDays(/* @__PURE__ */ new Date(), 1);
     const nextWeek = addDays(/* @__PURE__ */ new Date(), 7);
-    const upcomingTasks = await prisma17.tasks.findMany({
+    const upcomingTasks = await prisma18.tasks.findMany({
       where: {
         estado: { notIn: ["COMPLETADA"] },
         fecha_vencimiento: {
@@ -18802,7 +18845,7 @@ var taxRemindersJob = cron.createTask("0 8 * * *", async () => {
   try {
     const now = /* @__PURE__ */ new Date();
     const nextMonth = addDays(now, 30);
-    const clientes = await prisma17.clients.findMany({
+    const clientes = await prisma18.clients.findMany({
       include: {
         clientTaxes: {
           include: {
@@ -18862,18 +18905,18 @@ var taxRemindersJob = cron.createTask("0 8 * * *", async () => {
   }
 });
 var taxCalendarRefreshJob = cron.createTask("0 */6 * * *", async () => {
-  if (!prisma17) {
+  if (!prisma18) {
     console.warn("\u26A0\uFE0F  taxCalendarRefreshJob: Prisma no inicializado");
     return;
   }
   console.log("\u{1F5D3}\uFE0F  Ejecutando job: refresco calendario fiscal");
   try {
-    const entries = await prisma17.tax_calendar.findMany();
+    const entries = await prisma18.tax_calendar.findMany();
     let updated = 0;
     for (const entry of entries) {
       const derived = calculateDerivedFields(entry.startDate, entry.endDate);
       if (entry.status !== derived.status || entry.days_to_start !== derived.daysToStart || entry.days_to_end !== derived.daysToEnd) {
-        await prisma17.tax_calendar.update({
+        await prisma18.tax_calendar.update({
           where: { id: entry.id },
           data: {
             status: derived.status,
@@ -18890,7 +18933,7 @@ var taxCalendarRefreshJob = cron.createTask("0 */6 * * *", async () => {
   }
 });
 var fiscalPeriodsStatusJob = cron.createTask("0 */6 * * *", async () => {
-  if (!prisma17) {
+  if (!prisma18) {
     console.warn("\u26A0\uFE0F  fiscalPeriodsStatusJob: Prisma no inicializado");
     return;
   }
@@ -18898,7 +18941,7 @@ var fiscalPeriodsStatusJob = cron.createTask("0 */6 * * *", async () => {
   try {
     const now = /* @__PURE__ */ new Date();
     now.setHours(0, 0, 0, 0);
-    const periods = await prisma17.fiscal_periods.findMany({
+    const periods = await prisma18.fiscal_periods.findMany({
       select: {
         id: true,
         starts_at: true,
@@ -18926,7 +18969,7 @@ var fiscalPeriodsStatusJob = cron.createTask("0 */6 * * *", async () => {
         }
       }
       if (newStatus && newStatus !== period.status) {
-        await prisma17.fiscal_periods.update({
+        await prisma18.fiscal_periods.update({
           where: { id: period.id },
           data: { status: newStatus }
         });
@@ -18965,10 +19008,10 @@ var ensureTaxFilingsJob = cron.createTask("10 * * * *", async () => {
 var cleanupSessionsJob = cron.createTask("0 * * * *", async () => {
   console.log("\u{1F9F9} Ejecutando job: limpieza de sesiones");
   try {
-    const prisma18 = new PrismaClient17();
+    const prisma19 = new PrismaClient18();
     const sevenDaysAgo = /* @__PURE__ */ new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-    const closedSessionsResult = await prisma18.sessions.deleteMany({
+    const closedSessionsResult = await prisma19.sessions.deleteMany({
       where: {
         ended_at: {
           not: null,
@@ -18978,7 +19021,7 @@ var cleanupSessionsJob = cron.createTask("0 * * * *", async () => {
     });
     const twoHoursAgo = /* @__PURE__ */ new Date();
     twoHoursAgo.setHours(twoHoursAgo.getHours() - 2);
-    const inactiveSessionsResult = await prisma18.sessions.updateMany({
+    const inactiveSessionsResult = await prisma19.sessions.updateMany({
       where: {
         ended_at: null,
         last_seen_at: { lt: twoHoursAgo }
@@ -18988,7 +19031,7 @@ var cleanupSessionsJob = cron.createTask("0 * * * *", async () => {
       }
     });
     console.log(`\u2705 Sesiones limpias: ${closedSessionsResult.count} eliminadas, ${inactiveSessionsResult.count} marcadas como inactivas`);
-    await prisma18.$disconnect();
+    await prisma19.$disconnect();
   } catch (error) {
     console.error("\u274C Error en job de limpieza:", error);
   }
@@ -19015,7 +19058,7 @@ var backupDatabaseJob = cron.createTask("0 3 * * *", async () => {
   }
 });
 function startAllJobs() {
-  if (!prisma17) {
+  if (!prisma18) {
     throw new Error(
       "\u274C JOBS ERROR: Prisma client no inicializado.\n   Debe llamar a initializeJobs(prisma) antes de startAllJobs().\n   Ver server/index.ts para el orden correcto de inicializaci\xF3n."
     );
@@ -19046,7 +19089,7 @@ function startAllJobs() {
   console.log("\u2705 Todos los jobs activos");
 }
 function stopAllJobs() {
-  if (!prisma17) {
+  if (!prisma18) {
     throw new Error("Jobs no inicializados: debe llamar initializeJobs(prisma) primero");
   }
   taskRemindersJob.stop();

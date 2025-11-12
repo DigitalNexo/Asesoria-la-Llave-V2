@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useLocation } from 'wouter';
 import { Button } from '@/components/ui/button';
@@ -10,32 +10,59 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Switch } from '@/components/ui/switch';
 import { toast } from '@/hooks/use-toast';
-import { Plus, ArrowLeft, FileStack, Edit, Trash2, Copy } from 'lucide-react';
+import { Plus, Pencil, Trash2, FileText, ArrowLeft, Eye, EyeOff } from 'lucide-react';
 import * as documentsApi from '@/lib/api/documents';
-
-const AVAILABLE_VARIABLES = [
-  { key: 'CLIENTE_NOMBRE', description: 'Nombre del cliente' },
-  { key: 'CLIENTE_NIF', description: 'NIF del cliente' },
-  { key: 'CLIENTE_EMAIL', description: 'Email del cliente' },
-  { key: 'CLIENTE_TELEFONO', description: 'Teléfono del cliente' },
-  { key: 'CLIENTE_DIRECCION', description: 'Dirección completa del cliente' },
-  { key: 'FECHA', description: 'Fecha actual' },
-  { key: 'FECHA_FORMATO', description: 'Fecha con formato (dd/mm/yyyy)' },
-];
 
 export default function PlantillasPage() {
   const [, setLocation] = useLocation();
   const [openDialog, setOpenDialog] = useState(false);
-  const [editingTemplate, setEditingTemplate] = useState<any | null>(null);
-  const [selectedType, setSelectedType] = useState<'DATA_PROTECTION' | 'BANKING_DOMICILIATION'>('DATA_PROTECTION');
+  const [editingTemplate, setEditingTemplate] = useState<any>(null);
+  const [selectedType, setSelectedType] = useState<string>('all');
+  const [templateContent, setTemplateContent] = useState('');
+  const [previewTemplate, setPreviewTemplate] = useState<any>(null);
   const queryClient = useQueryClient();
+
+  // Generar datos de ejemplo para la previsualización
+  const getMockData = () => {
+    return {
+      NUMERO: 'REC-2025-001',
+      NOMBRE: 'Ejemplo Cliente SL',
+      NIF: 'B12345678',
+      EMAIL: 'cliente@ejemplo.com',
+      FECHA: new Date().toLocaleDateString('es-ES'),
+      CONCEPTO: 'Servicios de asesoría fiscal - Enero 2025',
+      BASE: '150.00',
+      IVA_PORCENTAJE: '21',
+      IVA_IMPORTE: '31.50',
+      TOTAL: '181.50',
+      NOTAS: 'Gracias por confiar en nuestros servicios.'
+    };
+  };
+
+  // Reemplazar variables en el HTML de preview
+  const getPreviewHTML = useMemo(() => {
+    if (!templateContent) return '<p class="text-muted-foreground text-center py-12">El contenido aparecerá aquí...</p>';
+    
+    const mockData = getMockData();
+    let html = templateContent;
+
+    // Reemplazar todas las variables {{variable}}
+    Object.entries(mockData).forEach(([key, value]) => {
+      const regex = new RegExp(`{{\\s*${key}\\s*}}`, 'gi');
+      html = html.replace(regex, String(value));
+    });
+
+    // Marcar variables no reemplazadas
+    html = html.replace(/{{([^}]+)}}/g, '<span style="background-color: #fef3c7; color: #92400e; padding: 2px 6px; border-radius: 3px; font-size: 0.875em;">[$1]</span>');
+
+    return html;
+  }, [templateContent]);
 
   // Queries
   const { data: templates = [], isLoading } = useQuery({
     queryKey: ['/api/documents/templates'],
-    queryFn: () => documentsApi.listTemplates({}),
+    queryFn: () => documentsApi.listTemplates(),
   });
 
   // Mutations
@@ -76,16 +103,25 @@ export default function PlantillasPage() {
     },
   });
 
+  const toggleActiveMutation = useMutation({
+    mutationFn: ({ id, isActive }: { id: string; isActive: boolean }) =>
+      documentsApi.updateTemplate(id, { is_active: !isActive }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/documents/templates'] });
+      toast({ title: 'Estado actualizado correctamente' });
+    },
+  });
+
+  // Handlers
   const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
-    
-    const data = {
+
+    const data: any = {
       type: formData.get('type') as string,
       name: formData.get('name') as string,
+      description: formData.get('description') as string || undefined,
       content: formData.get('content') as string,
-      isActive: formData.get('isActive') === 'on',
-      availableVars: AVAILABLE_VARIABLES.map(v => v.key),
     };
 
     if (editingTemplate) {
@@ -97,160 +133,158 @@ export default function PlantillasPage() {
 
   const handleEdit = (template: any) => {
     setEditingTemplate(template);
+    setTemplateContent(template.content || '');
     setOpenDialog(true);
   };
 
   const handleDelete = (id: string) => {
-    if (confirm('¿Estás seguro de eliminar esta plantilla? Esta acción no se puede deshacer.')) {
+    if (confirm('¿Estás seguro de eliminar esta plantilla?')) {
       deleteMutation.mutate(id);
     }
   };
 
-  const handleCopyVariable = (variable: string) => {
-    navigator.clipboard.writeText(`{{${variable}}}`);
-    toast({ title: 'Variable copiada', description: `{{${variable}}} copiado al portapapeles` });
-  };
-
-  const openNewDialog = () => {
+  const handleOpenDialog = () => {
     setEditingTemplate(null);
+    setTemplateContent('');
     setOpenDialog(true);
   };
 
-  const closeDialog = () => {
-    setOpenDialog(false);
-    setEditingTemplate(null);
+  const getTypeLabel = (type: string) => {
+    const labels: Record<string, string> = {
+      'DATA_PROTECTION': 'Protección de Datos',
+      'BANKING_DOMICILIATION': 'Domiciliación Bancaria',
+      'RECEIPT': 'Recibo',
+    };
+    return labels[type] || type;
   };
 
-  const filteredTemplates = selectedType 
-    ? templates.filter((t: any) => t.type === selectedType)
-    : templates;
+  const getTypeBadgeColor = (type: string) => {
+    const colors: Record<string, string> = {
+      'DATA_PROTECTION': 'bg-blue-100 text-blue-800',
+      'BANKING_DOMICILIATION': 'bg-green-100 text-green-800',
+      'RECEIPT': 'bg-purple-100 text-purple-800',
+    };
+    return colors[type] || 'bg-gray-100 text-gray-800';
+  };
+
+  // Filtrar plantillas
+  const filteredTemplates = selectedType === 'all'
+    ? templates
+    : templates.filter((t: any) => t.type === selectedType);
 
   return (
-    <div className="container mx-auto p-6 space-y-6">
+    <div className="container mx-auto py-6 space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" onClick={() => setLocation('/documentacion/documentos')}>
-            <ArrowLeft className="h-4 w-4" />
+          <Button variant="outline" size="icon" onClick={() => setLocation('/documentacion/documentos')}>
+            <ArrowLeft className="w-4 h-4" />
           </Button>
           <div>
-            <h1 className="text-3xl font-bold flex items-center gap-2">
-              <FileStack className="h-8 w-8 text-orange-600" />
-              Plantillas de Documentos
-            </h1>
-            <p className="text-muted-foreground">Gestión de plantillas para documentos</p>
+            <h1 className="text-3xl font-bold">Plantillas de Documentos</h1>
+            <p className="text-muted-foreground mt-1">
+              Gestiona las plantillas para generar documentos PDF
+            </p>
           </div>
         </div>
-        <Dialog open={openDialog} onOpenChange={(open) => !open && closeDialog()}>
+        <Dialog open={openDialog} onOpenChange={setOpenDialog}>
           <DialogTrigger asChild>
-            <Button onClick={openNewDialog}>
-              <Plus className="mr-2 h-4 w-4" />
+            <Button onClick={handleOpenDialog}>
+              <Plus className="w-4 h-4 mr-2" />
               Nueva Plantilla
             </Button>
           </DialogTrigger>
-          <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>
                 {editingTemplate ? 'Editar Plantilla' : 'Nueva Plantilla'}
               </DialogTitle>
               <DialogDescription>
-                {editingTemplate 
-                  ? 'Modifica los datos de la plantilla' 
-                  : 'Crea una nueva plantilla de documento'}
+                Las variables disponibles son: {'{{NUMERO}}'}, {'{{NOMBRE}}'}, {'{{NIF}}'}, {'{{EMAIL}}'}, {'{{FECHA}}'}, {'{{CONCEPTO}}'}, {'{{BASE}}'}, {'{{IVA_PORCENTAJE}}'}, {'{{IVA_IMPORTE}}'}, {'{{TOTAL}}'}, {'{{NOTAS}}'}
               </DialogDescription>
             </DialogHeader>
             <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="type">Tipo de Documento *</Label>
-                  <Select name="type" required defaultValue={editingTemplate?.type || 'DATA_PROTECTION'}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Seleccionar tipo..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="DATA_PROTECTION">Protección de Datos</SelectItem>
-                      <SelectItem value="BANKING_DOMICILIATION">Domiciliación Bancaria</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="name">Nombre de la Plantilla *</Label>
-                  <Input
-                    id="name"
-                    name="name"
-                    placeholder="Ej: Plantilla RGPD Estándar"
-                    required
-                    defaultValue={editingTemplate?.name || ''}
-                  />
-                </div>
+              <div>
+                <Label htmlFor="type">Tipo de Plantilla</Label>
+                <Select name="type" defaultValue={editingTemplate?.type || ''} required>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecciona un tipo" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="DATA_PROTECTION">Protección de Datos</SelectItem>
+                    <SelectItem value="BANKING_DOMICILIATION">Domiciliación Bancaria</SelectItem>
+                    <SelectItem value="RECEIPT">Recibo</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="isActive" className="flex items-center gap-2">
-                  <Switch
-                    id="isActive"
-                    name="isActive"
-                    defaultChecked={editingTemplate?.isActive ?? true}
-                  />
-                  <span>Plantilla activa</span>
-                </Label>
-                <p className="text-sm text-muted-foreground">
-                  Las plantillas inactivas no aparecerán al crear documentos
-                </p>
+              <div>
+                <Label htmlFor="name">Nombre de la Plantilla</Label>
+                <Input
+                  id="name"
+                  name="name"
+                  defaultValue={editingTemplate?.name || ''}
+                  placeholder="Ej: Plantilla de Recibo Estándar"
+                  required
+                />
               </div>
 
-              <div className="space-y-2">
-                <Label>Variables Disponibles</Label>
-                <div className="grid grid-cols-2 gap-2 p-4 bg-muted rounded-md">
-                  {AVAILABLE_VARIABLES.map((variable) => (
-                    <div key={variable.key} className="flex items-center justify-between p-2 bg-background rounded border">
-                      <div className="flex-1">
-                        <code className="text-sm font-mono text-blue-600">
-                          {`{{${variable.key}}}`}
-                        </code>
-                        <p className="text-xs text-muted-foreground">{variable.description}</p>
-                      </div>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => handleCopyVariable(variable.key)}
-                      >
-                        <Copy className="h-3 w-3" />
-                      </Button>
-                    </div>
-                  ))}
+              <div>
+                <Label htmlFor="description">Descripción (opcional)</Label>
+                <Textarea
+                  id="description"
+                  name="description"
+                  defaultValue={editingTemplate?.description || ''}
+                  placeholder="Describe el propósito de esta plantilla"
+                  rows={2}
+                />
+              </div>
+
+              <div>
+                <div className="flex justify-between items-center mb-2">
+                  <Label htmlFor="content">Contenido HTML</Label>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPreviewTemplate({ 
+                      name: editingTemplate?.name || 'Vista previa',
+                      content: templateContent 
+                    })}
+                    disabled={!templateContent}
+                  >
+                    <Eye className="w-4 h-4 mr-2" />
+                    Vista Previa
+                  </Button>
                 </div>
-                <p className="text-sm text-muted-foreground">
-                  Haz clic en el icono para copiar la variable. Las variables se sustituirán automáticamente al generar el documento.
-                </p>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="content">Contenido de la Plantilla *</Label>
                 <Textarea
                   id="content"
                   name="content"
-                  placeholder="Escribe el contenido de la plantilla aquí. Usa las variables de arriba para incluir datos dinámicos..."
-                  required
+                  value={templateContent}
+                  onChange={(e) => setTemplateContent(e.target.value)}
+                  placeholder="Ingresa el código HTML de la plantilla con las variables {{VARIABLE}}"
                   rows={15}
                   className="font-mono text-sm"
-                  defaultValue={editingTemplate?.content || ''}
+                  required
                 />
-                <p className="text-sm text-muted-foreground">
-                  Ejemplo: "Don/Doña {'{{CLIENTE_NOMBRE}}'}, con NIF {'{{CLIENTE_NIF}}'}, acepta..."
+                <p className="text-xs text-muted-foreground mt-1">
+                  Usa HTML válido. Las variables se reemplazarán automáticamente al generar el PDF.
                 </p>
               </div>
 
-              <div className="flex justify-end gap-2 pt-4">
-                <Button type="button" variant="outline" onClick={closeDialog}>
+              <div className="flex justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setOpenDialog(false);
+                    setEditingTemplate(null);
+                  }}
+                >
                   Cancelar
                 </Button>
                 <Button type="submit" disabled={createMutation.isPending || updateMutation.isPending}>
-                  {createMutation.isPending || updateMutation.isPending
-                    ? 'Guardando...'
-                    : editingTemplate ? 'Actualizar' : 'Crear Plantilla'}
+                  {editingTemplate ? 'Actualizar' : 'Crear'} Plantilla
                 </Button>
               </div>
             </form>
@@ -260,47 +294,38 @@ export default function PlantillasPage() {
 
       {/* Filtros */}
       <Card>
-        <CardHeader>
-          <CardTitle>Filtrar Plantillas</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="flex gap-2">
-            <Button
-              variant={selectedType === 'DATA_PROTECTION' ? 'default' : 'outline'}
-              onClick={() => setSelectedType('DATA_PROTECTION')}
-            >
-              Protección de Datos
-            </Button>
-            <Button
-              variant={selectedType === 'BANKING_DOMICILIATION' ? 'default' : 'outline'}
-              onClick={() => setSelectedType('BANKING_DOMICILIATION')}
-            >
-              Domiciliación Bancaria
-            </Button>
-            <Button
-              variant={!selectedType ? 'default' : 'outline'}
-              onClick={() => setSelectedType('' as any)}
-            >
-              Todas
-            </Button>
+        <CardContent className="pt-6">
+          <div className="flex items-center gap-4">
+            <Label>Filtrar por tipo:</Label>
+            <Select value={selectedType} onValueChange={setSelectedType}>
+              <SelectTrigger className="w-[250px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todas las plantillas</SelectItem>
+                <SelectItem value="DATA_PROTECTION">Protección de Datos</SelectItem>
+                <SelectItem value="BANKING_DOMICILIATION">Domiciliación Bancaria</SelectItem>
+                <SelectItem value="RECEIPT">Recibos</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
         </CardContent>
       </Card>
 
-      {/* Lista de plantillas */}
+      {/* Lista de Plantillas */}
       <Card>
         <CardHeader>
-          <CardTitle>Plantillas</CardTitle>
+          <CardTitle>Plantillas Registradas</CardTitle>
           <CardDescription>
             {filteredTemplates.length} plantilla(s) encontrada(s)
           </CardDescription>
         </CardHeader>
         <CardContent>
           {isLoading ? (
-            <div className="text-center py-8 text-muted-foreground">Cargando...</div>
+            <div className="text-center py-8 text-muted-foreground">Cargando plantillas...</div>
           ) : filteredTemplates.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
-              No hay plantillas. Crea tu primera plantilla.
+              No hay plantillas registradas. Crea una nueva para comenzar.
             </div>
           ) : (
             <Table>
@@ -308,56 +333,80 @@ export default function PlantillasPage() {
                 <TableRow>
                   <TableHead>Nombre</TableHead>
                   <TableHead>Tipo</TableHead>
+                  <TableHead>Descripción</TableHead>
                   <TableHead>Estado</TableHead>
-                  <TableHead>Contenido</TableHead>
-                  <TableHead>Fecha Creación</TableHead>
+                  <TableHead>Fecha</TableHead>
                   <TableHead className="text-right">Acciones</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {filteredTemplates.map((template: any) => (
                   <TableRow key={template.id}>
-                    <TableCell className="font-medium">{template.name}</TableCell>
-                    <TableCell>
-                      {template.type === 'DATA_PROTECTION' ? (
-                        <Badge variant="outline" className="bg-green-50">Protección de Datos</Badge>
-                      ) : (
-                        <Badge variant="outline" className="bg-purple-50">Domiciliación Bancaria</Badge>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      {template.isActive ? (
-                        <Badge variant="default">Activa</Badge>
-                      ) : (
-                        <Badge variant="secondary">Inactiva</Badge>
-                      )}
-                    </TableCell>
-                    <TableCell className="max-w-md">
-                      <div className="truncate text-sm text-muted-foreground">
-                        {template.content.substring(0, 100)}...
+                    <TableCell className="font-medium">
+                      <div className="flex items-center gap-2">
+                        <FileText className="w-4 h-4 text-muted-foreground" />
+                        {template.name}
                       </div>
                     </TableCell>
                     <TableCell>
-                      {new Date(template.createdAt).toLocaleDateString()}
+                      <Badge className={getTypeBadgeColor(template.type)}>
+                        {getTypeLabel(template.type)}
+                      </Badge>
                     </TableCell>
-                    <TableCell className="text-right space-x-2">
+                    <TableCell className="max-w-xs truncate">
+                      {template.description || '-'}
+                    </TableCell>
+                    <TableCell>
                       <Button
                         size="sm"
-                        variant="outline"
-                        onClick={() => handleEdit(template)}
+                        variant="ghost"
+                        onClick={() => toggleActiveMutation.mutate({
+                          id: template.id,
+                          isActive: template.is_active
+                        })}
                       >
-                        <Edit className="h-4 w-4 mr-1" />
-                        Editar
+                        {template.is_active ? (
+                          <Badge className="bg-green-100 text-green-800">
+                            <Eye className="w-3 h-3 mr-1" />
+                            Activa
+                          </Badge>
+                        ) : (
+                          <Badge variant="secondary">
+                            <EyeOff className="w-3 h-3 mr-1" />
+                            Inactiva
+                          </Badge>
+                        )}
                       </Button>
-                      <Button
-                        size="sm"
-                        variant="destructive"
-                        onClick={() => handleDelete(template.id)}
-                        disabled={deleteMutation.isPending}
-                      >
-                        <Trash2 className="h-4 w-4 mr-1" />
-                        Eliminar
-                      </Button>
+                    </TableCell>
+                    <TableCell>
+                      {new Date(template.created_at).toLocaleDateString('es-ES')}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex gap-1 justify-end">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setPreviewTemplate(template)}
+                          title="Vista previa"
+                        >
+                          <Eye className="w-4 h-4" />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleEdit(template)}
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleDelete(template.id)}
+                          disabled={deleteMutation.isPending}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -366,6 +415,33 @@ export default function PlantillasPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Modal de Vista Previa */}
+      <Dialog open={!!previewTemplate} onOpenChange={() => setPreviewTemplate(null)}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-auto">
+          <DialogHeader>
+            <DialogTitle>{previewTemplate?.name}</DialogTitle>
+            <DialogDescription>Vista previa de la plantilla con datos de ejemplo</DialogDescription>
+          </DialogHeader>
+          <div 
+            className="prose max-w-none p-6 bg-white border rounded"
+            dangerouslySetInnerHTML={{ 
+              __html: previewTemplate?.content 
+                ? (() => {
+                    const mockData = getMockData();
+                    let html = previewTemplate.content;
+                    Object.entries(mockData).forEach(([key, value]) => {
+                      const regex = new RegExp(`{{\\s*${key}\\s*}}`, 'gi');
+                      html = html.replace(regex, String(value));
+                    });
+                    html = html.replace(/{{([^}]+)}}/g, '<span style="background-color: #fef3c7; color: #92400e; padding: 2px 6px; border-radius: 3px; font-size: 0.875em;">[$1]</span>');
+                    return html;
+                  })()
+                : ''
+            }}
+          />
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

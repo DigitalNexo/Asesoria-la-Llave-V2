@@ -1,11 +1,134 @@
 {
+  // Configuración CSS y Tailwind
   "css.lint.unknownAtRules": "ignore",
   "css.lint.emptyRules": "ignore",
+  "css.validate": false,
   "tailwindCSS.emmetCompletions": true,
   "editor.quickSuggestions": {
-    "strings": true
+    "strings": true,
+    "other": true,
+    "comments": false
   },
   "files.associations": {
     "*.css": "tailwindcss"
-  }
+  },
+
+  // ========== OPTIMIZACIONES DE RENDIMIENTO ==========
+  
+  // Deshabilitar características pesadas
+  "editor.minimap.enabled": false,
+  "editor.suggest.showStatusBar": false,
+  "editor.hover.delay": 300,
+  
+  // Optimizar TypeScript/JavaScript
+  "typescript.tsserver.maxTsServerMemory": 8192,
+  "typescript.suggest.enabled": true,
+  "typescript.updateImportsOnFileMove.enabled": "always",
+  "typescript.preferences.importModuleSpecifier": "relative",
+  "typescript.disableAutomaticTypeAcquisition": false,
+  "typescript.tsserver.experimental.enableProjectDiagnostics": false,
+  
+  // Optimizar búsqueda y archivos - CRÍTICO PARA RENDIMIENTO
+  "search.exclude": {
+    "**/node_modules": true,
+    "**/node_modules_backup*": true,
+    "**/.next": true,
+    "**/dist": true,
+    "**/build": true,
+    "**/.git": true,
+    "**/coverage": true,
+    "**/.turbo": true,
+    "**/out": true,
+    "**/.cache": true
+  },
+  "files.watcherExclude": {
+    "**/node_modules/**": true,
+    "**/node_modules_backup*/**": true,
+    "**/.next/**": true,
+    "**/dist/**": true,
+    "**/build/**": true,
+    "**/.git/objects/**": true,
+    "**/.git/subtree-cache/**": true,
+    "**/coverage/**": true,
+    "**/.turbo/**": true,
+    "**/out/**": true,
+    "**/.cache/**": true
+  },
+  "files.exclude": {
+    "**/node_modules_backup*": true
+  },
+  
+  // Optimizar extensiones
+  "extensions.autoUpdate": false,
+  "extensions.autoCheckUpdates": false,
+  
+  // Optimizar Git
+  "git.enabled": true,
+  "git.autofetch": false,
+  "git.autorefresh": false,
+  "git.decorations.enabled": false,
+  
+  // Desactivar telemetría
+  "telemetry.telemetryLevel": "off",
+  "typescript.surveys.enabled": false,
+  "workbench.enableExperiments": false,
+  
+  // Optimizar rendering
+  "editor.renderLineHighlight": "none",
+  "editor.renderWhitespace": "none",
+  "editor.renderControlCharacters": false,
+  "editor.colorDecorators": false,
+  "editor.folding": true,
+  "editor.lightbulb.enabled": "off",
+  "editor.selectionHighlight": false,
+  "editor.occurrencesHighlight": "off",
+  "editor.matchBrackets": "never",
+  
+  // Validaciones
+  "javascript.validate.enable": true,
+  "typescript.validate.enable": true,
+  "html.validate.scripts": false,
+  "html.validate.styles": false,
+  
+  // Prisma
+  "prisma.showPrismaDataPlatformNotification": false,
+  
+  // Formateo
+  "editor.formatOnSave": true,
+  "editor.defaultFormatter": "esbenp.prettier-vscode",
+  "[typescript]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "[javascript]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "[typescriptreact]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "[json]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  
+  // Límites de memoria
+  "files.maxMemoryForLargeFilesMB": 8192,
+  "terminal.integrated.persistentSessionReviveProcess": "never",
+  "terminal.integrated.enablePersistentSessions": false,
+  
+  // GitHub Copilot - OPTIMIZADO
+  "github.copilot.enable": {
+    "*": true,
+    "yaml": true,
+    "plaintext": false,
+    "markdown": true
+  },
+  "github.copilot.editor.enableAutoCompletions": true,
+  
+  // Workspace Trust
+  "security.workspace.trust.untrustedFiles": "open",
+  
+  // Breadcrumbs
+  "breadcrumbs.enabled": false,
+  
+  // Problemas
+  "problems.decorations.enabled": false
 }

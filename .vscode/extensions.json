@@ -1,0 +1,22 @@
+{
+  "recommendations": [
+    // Esenciales
+    "github.copilot",
+    "github.copilot-chat",
+    
+    // Next.js y React
+    "bradlc.vscode-tailwindcss",
+    "esbenp.prettier-vscode",
+    
+    // Base de datos
+    "prisma.prisma",
+    
+    // TypeScript
+    "dbaeumer.vscode-eslint"
+  ],
+  "unwantedRecommendations": [
+    // Evitar extensiones pesadas innecesarias
+    "ms-vscode.vscode-typescript-next",
+    "visualstudioexptteam.vscodeintellicode"
+  ]
+}
