@@ -328,10 +328,26 @@ export interface TaxFilingRecord {
 }
 
 function mapPrismaClient(client: any): any {
-  const taxAssignmentsSource =
-    client.client_tax_assignments || client.taxAssignments || [];
+  const taxModelsSource =
+    client.client_tax_models || client.taxModels || [];
   const employeesSource =
     client.client_employees || client.employees || [];
+
+  // Mapear client_tax_models a formato legacy taxAssignments para compatibilidad
+  const taxAssignments = Array.isArray(taxModelsSource)
+    ? taxModelsSource.map((m: any) => ({
+        id: m.id,
+        clientId: m.client_id,
+        taxModelCode: m.model_number,
+        periodicity: m.period_type,
+        startDate: m.start_date,
+        endDate: m.end_date,
+        activeFlag: m.is_active,
+        notes: m.notes,
+        createdAt: m.created_at,
+        updatedAt: m.updated_at,
+      }))
+    : [];
 
   return {
     id: client.id,
@@ -347,9 +363,7 @@ function mapPrismaClient(client: any): any {
     taxModels: client.taxModels ?? client.tax_models ?? null,
     isActive: client.isActive ?? true,
     notes: client.notes ?? null,
-    taxAssignments: Array.isArray(taxAssignmentsSource)
-      ? taxAssignmentsSource.map(mapPrismaClientTaxAssignment)
-      : [],
+    taxAssignments: taxAssignments,
     employees: Array.isArray(employeesSource)
       ? employeesSource.map(mapPrismaClientEmployee)
       : [],
@@ -606,11 +620,7 @@ export class PrismaStorage implements IStorage {
             }
           }
         },
-        client_tax_assignments: {
-          include: {
-            tax_models_config: true,
-          }
-        },
+        client_tax_models: true,
       }
     });
     return clients.map(mapPrismaClient);
@@ -675,11 +685,7 @@ export class PrismaStorage implements IStorage {
             }
           }
         },
-        client_tax_assignments: {
-          include: {
-            tax_models_config: true,
-          }
-        },
+        client_tax_models: true,
       }
     });
     return client ? mapPrismaClient(client) : undefined;
@@ -700,11 +706,7 @@ export class PrismaStorage implements IStorage {
             },
           },
         },
-        client_tax_assignments: {
-          include: {
-            tax_models_config: true,
-          },
-        },
+        client_tax_models: true,
       },
     });
     return client ? mapPrismaClient(client) : undefined;
@@ -747,11 +749,7 @@ export class PrismaStorage implements IStorage {
             },
           },
         },
-        client_tax_assignments: {
-          include: {
-            tax_models_config: true,
-          },
-        },
+        client_tax_models: true,
       },
     });
     return mapPrismaClient(client);
@@ -785,11 +783,7 @@ export class PrismaStorage implements IStorage {
               },
             },
           },
-          client_tax_assignments: {
-            include: {
-              tax_models_config: true,
-            },
-          },
+          client_tax_models: true,
         },
       });
       return mapPrismaClient(client);
@@ -927,10 +921,10 @@ export class PrismaStorage implements IStorage {
   }
 
   async getAssignmentsByTaxModel(taxModelCode: string) {
-    const assignments = await prisma.client_tax_assignments.findMany({
+    const models = await prisma.client_tax_models.findMany({
       where: {
-        taxModelCode,
-        activeFlag: true,
+        model_number: taxModelCode,
+        is_active: true,
       },
       include: {
         clients: {
@@ -942,41 +936,106 @@ export class PrismaStorage implements IStorage {
         },
       },
     });
-    return assignments;
+    
+    return models.map(m => ({
+      id: m.id,
+      clientId: m.client_id,
+      taxModelCode: m.model_number,
+      periodicity: this.periodTypeToSpanish(m.period_type),
+      startDate: m.start_date,
+      endDate: m.end_date,
+      activeFlag: m.is_active,
+      clients: m.clients,
+      effectiveActive: m.is_active && (!m.end_date || m.end_date > new Date())
+    }));
+  }
+
+  private periodTypeToSpanish(periodType: string): string {
+    const map: Record<string, string> = {
+      'MONTHLY': 'MENSUAL',
+      'QUARTERLY': 'TRIMESTRAL',
+      'ANNUAL': 'ANUAL',
+      'SPECIAL': 'ESPECIAL_FRACCIONADO'
+    };
+    return map[periodType] || periodType;
+  }
+
+  private spanishToEnglish(periodicidad: string): string {
+    const map: Record<string, string> = {
+      'MENSUAL': 'MONTHLY',
+      'TRIMESTRAL': 'QUARTERLY',
+      'ANUAL': 'ANNUAL',
+      'ESPECIAL_FRACCIONADO': 'SPECIAL'
+    };
+    return map[periodicidad] || periodicidad;
   }
 
   async findClientTaxAssignmentByCode(clientId: string, taxModelCode: string) {
-    const assignment = await prisma.client_tax_assignments.findFirst({
+    const model = await prisma.client_tax_models.findFirst({
       where: {
-        clientId,
-        taxModelCode,
-      },
-      include: {
-        tax_models_config: true,
+        client_id: clientId,
+        model_number: taxModelCode,
       },
     });
-    return assignment ? mapPrismaClientTaxAssignment(assignment) : null;
+    
+    if (!model) return null;
+    
+    return {
+      id: model.id,
+      clientId: model.client_id,
+      taxModelCode: model.model_number,
+      periodicity: this.periodTypeToSpanish(model.period_type),
+      startDate: model.start_date,
+      endDate: model.end_date,
+      activeFlag: model.is_active,
+      notes: model.notes,
+      createdAt: model.created_at,
+      updatedAt: model.updated_at,
+      effectiveActive: model.is_active && (!model.end_date || model.end_date > new Date())
+    };
   }
 
   async getClientTaxAssignments(clientId: string) {
-    const assignments = await prisma.client_tax_assignments.findMany({
-      where: { clientId },
-      orderBy: [{ startDate: 'desc' }, { taxModelCode: 'asc' }],
-      include: {
-        tax_models_config: true,
-      },
+    const models = await prisma.client_tax_models.findMany({
+      where: { client_id: clientId },
+      orderBy: [{ start_date: 'desc' }, { model_number: 'asc' }],
     });
-    return assignments.map(mapPrismaClientTaxAssignment);
+    
+    return models.map(m => ({
+      id: m.id,
+      clientId: m.client_id,
+      taxModelCode: m.model_number,
+      periodicity: this.periodTypeToSpanish(m.period_type),
+      startDate: m.start_date,
+      endDate: m.end_date,
+      activeFlag: m.is_active,
+      notes: m.notes,
+      createdAt: m.created_at,
+      updatedAt: m.updated_at,
+      effectiveActive: m.is_active && (!m.end_date || m.end_date > new Date())
+    }));
   }
 
   async getClientTaxAssignment(id: string) {
-    const assignment = await prisma.client_tax_assignments.findUnique({
+    const model = await prisma.client_tax_models.findUnique({
       where: { id },
-      include: {
-        tax_models_config: true,
-      },
     });
-    return assignment ? mapPrismaClientTaxAssignment(assignment) : null;
+    
+    if (!model) return null;
+    
+    return {
+      id: model.id,
+      clientId: model.client_id,
+      taxModelCode: model.model_number,
+      periodicity: this.periodTypeToSpanish(model.period_type),
+      startDate: model.start_date,
+      endDate: model.end_date,
+      activeFlag: model.is_active,
+      notes: model.notes,
+      createdAt: model.created_at,
+      updatedAt: model.updated_at,
+      effectiveActive: model.is_active && (!model.end_date || model.end_date > new Date())
+    };
   }
 
   private buildTaxAssignmentUpdateData(data: Partial<{
@@ -988,11 +1047,11 @@ export class PrismaStorage implements IStorage {
     notes: string | null;
   }>) {
     const payload: any = {};
-    if (data.taxModelCode !== undefined) payload.taxModelCode = data.taxModelCode;
-    if (data.periodicity !== undefined) payload.periodicidad = data.periodicity;
-    if (data.startDate !== undefined) payload.startDate = data.startDate;
-    if (data.endDate !== undefined) payload.endDate = data.endDate;
-    if (data.activeFlag !== undefined) payload.activeFlag = data.activeFlag;
+    if (data.taxModelCode !== undefined) payload.model_number = data.taxModelCode;
+    if (data.periodicity !== undefined) payload.period_type = this.spanishToEnglish(data.periodicity);
+    if (data.startDate !== undefined) payload.start_date = data.startDate;
+    if (data.endDate !== undefined) payload.end_date = data.endDate;
+    if (data.activeFlag !== undefined) payload.is_active = data.activeFlag;
     if (data.notes !== undefined) payload.notes = data.notes;
     return payload;
   }
@@ -1005,23 +1064,39 @@ export class PrismaStorage implements IStorage {
     activeFlag?: boolean;
     notes?: string | null;
   }) {
-    const assignment = await prisma.client_tax_assignments.create({
+    const model = await prisma.client_tax_models.create({
       data: {
         id: randomUUID(),
-        clientId,
-        taxModelCode: data.taxModelCode,
-        periodicidad: data.periodicity,
-        startDate: data.startDate,
-        endDate: data.endDate ?? null,
-        activeFlag: data.activeFlag ?? true,
-        notes: data.notes ?? null,
-        updatedAt: new Date(),
-      },
-      include: {
-        tax_models_config: true,
+        client_id: clientId,
+        model_number: data.taxModelCode,
+        period_type: this.spanishToEnglish(data.periodicity),
+        start_date: data.startDate,
+        end_date: data.endDate || null,
+        is_active: data.activeFlag !== undefined ? data.activeFlag : true,
+        notes: data.notes || null,
       },
     });
-    return mapPrismaClientTaxAssignment(assignment);
+    // Auto-generar tarjetas fiscales para períodos abiertos del cliente
+    // Esperamos a que termine para que el frontend vea las tarjetas inmediatamente
+    try {
+      await this.ensureClientTaxFilings(clientId);
+    } catch (e) {
+      // No bloquear la creación por errores de generación; se cubrirá por el job horario
+    }
+    
+    return {
+      id: model.id,
+      clientId: model.client_id,
+      taxModelCode: model.model_number,
+      periodicity: this.periodTypeToSpanish(model.period_type),
+      startDate: model.start_date,
+      endDate: model.end_date,
+      activeFlag: model.is_active,
+      notes: model.notes,
+      createdAt: model.created_at,
+      updatedAt: model.updated_at,
+      effectiveActive: model.is_active && (!model.end_date || model.end_date > new Date())
+    };
   }
 
   async updateClientTaxAssignment(id: string, data: {
@@ -1032,38 +1107,74 @@ export class PrismaStorage implements IStorage {
     activeFlag?: boolean;
     notes?: string | null;
   }) {
-    const assignment = await prisma.client_tax_assignments.update({
+    const model = await prisma.client_tax_models.update({
       where: { id },
       data: this.buildTaxAssignmentUpdateData(data),
-      include: {
-        tax_models_config: true,
-      },
     });
-    return mapPrismaClientTaxAssignment(assignment);
+    // Auto-generar/actualizar tarjetas fiscales tras actualizar la asignación
+    try {
+      await this.ensureClientTaxFilings(model.client_id);
+    } catch (e) {
+      // Ignorar errores aquí; un job periódico asegura consistencia eventual
+    }
+    
+    return {
+      id: model.id,
+      clientId: model.client_id,
+      taxModelCode: model.model_number,
+      periodicity: this.periodTypeToSpanish(model.period_type),
+      startDate: model.start_date,
+      endDate: model.end_date,
+      activeFlag: model.is_active,
+      notes: model.notes,
+      createdAt: model.created_at,
+      updatedAt: model.updated_at,
+      effectiveActive: model.is_active && (!model.end_date || model.end_date > new Date())
+    };
   }
 
   async deleteClientTaxAssignment(id: string) {
-    const assignment = await prisma.client_tax_assignments.delete({
+    const model = await prisma.client_tax_models.delete({
       where: { id },
-      include: {
-        tax_models_config: true,
-      },
     });
-    return mapPrismaClientTaxAssignment(assignment);
+    
+    return {
+      id: model.id,
+      clientId: model.client_id,
+      taxModelCode: model.model_number,
+      periodicity: this.periodTypeToSpanish(model.period_type),
+      startDate: model.start_date,
+      endDate: model.end_date,
+      activeFlag: model.is_active,
+      notes: model.notes,
+      createdAt: model.created_at,
+      updatedAt: model.updated_at,
+      effectiveActive: false
+    };
   }
 
   async softDeactivateClientTaxAssignment(id: string, endDate: Date) {
-    const assignment = await prisma.client_tax_assignments.update({
+    const model = await prisma.client_tax_models.update({
       where: { id },
       data: {
-        endDate,
-        activeFlag: false,
-      },
-      include: {
-        tax_models_config: true,
+        end_date: endDate,
+        is_active: false,
       },
     });
-    return mapPrismaClientTaxAssignment(assignment);
+    
+    return {
+      id: model.id,
+      clientId: model.client_id,
+      taxModelCode: model.model_number,
+      periodicity: this.periodTypeToSpanish(model.period_type),
+      startDate: model.start_date,
+      endDate: model.end_date,
+      activeFlag: model.is_active,
+      notes: model.notes,
+      createdAt: model.created_at,
+      updatedAt: model.updated_at,
+      effectiveActive: false
+    };
   }
 
   async hasAssignmentHistoricFilings(clientId: string, taxModelCode: string) {
@@ -1077,20 +1188,20 @@ export class PrismaStorage implements IStorage {
   }
 
   async bulkRemoveClientTaxAssignments(clientId: string, options?: { codes?: string[]; hard?: boolean }) {
-  const codesFilter = (options?.codes || []).map((c: any) => String(c).toUpperCase());
-    const whereAssignments: any = {
-      clientId,
-      ...(codesFilter.length > 0 ? { taxModelCode: { in: codesFilter } } : {}),
+    const codesFilter = (options?.codes || []).map((c: any) => String(c).toUpperCase());
+    const whereModels: any = {
+      client_id: clientId,
+      ...(codesFilter.length > 0 ? { model_number: { in: codesFilter } } : {}),
     } as any;
 
-    const assignments = await prisma.client_tax_assignments.findMany({
-      where: whereAssignments,
-      select: { id: true, taxModelCode: true },
+    const models = await prisma.client_tax_models.findMany({
+      where: whereModels,
+      select: { id: true, model_number: true },
     });
 
-    if (assignments.length === 0) return { deleted: 0, deactivated: 0 };
+    if (models.length === 0) return { deleted: 0, deactivated: 0 };
 
-  const codes = Array.from(new Set(assignments.map((a: any) => String(a.taxModelCode))));
+    const codes = Array.from(new Set(models.map((m: any) => String(m.model_number))));
     const filings = (await prisma.client_tax_filings.findMany({
       where: { clientId, taxModelCode: { in: codes } },
       select: { taxModelCode: true },
@@ -1104,9 +1215,9 @@ export class PrismaStorage implements IStorage {
 
     await prisma.$transaction(async (tx) => {
       if (toDeactivate.length > 0) {
-        const res = await tx.client_tax_assignments.updateMany({
-          where: { clientId, taxModelCode: { in: toDeactivate } },
-          data: { endDate: new Date(), activeFlag: false },
+        const res = await tx.client_tax_models.updateMany({
+          where: { client_id: clientId, model_number: { in: toDeactivate } },
+          data: { end_date: new Date(), is_active: false },
         });
         deactivated += res.count;
       }
@@ -1114,8 +1225,8 @@ export class PrismaStorage implements IStorage {
         if (options?.hard) {
           await tx.client_tax_filings.deleteMany({ where: { clientId, taxModelCode: { in: toDelete } } });
         }
-        const res = await tx.client_tax_assignments.deleteMany({
-          where: { clientId, taxModelCode: { in: toDelete } },
+        const res = await tx.client_tax_models.deleteMany({
+          where: { client_id: clientId, model_number: { in: toDelete } },
         });
         deleted += res.count;
       }
@@ -1129,12 +1240,12 @@ export class PrismaStorage implements IStorage {
       return { deleted: 0, deactivated: 0 };
     }
 
-    const assignments = await prisma.client_tax_assignments.findMany({
-      where: { id: { in: assignmentIds }, clientId },
-      select: { id: true, taxModelCode: true },
+    const models = await prisma.client_tax_models.findMany({
+      where: { id: { in: assignmentIds }, client_id: clientId },
+      select: { id: true, model_number: true },
     });
 
-    if (assignments.length === 0) return { deleted: 0, deactivated: 0 };
+    if (models.length === 0) return { deleted: 0, deactivated: 0 };
 
     let deleted = 0;
     let deactivated = 0;
@@ -1142,21 +1253,21 @@ export class PrismaStorage implements IStorage {
     await prisma.$transaction(async (tx) => {
       if (options?.hard) {
         // Borrar todas las declaraciones de los códigos implicados primero
-  const codeSet = new Set(assignments.map((a: any) => String(a.taxModelCode)));
-        await tx.client_tax_filings.deleteMany({ where: { clientId, taxModelCode: { in: Array.from(codeSet) } } });
+        const codeSet = new Set(models.map((m: any) => String(m.model_number)));
+        await tx.client_tax_filings.deleteMany({ where: { clientId, taxModelCode: { in: Array.from(codeSet) as string[] } } });
       }
-      for (const a of assignments) {
+      for (const m of models) {
         const hasHistory = options?.hard ? 0 : await tx.client_tax_filings.count({
-          where: { clientId, taxModelCode: a.taxModelCode },
+          where: { clientId, taxModelCode: m.model_number },
         });
         if (hasHistory > 0) {
-          const res = await tx.client_tax_assignments.update({
-            where: { id: a.id },
-            data: { endDate: new Date(), activeFlag: false },
+          const res = await tx.client_tax_models.update({
+            where: { id: m.id },
+            data: { end_date: new Date(), is_active: false },
           });
           if (res) deactivated += 1;
         } else {
-          const res = await tx.client_tax_assignments.delete({ where: { id: a.id } });
+          const res = await tx.client_tax_models.delete({ where: { id: m.id } });
           if (res) deleted += 1;
         }
       }
@@ -1166,17 +1277,17 @@ export class PrismaStorage implements IStorage {
   }
 
   async getTaxAssignmentHistory(assignmentId: string) {
-    const assignment = await prisma.client_tax_assignments.findUnique({
+    const model = await prisma.client_tax_models.findUnique({
       where: { id: assignmentId },
     });
-    if (!assignment) {
+    if (!model) {
       return [];
     }
 
     const filings = await prisma.client_tax_filings.findMany({
       where: {
-        clientId: assignment.clientId,
-        taxModelCode: assignment.taxModelCode,
+        clientId: model.client_id,
+        taxModelCode: model.model_number,
       },
       include: {
         fiscal_periods: true,
@@ -1206,8 +1317,8 @@ export class PrismaStorage implements IStorage {
   }
 
   async getAllClientTax(): Promise<ClientTax[]> {
-    const records = await prisma.client_tax.findMany();
-    return records.map(mapPrismaClientTax);
+    // La tabla client_tax fue eliminada - retornar array vacío
+    return [];
   }
 
   async getTaxPeriod(id: string): Promise<TaxPeriod | undefined> {
@@ -1320,9 +1431,9 @@ export class PrismaStorage implements IStorage {
   ) {
     if (periods.length === 0) return;
 
-    const assignments = await client.client_tax_assignments.findMany({
+    const models = await client.client_tax_models.findMany({
       where: {
-        activeFlag: true,
+        is_active: true,
         clients: { isActive: true },
       },
       include: {
@@ -1336,26 +1447,26 @@ export class PrismaStorage implements IStorage {
       },
     });
 
-    if (assignments.length === 0) return;
+    if (models.length === 0) return;
 
     const configMap = await this.getTaxModelConfigMap(client);
 
     for (const period of periods) {
-      for (const assignment of assignments) {
-        if (!this.periodMatchesAssignment(period, assignment, configMap)) continue;
+      for (const model of models) {
+        if (!this.periodMatchesModel(period, model, configMap)) continue;
 
         await client.client_tax_filings.upsert({
           where: {
             clientId_taxModelCode_periodId: {
-              clientId: assignment.clientId,
-              taxModelCode: assignment.taxModelCode,
+              clientId: model.client_id,
+              taxModelCode: model.model_number,
               periodId: period.id,
             },
           },
           create: {
             id: randomUUID(),
-            clientId: assignment.clientId,
-            taxModelCode: assignment.taxModelCode,
+            clientId: model.client_id,
+            taxModelCode: model.model_number,
             periodId: period.id,
             status: FilingStatus.NOT_STARTED,
           },
@@ -1365,7 +1476,7 @@ export class PrismaStorage implements IStorage {
     }
   }
 
-  private periodMatchesAssignment(
+  private periodMatchesModel(
     period: {
       kind: TaxPeriodType;
       label: string;
@@ -1373,12 +1484,14 @@ export class PrismaStorage implements IStorage {
       startsAt?: Date;
       endsAt?: Date;
     },
-    assignment: any,
+    model: any,
     configMap: Map<string, ReturnType<typeof mapPrismaTaxModelsConfig>>
   ) {
-    if (!assignment.activeFlag) return false;
-    const code = String(assignment.taxModelCode ?? "").toUpperCase();
-    const periodicity = String(assignment.periodicidad ?? "").toUpperCase();
+    if (!model.is_active) return false;
+    const code = String(model.model_number ?? "").toUpperCase();
+    const periodType = String(model.period_type ?? "").toUpperCase();
+    // Convertir de inglés a español para comparación
+    const periodicity = this.periodTypeToSpanish(periodType);
     const config = configMap.get(code);
     const allowedPeriods =
       config?.allowedPeriods?.map((p: string) => p.toUpperCase()) ?? [];
@@ -1390,17 +1503,17 @@ export class PrismaStorage implements IStorage {
           allowedPeriods.includes(target)
       );
 
-    const assignmentStart = assignment.startDate
-      ? new Date(assignment.startDate)
+    const modelStart = model.start_date
+      ? new Date(model.start_date)
       : null;
-    const assignmentEnd = assignment.endDate ? new Date(assignment.endDate) : null;
+    const modelEnd = model.end_date ? new Date(model.end_date) : null;
     const periodStart = period.startsAt ? new Date(period.startsAt) : null;
     const periodEnd = period.endsAt ? new Date(period.endsAt) : null;
 
-    if (assignmentStart && periodEnd && assignmentStart > periodEnd) {
+    if (modelStart && periodEnd && modelStart > periodEnd) {
       return false;
     }
-    if (assignmentEnd && periodStart && assignmentEnd < periodStart) {
+    if (modelEnd && periodStart && modelEnd < periodStart) {
       return false;
     }
 
@@ -1581,7 +1694,96 @@ export class PrismaStorage implements IStorage {
   }
 
   /**
-   * Migra obligaciones activas (obligaciones_fiscales) a asignaciones (client_tax_assignments)
+   * Genera tarjetas fiscales para un cliente específico
+   * Se llama cuando se crea o actualiza un cliente con modelos fiscales
+   */
+  async ensureClientTaxFilings(clientId: string): Promise<{ generated: number }> {
+    const currentYear = new Date().getFullYear();
+    const years = [currentYear];
+    
+    // Si estamos en octubre o después, también generar para el año siguiente
+    if (new Date().getMonth() >= 9) {
+      years.push(currentYear + 1);
+    }
+
+    let totalGenerated = 0;
+
+    for (const year of years) {
+      const periods = await prisma.fiscal_periods.findMany({
+        where: { 
+          year,
+          status: 'OPEN' // Solo períodos abiertos
+        },
+        select: {
+          id: true,
+          kind: true,
+          label: true,
+          year: true,
+          starts_at: true,
+          ends_at: true,
+        },
+      });
+
+      if (periods.length === 0) continue;
+
+      const models = await prisma.client_tax_models.findMany({
+        where: {
+          client_id: clientId,
+          is_active: true,
+          clients: { isActive: true },
+        },
+        include: {
+          clients: {
+            select: {
+              id: true,
+              razonSocial: true,
+              isActive: true,
+            },
+          },
+        },
+      });
+
+      if (models.length === 0) continue;
+
+      const configMap = await this.getTaxModelConfigMap(prisma);
+
+      for (const period of periods) {
+        for (const model of models) {
+          if (!this.periodMatchesModel({
+            kind: period.kind,
+            label: period.label,
+            year: period.year,
+            startsAt: period.starts_at,
+            endsAt: period.ends_at,
+          }, model, configMap)) continue;
+
+          await prisma.client_tax_filings.upsert({
+            where: {
+              clientId_taxModelCode_periodId: {
+                clientId: model.client_id,
+                taxModelCode: model.model_number,
+                periodId: period.id,
+              },
+            },
+            create: {
+              id: randomUUID(),
+              clientId: model.client_id,
+              taxModelCode: model.model_number,
+              periodId: period.id,
+              status: FilingStatus.NOT_STARTED,
+            },
+            update: {},
+          });
+          totalGenerated++;
+        }
+      }
+    }
+
+    return { generated: totalGenerated };
+  }
+
+  /**
+   * Migra obligaciones activas (obligaciones_fiscales) a modelos fiscales (client_tax_models)
    * en caso de que no exista aún la tupla (cliente + modelo).
    */
   private async migrateObligationsToAssignments() {
@@ -1594,24 +1796,23 @@ export class PrismaStorage implements IStorage {
       const code = null // TODO: Fix impuestos relation?.toUpperCase();
       if (!code) continue;
 
-      const existing = await prisma.client_tax_assignments.findFirst({
-        where: { clientId: ob.cliente_id, taxModelCode: code },
+      const existing = await prisma.client_tax_models.findFirst({
+        where: { client_id: ob.cliente_id, model_number: code },
       });
       if (existing) continue;
 
-      // Crear asignación básica
+      // Crear modelo fiscal básico
       try {
-        await prisma.client_tax_assignments.create({
+        await prisma.client_tax_models.create({
           data: {
             id: randomUUID(),
-            clientId: ob.cliente_id,
-            taxModelCode: code,
-            periodicidad: (ob.periodicidad as any) ?? (code === '303' ? 'TRIMESTRAL' : 'ANUAL'),
-            startDate: ob.fecha_inicio ?? ob.fecha_asignacion ?? new Date(),
-            endDate: ob.fecha_fin ?? null,
-            activeFlag: ob.activo ?? true,
+            client_id: ob.cliente_id,
+            model_number: code,
+            period_type: this.spanishToEnglish((ob.periodicidad as any) ?? (code === '303' ? 'TRIMESTRAL' : 'ANUAL')),
+            start_date: ob.fecha_inicio ?? ob.fecha_asignacion ?? new Date(),
+            end_date: ob.fecha_fin ?? null,
+            is_active: ob.activo ?? true,
             notes: ob.observaciones ?? null,
-            updatedAt: new Date(),
           },
         });
       } catch (e) {
@@ -1634,20 +1835,19 @@ export class PrismaStorage implements IStorage {
         try { const arr = JSON.parse(raw); if (Array.isArray(arr)) codes = arr.map((x: any) => `${x}`.toUpperCase()); } catch {}
       }
       for (const code of codes) {
-        const exists = await prisma.client_tax_assignments.findFirst({ where: { clientId: c.id, taxModelCode: code } });
+        const exists = await prisma.client_tax_models.findFirst({ where: { client_id: c.id, model_number: code } });
         if (exists) continue;
         try {
-          await prisma.client_tax_assignments.create({
+          await prisma.client_tax_models.create({
             data: {
               id: randomUUID(),
-              clientId: c.id,
-              taxModelCode: code,
-              periodicidad: (code === '303' ? 'TRIMESTRAL' : 'ANUAL') as any,
-              startDate: c.fechaAlta ?? new Date(),
-              endDate: null,
-              activeFlag: true,
+              client_id: c.id,
+              model_number: code,
+              period_type: this.spanishToEnglish(code === '303' ? 'TRIMESTRAL' : 'ANUAL'),
+              start_date: c.fechaAlta ?? new Date(),
+              end_date: null,
+              is_active: true,
               notes: null,
-              updatedAt: new Date(),
             },
           });
         } catch {}
@@ -1658,22 +1858,21 @@ export class PrismaStorage implements IStorage {
   private async ensureDefault303Assignments() {
     const clients = await prisma.clients.findMany({ where: { isActive: true }, select: { id: true, fechaAlta: true } });
     for (const c of clients) {
-      const count = await prisma.client_tax_assignments.count({ where: { clientId: c.id } });
+      const count = await prisma.client_tax_models.count({ where: { client_id: c.id } });
       if (count > 0) continue;
-      const exists303 = await prisma.client_tax_assignments.findFirst({ where: { clientId: c.id, taxModelCode: '303' } });
+      const exists303 = await prisma.client_tax_models.findFirst({ where: { client_id: c.id, model_number: '303' } });
       if (exists303) continue;
       try {
-        await prisma.client_tax_assignments.create({
+        await prisma.client_tax_models.create({
           data: {
             id: randomUUID(),
-            clientId: c.id,
-            taxModelCode: '303',
-            periodicidad: 'TRIMESTRAL' as any,
-            startDate: c.fechaAlta ?? new Date(),
-            endDate: null,
-            activeFlag: true,
+            client_id: c.id,
+            model_number: '303',
+            period_type: 'QUARTERLY',
+            start_date: c.fechaAlta ?? new Date(),
+            end_date: null,
+            is_active: true,
             notes: 'Asignación por defecto generada automáticamente',
-            updatedAt: new Date(),
           },
         });
       } catch {}
@@ -1742,23 +1941,23 @@ export class PrismaStorage implements IStorage {
       },
       orderBy: [{ clients: { razonSocial: 'asc' } }],
     });
-    // Filtrar por asignaciones efectivas en las fechas del periodo (start <= period.end && (end IS NULL || end >= period.start)) y activas
+    // Filtrar por modelos fiscales efectivos en las fechas del periodo (start <= period.end && (end IS NULL || end >= period.start)) y activos
     const clientIds = Array.from(new Set(filings.map((f) => f.clientId)));
     const codes = Array.from(new Set(filings.map((f) => f.taxModelCode)));
-    type A = { clientId: string; taxModelCode: string; startDate: Date; endDate: Date | null; activeFlag: boolean };
-    let byKey = new Map<string, A[]>();
+    type M = { client_id: string; model_number: string; start_date: Date; end_date: Date | null; is_active: boolean; period_type: string };
+    let byKey = new Map<string, M[]>();
     if (clientIds.length && codes.length) {
-      const assignments = await prisma.client_tax_assignments.findMany({
+      const models = await prisma.client_tax_models.findMany({
         where: {
-          clientId: { in: clientIds },
-          taxModelCode: { in: codes },
+          client_id: { in: clientIds },
+          model_number: { in: codes },
         },
-        select: { clientId: true, taxModelCode: true, startDate: true, endDate: true, activeFlag: true },
+        select: { client_id: true, model_number: true, start_date: true, end_date: true, is_active: true, period_type: true },
       });
-      for (const a of assignments as A[]) {
-        const key = `${a.clientId}:${a.taxModelCode}`;
+      for (const m of models as M[]) {
+        const key = `${m.client_id}:${m.model_number}`;
         if (!byKey.has(key)) byKey.set(key, []);
-        byKey.get(key)!.push(a);
+        byKey.get(key)!.push(m);
       }
     }
 
@@ -1791,42 +1990,44 @@ export class PrismaStorage implements IStorage {
       }
     }
 
-    // Obtener periodicidad de las asignaciones
-    const assignmentsWithPeriodicity = await prisma.client_tax_assignments.findMany({
+    // Obtener periodicidad de los modelos fiscales
+    const modelsWithPeriodicity = await prisma.client_tax_models.findMany({
       where: {
-        clientId: { in: clientIds },
-        taxModelCode: { in: codes },
-        activeFlag: true,
+        client_id: { in: clientIds },
+        model_number: { in: codes },
+        is_active: true,
       },
-      select: { clientId: true, taxModelCode: true, periodicidad: true },
+      select: { client_id: true, model_number: true, period_type: true },
     });
 
     const clientModelPeriodicity = new Map<string, string>();
-    for (const a of assignmentsWithPeriodicity) {
-      const key = `${a.clientId}:${a.taxModelCode}`;
-      clientModelPeriodicity.set(key, a.periodicidad);
+    for (const m of modelsWithPeriodicity) {
+      const key = `${m.client_id}:${m.model_number}`;
+      // Convertir de inglés a español para compatibilidad
+      const periodicidadSpanish = this.periodTypeToSpanish(m.period_type);
+      clientModelPeriodicity.set(key, periodicidadSpanish);
     }
 
     const visible = filings.filter((f) => {
       if (!f.fiscal_periods) return false;
       
-      // Verificar asignación activa del cliente
+      // Verificar modelo activo del cliente
       const key = `${f.clientId}:${f.taxModelCode}`;
       const arr = byKey.get(key);
       if (!arr || arr.length === 0) return false;
       const ps = f.fiscal_periods.starts_at as Date;
       const pe = f.fiscal_periods.ends_at as Date;
-      const hasActiveAssignment = arr.some((a) => {
-        if (!a.activeFlag) return false;
-        const startOk = a.startDate <= pe;
-        const endOk = !a.endDate || a.endDate >= ps;
+      const hasActiveModel = arr.some((m) => {
+        if (!m.is_active) return false;
+        const startOk = m.start_date <= pe;
+        const endOk = !m.end_date || m.end_date >= ps;
         return startOk && endOk;
       });
       
-      if (!hasActiveAssignment) return false;
+      if (!hasActiveModel) return false;
 
       // NUEVO: Verificar que el modelo tiene período abierto en tax_calendar
-      // que coincida con la periodicidad de la asignación del cliente
+      // que coincida con la periodicidad del modelo fiscal del cliente
       const periodicity = clientModelPeriodicity.get(key);
       if (!periodicity) return false;
 
@@ -2099,9 +2300,7 @@ export class PrismaStorage implements IStorage {
             email: true,
           },
         },
-        client_tax_assignments: {
-          include: {},
-        },
+        client_tax_models: true,
       },
     });
 
@@ -2127,6 +2326,8 @@ export class PrismaStorage implements IStorage {
     if (parsedQuarter !== null) {
       periodWhere.quarter = parsedQuarter;
     }
+    // IMPORTANTE: Solo mostrar tarjetas de períodos ABIERTOS
+    periodWhere.status = 'OPEN';
 
     const fiscal_periodss = await prisma.fiscal_periods.findMany({
       where: periodWhere,
@@ -2136,6 +2337,7 @@ export class PrismaStorage implements IStorage {
         quarter: true,
         ends_at: true,
         label: true,
+        status: true,
       },
     });
 
@@ -2199,15 +2401,20 @@ export class PrismaStorage implements IStorage {
         cells[code] = { active: false };
       }
 
-      for (const assignment of client.client_tax_assignments) {
-        const code = assignment.taxModelCode;
+      // Usar client_tax_models en lugar de client_tax_assignments
+      const taxModels = client.client_tax_models || [];
+      for (const taxModel of taxModels) {
+        const code = taxModel.model_number;
         if (!TAX_CONTROL_MODELS.includes(code)) continue;
         if (model && code !== String(model).toUpperCase()) continue;
-        if (periodicity && String(assignment.periodicidad).toUpperCase() !== String(periodicity).toUpperCase()) continue;
+        
+        // Convertir period_type a español para comparación
+        const periodicidadSpanish = this.periodTypeToSpanish(taxModel.period_type);
+        if (periodicity && periodicidadSpanish !== String(periodicity).toUpperCase()) continue;
 
-        const startDate = assignment.startDate ? new Date(assignment.startDate) : null;
-        const endDate = assignment.endDate ? new Date(assignment.endDate) : null;
-        const effectiveActive = Boolean(assignment.activeFlag) &&
+        const startDate = taxModel.start_date ? new Date(taxModel.start_date) : null;
+        const endDate = taxModel.end_date ? new Date(taxModel.end_date) : null;
+        const effectiveActive = Boolean(taxModel.is_active) &&
           (!startDate || startDate <= endOfYear) &&
           (!endDate || endDate >= startOfYear);
         const filingEntry = filingsMap.get(`${client.id}_${code}`);
@@ -2215,12 +2422,12 @@ export class PrismaStorage implements IStorage {
         const normalizedStatus = normalizeStatus(filing?.status, effectiveActive);
 
         cells[code] = {
-          assignmentId: assignment.id,
+          assignmentId: taxModel.id,
           active: effectiveActive,
-          periodicity: assignment.periodicidad,
-          startDate: assignment.startDate,
-          endDate: assignment.endDate,
-          activeFlag: assignment.activeFlag,
+          periodicity: periodicidadSpanish as "MENSUAL" | "TRIMESTRAL" | "ANUAL" | "ESPECIAL_FRACCIONADO",
+          startDate: taxModel.start_date,
+          endDate: taxModel.end_date,
+          activeFlag: taxModel.is_active,
           status: normalizedStatus,
           statusUpdatedAt: filing?.presentedAt ?? filing?.fiscal_periods?.ends_at ?? null,
           filingId: filing?.id ?? null,

@@ -1,6 +1,7 @@
 /**
  * Servicio de Recibos
  * Gestión CRUD de recibos basado en el sistema BASU
+ * ACTUALIZADO: Campos corregidos para coincidir con schema.prisma
  */
 
 import { PrismaClient, Prisma } from '@prisma/client';
@@ -8,47 +9,43 @@ import { PrismaClient, Prisma } from '@prisma/client';
 const prisma = new PrismaClient();
 
 export interface CreateReceiptDTO {
-  numeroRecibo: string;
-  fecha: Date | string;
-  clienteId?: string;
-  clienteNombre?: string;
-  clienteNif?: string;
-  clienteDireccion?: string;
-  clienteEmail?: string;
-  clienteTelefono?: string;
-  descripcionServicios: string;
-  importe: number;
-  porcentajeIva?: number;
-  notasAdicionales?: string;
-  pagado?: boolean;
-  fechaPago?: Date | string;
-  formaPago?: string;
-  creadoPor?: string;
+  numero: string;
+  year: number;
+  sequential: number;
+  client_id?: string;
+  recipient_name: string;
+  recipient_nif: string;
+  recipient_email: string;
+  recipient_address?: string;
+  concepto: string;
+  base_imponible: number;
+  iva_porcentaje?: number;
+  notes?: string;
+  status?: string; // BORRADOR, ENVIADO, ARCHIVADO
+  created_by: string;
 }
 
 export interface UpdateReceiptDTO {
-  numeroRecibo?: string;
-  fecha?: Date | string;
-  clienteId?: string | null;
-  clienteNombre?: string;
-  clienteNif?: string;
-  clienteDireccion?: string;
-  clienteEmail?: string;
-  clienteTelefono?: string;
-  descripcionServicios?: string;
-  importe?: number;
-  porcentajeIva?: number | null;
-  notasAdicionales?: string;
-  pagado?: boolean;
-  fechaPago?: Date | string | null;
-  formaPago?: string;
+  numero?: string;
+  client_id?: string | null;
+  recipient_name?: string;
+  recipient_nif?: string;
+  recipient_email?: string;
+  recipient_address?: string;
+  concepto?: string;
+  base_imponible?: number;
+  iva_porcentaje?: number | null;
+  notes?: string;
+  status?: string;
+  sent_at?: Date | string | null;
+  sent_by?: string | null;
 }
 
 export interface ReceiptFilters {
-  clienteId?: string;
-  pagado?: boolean;
-  fechaDesde?: Date | string;
-  fechaHasta?: Date | string;
+  client_id?: string;
+  status?: string;
+  yearFrom?: number;
+  yearTo?: number;
   search?: string;
 }
 
@@ -56,18 +53,19 @@ export class ReceiptService {
   /**
    * Calcular totales del recibo
    */
-  private calculateTotals(importe: number, porcentajeIva?: number) {
-    let baseImponible: number | null = null;
-    let total: number = importe;
+  private calculateTotals(base_imponible: number, iva_porcentaje?: number) {
+    const baseImponible = base_imponible;
+    let ivaImporte = 0;
+    let total = baseImponible;
 
-    if (porcentajeIva && porcentajeIva > 0) {
-      baseImponible = importe;
-      const ivaAmount = (baseImponible * porcentajeIva) / 100;
-      total = baseImponible + ivaAmount;
+    if (iva_porcentaje && iva_porcentaje > 0) {
+      ivaImporte = (baseImponible * iva_porcentaje) / 100;
+      total = baseImponible + ivaImporte;
     }
 
     return {
-      baseImponible,
+      base_imponible: baseImponible,
+      iva_importe: ivaImporte,
       total,
     };
   }
@@ -82,12 +80,12 @@ export class ReceiptService {
     // Buscar el último recibo del año
     const lastReceipt = await prisma.receipts.findFirst({
       where: {
-        numeroRecibo: {
+        numero: {
           startsWith: prefix,
         },
       },
       orderBy: {
-        numeroRecibo: 'desc',
+        numero: 'desc',
       },
     });
 
@@ -96,7 +94,7 @@ export class ReceiptService {
     }
 
     // Extraer el número y sumar 1
-    const lastNumber = parseInt(lastReceipt.numeroRecibo.split('-').pop() || '0');
+    const lastNumber = parseInt(lastReceipt.numero.split('-').pop() || '0');
     const newNumber = (lastNumber + 1).toString().padStart(4, '0');
 
     return `${prefix}${newNumber}`;
@@ -106,31 +104,42 @@ export class ReceiptService {
    * Crear un nuevo recibo
    */
   async create(data: CreateReceiptDTO) {
-    const { baseImponible, total } = this.calculateTotals(data.importe, data.porcentajeIva);
+    const { base_imponible, iva_importe, total } = this.calculateTotals(
+      data.base_imponible, 
+      data.iva_porcentaje
+    );
+
+    // Generar ID único
+    const id = `REC-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
     const receipt = await prisma.receipts.create({
       data: {
-        numeroRecibo: data.numeroRecibo,
-        fecha: new Date(data.fecha),
-        clienteId: data.clienteId,
-        clienteNombre: data.clienteNombre,
-        clienteNif: data.clienteNif,
-        clienteDireccion: data.clienteDireccion,
-        clienteEmail: data.clienteEmail,
-        clienteTelefono: data.clienteTelefono,
-        descripcionServicios: data.descripcionServicios,
-        importe: new Prisma.Decimal(data.importe),
-        porcentajeIva: data.porcentajeIva ? new Prisma.Decimal(data.porcentajeIva) : null,
-        baseImponible: baseImponible !== null ? new Prisma.Decimal(baseImponible) : null,
+        id,
+        numero: data.numero,
+        year: data.year,
+        sequential: data.sequential,
+        ...(data.client_id && {
+          clients: {
+            connect: { id: data.client_id }
+          }
+        }),
+        recipient_name: data.recipient_name,
+        recipient_nif: data.recipient_nif,
+        recipient_email: data.recipient_email,
+        recipient_address: data.recipient_address,
+        concepto: data.concepto,
+        base_imponible: new Prisma.Decimal(base_imponible),
+        iva_porcentaje: data.iva_porcentaje ? new Prisma.Decimal(data.iva_porcentaje) : new Prisma.Decimal(21),
+        iva_importe: new Prisma.Decimal(iva_importe),
         total: new Prisma.Decimal(total),
-        notasAdicionales: data.notasAdicionales,
-        pagado: data.pagado || false,
-        fechaPago: data.fechaPago ? new Date(data.fechaPago) : null,
-        formaPago: data.formaPago,
-        creadoPor: data.creadoPor,
+        notes: data.notes,
+        status: data.status || 'BORRADOR',
+        creator: {
+          connect: { id: data.created_by }
+        },
       },
       include: {
-        cliente: true,
+        clients: true,
       },
     });
 
@@ -143,32 +152,32 @@ export class ReceiptService {
   async findAll(filters?: ReceiptFilters) {
     const where: Prisma.receiptsWhereInput = {};
 
-    if (filters?.clienteId) {
-      where.clienteId = filters.clienteId;
+    if (filters?.client_id) {
+      where.client_id = filters.client_id;
     }
 
-    if (filters?.pagado !== undefined) {
-      where.pagado = filters.pagado;
+    if (filters?.status) {
+      where.status = filters.status;
     }
 
-    if (filters?.fechaDesde || filters?.fechaHasta) {
-      where.fecha = {};
-      if (filters.fechaDesde) {
-        where.fecha.gte = new Date(filters.fechaDesde);
+    if (filters?.yearFrom || filters?.yearTo) {
+      where.year = {};
+      if (filters.yearFrom) {
+        where.year.gte = filters.yearFrom;
       }
-      if (filters.fechaHasta) {
-        where.fecha.lte = new Date(filters.fechaHasta);
+      if (filters.yearTo) {
+        where.year.lte = filters.yearTo;
       }
     }
 
     if (filters?.search) {
       where.OR = [
-        { numeroRecibo: { contains: filters.search } },
-        { clienteNombre: { contains: filters.search } },
-        { clienteNif: { contains: filters.search } },
-        { descripcionServicios: { contains: filters.search } },
+        { numero: { contains: filters.search } },
+        { recipient_name: { contains: filters.search } },
+        { recipient_nif: { contains: filters.search } },
+        { concepto: { contains: filters.search } },
         {
-          cliente: {
+          clients: {
             OR: [
               { razonSocial: { contains: filters.search } },
               { nifCif: { contains: filters.search } },
@@ -181,10 +190,10 @@ export class ReceiptService {
     const receipts = await prisma.receipts.findMany({
       where,
       include: {
-        cliente: true,
+        clients: true,
       },
       orderBy: {
-        fecha: 'desc',
+        created_at: 'desc',
       },
     });
 
@@ -198,7 +207,7 @@ export class ReceiptService {
     const receipt = await prisma.receipts.findUnique({
       where: { id },
       include: {
-        cliente: true,
+        clients: true,
       },
     });
 
@@ -216,49 +225,63 @@ export class ReceiptService {
     // Verificar que existe
     await this.findById(id);
 
-    // Si se actualiza el importe o IVA, recalcular totales
-    let baseImponible: Prisma.Decimal | null | undefined;
+    // Si se actualiza el base_imponible o IVA, recalcular totales
+    let iva_importe: Prisma.Decimal | undefined;
     let total: Prisma.Decimal | undefined;
 
-    if (data.importe !== undefined || data.porcentajeIva !== undefined) {
+    if (data.base_imponible !== undefined || data.iva_porcentaje !== undefined) {
       const currentReceipt = await prisma.receipts.findUnique({
         where: { id },
-        select: { importe: true, porcentajeIva: true },
+        select: { base_imponible: true, iva_porcentaje: true },
       });
 
-      const newImporte = data.importe !== undefined ? data.importe : Number(currentReceipt!.importe);
-      const newIva = data.porcentajeIva !== undefined ? data.porcentajeIva : (currentReceipt!.porcentajeIva ? Number(currentReceipt!.porcentajeIva) : undefined);
+      const newBaseImponible = data.base_imponible !== undefined 
+        ? data.base_imponible 
+        : Number(currentReceipt!.base_imponible);
+      const newIva = data.iva_porcentaje !== undefined 
+        ? data.iva_porcentaje 
+        : Number(currentReceipt!.iva_porcentaje);
 
-      const calculated = this.calculateTotals(newImporte, newIva);
-      baseImponible = calculated.baseImponible !== null ? new Prisma.Decimal(calculated.baseImponible) : null;
+      const calculated = this.calculateTotals(newBaseImponible, newIva);
+      iva_importe = new Prisma.Decimal(calculated.iva_importe);
       total = new Prisma.Decimal(calculated.total);
     }
 
     const updateData: Prisma.receiptsUpdateInput = {};
 
-    if (data.numeroRecibo !== undefined) updateData.numeroRecibo = data.numeroRecibo;
-    if (data.fecha !== undefined) updateData.fecha = new Date(data.fecha);
-    if (data.clienteId !== undefined) updateData.clienteId = data.clienteId;
-    if (data.clienteNombre !== undefined) updateData.clienteNombre = data.clienteNombre;
-    if (data.clienteNif !== undefined) updateData.clienteNif = data.clienteNif;
-    if (data.clienteDireccion !== undefined) updateData.clienteDireccion = data.clienteDireccion;
-    if (data.clienteEmail !== undefined) updateData.clienteEmail = data.clienteEmail;
-    if (data.clienteTelefono !== undefined) updateData.clienteTelefono = data.clienteTelefono;
-    if (data.descripcionServicios !== undefined) updateData.descripcionServicios = data.descripcionServicios;
-    if (data.importe !== undefined) updateData.importe = new Prisma.Decimal(data.importe);
-    if (data.porcentajeIva !== undefined) updateData.porcentajeIva = data.porcentajeIva !== null ? new Prisma.Decimal(data.porcentajeIva) : null;
-    if (baseImponible !== undefined) updateData.baseImponible = baseImponible;
+    if (data.numero !== undefined) updateData.numero = data.numero;
+    if (data.client_id !== undefined) {
+      if (data.client_id === null) {
+        updateData.clients = { disconnect: true };
+      } else {
+        updateData.clients = { connect: { id: data.client_id } };
+      }
+    }
+    if (data.recipient_name !== undefined) updateData.recipient_name = data.recipient_name;
+    if (data.recipient_nif !== undefined) updateData.recipient_nif = data.recipient_nif;
+    if (data.recipient_email !== undefined) updateData.recipient_email = data.recipient_email;
+    if (data.recipient_address !== undefined) updateData.recipient_address = data.recipient_address;
+    if (data.concepto !== undefined) updateData.concepto = data.concepto;
+    if (data.base_imponible !== undefined) updateData.base_imponible = new Prisma.Decimal(data.base_imponible);
+    if (data.iva_porcentaje !== undefined) updateData.iva_porcentaje = data.iva_porcentaje !== null ? new Prisma.Decimal(data.iva_porcentaje) : new Prisma.Decimal(21);
+    if (iva_importe !== undefined) updateData.iva_importe = iva_importe;
     if (total !== undefined) updateData.total = total;
-    if (data.notasAdicionales !== undefined) updateData.notasAdicionales = data.notasAdicionales;
-    if (data.pagado !== undefined) updateData.pagado = data.pagado;
-    if (data.fechaPago !== undefined) updateData.fechaPago = data.fechaPago !== null ? new Date(data.fechaPago) : null;
-    if (data.formaPago !== undefined) updateData.formaPago = data.formaPago;
+    if (data.notes !== undefined) updateData.notes = data.notes;
+    if (data.status !== undefined) updateData.status = data.status;
+    if (data.sent_at !== undefined) updateData.sent_at = data.sent_at !== null ? new Date(data.sent_at) : null;
+    if (data.sent_by !== undefined) {
+      if (data.sent_by === null) {
+        updateData.sender = { disconnect: true };
+      } else {
+        updateData.sender = { connect: { id: data.sent_by } };
+      }
+    }
 
     const receipt = await prisma.receipts.update({
       where: { id },
       data: updateData,
       include: {
-        cliente: true,
+        clients: true,
       },
     });
 
@@ -276,13 +299,13 @@ export class ReceiptService {
   }
 
   /**
-   * Marcar como pagado
+   * Marcar como enviado
    */
-  async markAsPaid(id: string, formaPago: string, fechaPago?: Date | string) {
+  async markAsSent(id: string, sent_by: string) {
     return this.update(id, {
-      pagado: true,
-      formaPago,
-      fechaPago: fechaPago ? new Date(fechaPago) : new Date(),
+      status: 'ENVIADO',
+      sent_at: new Date(),
+      sent_by,
     });
   }
 
@@ -290,31 +313,33 @@ export class ReceiptService {
    * Obtener estadísticas de recibos
    */
   async getStats() {
-    const [totalRecibos, recibos Pagados, recibosPendientes, totalImporte, totalCobrado, totalPendiente] =
+    const [totalRecibos, recibosBorrador, recibosEnviados, recibosArchivados, totalImporte, totalEnviado, totalBorrador] =
       await Promise.all([
         prisma.receipts.count(),
-        prisma.receipts.count({ where: { pagado: true } }),
-        prisma.receipts.count({ where: { pagado: false } }),
+        prisma.receipts.count({ where: { status: 'BORRADOR' } }),
+        prisma.receipts.count({ where: { status: 'ENVIADO' } }),
+        prisma.receipts.count({ where: { status: 'ARCHIVADO' } }),
         prisma.receipts.aggregate({
           _sum: { total: true },
         }),
         prisma.receipts.aggregate({
-          where: { pagado: true },
+          where: { status: 'ENVIADO' },
           _sum: { total: true },
         }),
         prisma.receipts.aggregate({
-          where: { pagado: false },
+          where: { status: 'BORRADOR' },
           _sum: { total: true },
         }),
       ]);
 
     return {
       totalRecibos,
-      recibosPagados,
-      recibosPendientes,
+      recibosBorrador,
+      recibosEnviados,
+      recibosArchivados,
       totalImporte: Number(totalImporte._sum.total || 0),
-      totalCobrado: Number(totalCobrado._sum.total || 0),
-      totalPendiente: Number(totalPendiente._sum.total || 0),
+      totalEnviado: Number(totalEnviado._sum.total || 0),
+      totalBorrador: Number(totalBorrador._sum.total || 0),
     };
   }
 }

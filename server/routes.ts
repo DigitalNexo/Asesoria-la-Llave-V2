@@ -36,6 +36,9 @@ import budgetParametersRouter from './budget-parameters';
 import budgetTemplatesRouter from './budget-templates';
 import documentsRouter from './routes/documents.routes';
 import githubUpdatesRouter from './routes/github-updates.routes';
+import taxCalendarRouter from './routes/tax-calendar.routes';
+import clientTaxRouter from './routes/client-tax.routes';
+import taxObligationsRouter from './routes/tax-obligations.routes';
 import { checkForUpdates, getCurrentVersion } from "./services/version-service.js";
 import { createSystemBackup, listBackups, restoreFromBackup } from "./services/backup-service-wrapper";
 import { performSystemUpdate, verifyGitSetup, getUpdateHistory } from "./services/update-service-wrapper";
@@ -966,15 +969,15 @@ export async function registerRoutes(app: Express, options?: { skipDbInit?: bool
         }
         
         // Verificar si el cliente tiene impuestos asociados
-        const clientTaxes = await prisma.client_tax.findMany({
-          where: { clientId: id }
+        const clientTaxModels = await prisma.client_tax_models.findMany({
+          where: { client_id: id }
         });
         
-        const assignmentCount = await prisma.client_tax_assignments.count({
+        const filingCount = await prisma.client_tax_filings.count({
           where: { clientId: id },
         });
         
-        if (clientTaxes.length > 0 || assignmentCount > 0) {
+        if (clientTaxModels.length > 0 || filingCount > 0) {
           // SOFT DELETE: Solo desactivar si tiene impuestos
           const updated = await storage.updateClient(id, { isActive: false });
           
@@ -982,7 +985,7 @@ export async function registerRoutes(app: Express, options?: { skipDbInit?: bool
             usuarioId: (req as AuthRequest).user!.id,
             accion: `Desactivó el cliente ${client.razonSocial}`,
             modulo: "clientes",
-            detalles: `Cliente con ${clientTaxes.length} impuestos y ${assignmentCount} asignaciones fiscales asociadas`,
+            detalles: `Cliente con ${clientTaxModels.length} modelos fiscales y ${filingCount} presentaciones asociadas`,
           });
           
           // Registrar auditoría
@@ -2304,6 +2307,11 @@ export async function registerRoutes(app: Express, options?: { skipDbInit?: bool
   // Documents routes (incluye recibos, protección de datos, domiciliación bancaria y plantillas)
   // Removido authenticateToken de aquí porque las rutas individuales ya lo tienen
   app.use('/api/documents', documentsRouter);
+
+  // Rutas del sistema de impuestos
+  app.use('/api/tax-calendar', taxCalendarRouter);
+  app.use('/api/client-tax', clientTaxRouter);
+  app.use('/api/tax-obligations', taxObligationsRouter);
   // GitHub updates routes (webhook y gestión de actualizaciones)
   app.use('/api/system/github', githubUpdatesRouter);
   app.get(
@@ -3693,13 +3701,13 @@ export async function registerRoutes(app: Express, options?: { skipDbInit?: bool
     }
   );
 
-  // ==================== TAX CONTROL - REQUIREMENTS ====================
+  // ==================== TAX CONTROL - REQUIREMENTS (DEPRECATED) ====================
+  // NOTA: La tabla client_tax_requirements fue eliminada - funcionalidad no implementada
+  
   app.get("/api/tax-requirements", authenticateToken, async (req: AuthRequest, res: Response) => {
     try {
-      const requirements = await prisma.client_tax_requirements.findMany({
-        include: { clients: true }
-      });
-      res.json(requirements);
+      // Retornar array vacío ya que la tabla no existe
+      res.json([]);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -3707,21 +3715,8 @@ export async function registerRoutes(app: Express, options?: { skipDbInit?: bool
 
   app.post("/api/tax-requirements", authenticateToken, checkPermission("taxes:create"), async (req: AuthRequest, res: Response) => {
     try {
-      const { clientId, taxModelCode, impuesto, required = true, note, colorTag, detalle } = req.body;
-      const requirement = await prisma.client_tax_requirements.create({
-        data: {
-          id: randomUUID(),
-          clientId,
-          taxModelCode: taxModelCode || null,
-          impuesto: impuesto || taxModelCode || 'SIN_ESPECIFICAR',
-          detalle: detalle || null,
-          required,
-          note: note || null,
-          color_tag: colorTag || null,
-        },
-        include: { clients: true }
-      });
-      res.json(requirement);
+      // Funcionalidad no implementada
+      res.status(501).json({ error: "Tax requirements no longer supported" });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -3729,18 +3724,8 @@ export async function registerRoutes(app: Express, options?: { skipDbInit?: bool
 
   app.patch("/api/tax-requirements/:id/toggle", authenticateToken, checkPermission("taxes:update"), async (req: AuthRequest, res: Response) => {
     try {
-      const { id } = req.params;
-      const current = await prisma.client_tax_requirements.findUnique({ where: { id } });
-      if (!current) {
-        return res.status(404).json({ error: "Requisito no encontrado" });
-      }
-
-      const updated = await prisma.client_tax_requirements.update({
-        where: { id },
-        data: { required: !current.required },
-        include: { clients: true }
-      });
-      res.json(updated);
+      // Funcionalidad no implementada
+      res.status(501).json({ error: "Tax requirements no longer supported" });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -3748,14 +3733,8 @@ export async function registerRoutes(app: Express, options?: { skipDbInit?: bool
 
   app.patch("/api/tax-requirements/:id", authenticateToken, checkPermission("taxes:update"), async (req: AuthRequest, res: Response) => {
     try {
-      const { id } = req.params;
-      const { note, color_tag: colorTag } = req.body;
-      const updated = await prisma.client_tax_requirements.update({
-        where: { id },
-        data: { note, color_tag: colorTag },
-        include: { clients: true }
-      });
-      res.json(updated);
+      // Funcionalidad no implementada
+      res.status(501).json({ error: "Tax requirements no longer supported" });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -4728,32 +4707,32 @@ export async function registerRoutes(app: Express, options?: { skipDbInit?: bool
           },
         });
 
-        // Obtener todas las asignaciones activas
-        const assignments = await prisma.client_tax_assignments.findMany({
-          where: { activeFlag: true },
+        // Obtener todas las asignaciones activas (modelos activos)
+        const activeModels = await prisma.client_tax_models.findMany({
+          where: { is_active: true },
         });
 
-        // Crear mapa de asignaciones por cliente + modelo
-        const assignmentMap = new Map<string, typeof assignments>();
-        assignments.forEach(a => {
-          const key = `${a.clientId}:${a.taxModelCode}`;
-          if (!assignmentMap.has(key)) assignmentMap.set(key, []);
-          assignmentMap.get(key)!.push(a);
+        // Crear mapa de modelos por cliente + modelo
+        const modelMap = new Map<string, typeof activeModels>();
+        activeModels.forEach(m => {
+          const key = `${m.client_id}:${m.model_number}`;
+          if (!modelMap.has(key)) modelMap.set(key, []);
+          modelMap.get(key)!.push(m);
         });
 
         // Identificar filings huérfanos
         const orphanIds: string[] = [];
         for (const filing of allFilings) {
           const key = `${filing.clientId}:${filing.taxModelCode}`;
-          const clientAssignments = assignmentMap.get(key);
+          const clientModels = modelMap.get(key);
           
-          if (!clientAssignments || clientAssignments.length === 0) {
-            // No hay asignación para este modelo
+          if (!clientModels || clientModels.length === 0) {
+            // No hay modelo activo para este filing
             orphanIds.push(filing.id);
             continue;
           }
 
-          // Verificar si el filing está dentro del rango de alguna asignación
+          // Verificar si el filing está dentro del rango de algún modelo activo
           const period = filing.fiscal_periods;
           if (!period) {
             orphanIds.push(filing.id);
@@ -4763,13 +4742,13 @@ export async function registerRoutes(app: Express, options?: { skipDbInit?: bool
           const ps = period.starts_at as Date;
           const pe = period.ends_at as Date;
 
-          const hasValidAssignment = clientAssignments.some(a => {
-            const startOk = a.startDate <= pe;
-            const endOk = !a.endDate || a.endDate >= ps;
+          const hasValidModel = clientModels.some(m => {
+            const startOk = m.start_date <= pe;
+            const endOk = !m.end_date || m.end_date >= ps;
             return startOk && endOk;
           });
 
-          if (!hasValidAssignment) {
+          if (!hasValidModel) {
             orphanIds.push(filing.id);
           }
         }

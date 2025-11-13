@@ -30,34 +30,11 @@ export default defineConfig({
   build: {
     outDir: path.resolve(import.meta.dirname, "dist/public"),
     emptyOutDir: true,
-    // Optimizaciones de build
-    target: 'es2020', // Target más moderno para mejor optimización
-    minify: 'esbuild', // esbuild es más rápido que terser
-    sourcemap: false, // Desactivar sourcemaps en producción acelera el build
-    cssCodeSplit: true, // Split CSS para mejor caching
-    chunkSizeWarningLimit: 1000, // Aumentar límite para reducir warnings
-    rollupOptions: {
-      output: {
-        // Optimizar chunking para mejor caching
-        manualChunks: {
-          'react-vendor': ['react', 'react-dom', 'react-router-dom'],
-          'ui-vendor': ['lucide-react', '@radix-ui/react-toast', '@radix-ui/react-dialog'],
-        },
-      },
-    },
-    // Optimizaciones de rendimiento
-    reportCompressedSize: false, // No reportar tamaño comprimido (más rápido)
-    assetsInlineLimit: 4096, // Inline assets pequeños
   },
   server: {
     fs: {
       strict: true,
       deny: ["**/.*"],
     },
-  },
-  // Optimizaciones adicionales
-  esbuild: {
-    logOverride: { 'this-is-undefined-in-esm': 'silent' }, // Reducir warnings
-    treeShaking: true,
   },
 });

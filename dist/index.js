@@ -1844,25 +1844,6 @@ function mapPrismaTaxModelsConfig(config) {
     updatedAt: config.updatedAt
   };
 }
-function mapPrismaClientTaxAssignment(assignment) {
-  const taxModelConfig = assignment.taxModel || assignment.tax_models_config || null;
-  return {
-    id: assignment.id,
-    clientId: assignment.clientId,
-    taxModelCode: assignment.taxModelCode,
-    periodicity: assignment.periodicidad,
-    startDate: assignment.startDate,
-    endDate: assignment.endDate,
-    activeFlag: assignment.activeFlag,
-    notes: assignment.notes,
-    createdAt: assignment.createdAt,
-    updatedAt: assignment.updatedAt,
-    effectiveActive: !assignment.endDate && Boolean(assignment.activeFlag),
-    // Backwards-compatible: older code expects `tax_models`, newer frontend expects `taxModel` (camelCase)
-    tax_models: taxModelConfig ? mapPrismaTaxModelsConfig(taxModelConfig) : null,
-    taxModel: taxModelConfig ? mapPrismaTaxModelsConfig(taxModelConfig) : null
-  };
-}
 function getTaxModelName(code) {
   return TAX_MODEL_METADATA[code]?.name ?? `Modelo ${code}`;
 }
@@ -1938,8 +1919,20 @@ function formatPeriodLabel(tax_periods) {
   return `${year}`;
 }
 function mapPrismaClient(client) {
-  const taxAssignmentsSource = client.client_tax_assignments || client.taxAssignments || [];
+  const taxModelsSource = client.client_tax_models || client.taxModels || [];
   const employeesSource = client.client_employees || client.employees || [];
+  const taxAssignments = Array.isArray(taxModelsSource) ? taxModelsSource.map((m) => ({
+    id: m.id,
+    clientId: m.client_id,
+    taxModelCode: m.model_number,
+    periodicity: m.period_type,
+    startDate: m.start_date,
+    endDate: m.end_date,
+    activeFlag: m.is_active,
+    notes: m.notes,
+    createdAt: m.created_at,
+    updatedAt: m.updated_at
+  })) : [];
   return {
     id: client.id,
     razonSocial: client.razonSocial,
@@ -1954,21 +1947,8 @@ function mapPrismaClient(client) {
     taxModels: client.taxModels ?? client.tax_models ?? null,
     isActive: client.isActive ?? true,
     notes: client.notes ?? null,
-    taxAssignments: Array.isArray(taxAssignmentsSource) ? taxAssignmentsSource.map(mapPrismaClientTaxAssignment) : [],
+    taxAssignments,
     employees: Array.isArray(employeesSource) ? employeesSource.map(mapPrismaClientEmployee) : []
-  };
-}
-function mapPrismaClientTax(record) {
-  return {
-    id: record.id,
-    clientId: record.client_id,
-    taxPeriodId: record.tax_period_id,
-    estado: record.estado,
-    notas: record.notas,
-    displayText: record.display_text,
-    colorTag: record.color_tag,
-    fechaCreacion: record.fecha_creacion,
-    fechaActualizacion: record.fecha_actualizacion
   };
 }
 function mapPrismaClientEmployee(employee) {
@@ -2187,11 +2167,7 @@ var PrismaStorage = class {
             }
           }
         },
-        client_tax_assignments: {
-          include: {
-            tax_models_config: true
-          }
-        }
+        client_tax_models: true
       }
     });
     return clients.map(mapPrismaClient);
@@ -2242,11 +2218,7 @@ var PrismaStorage = class {
             }
           }
         },
-        client_tax_assignments: {
-          include: {
-            tax_models_config: true
-          }
-        }
+        client_tax_models: true
       }
     });
     return client ? mapPrismaClient(client) : void 0;
@@ -2266,11 +2238,7 @@ var PrismaStorage = class {
             }
           }
         },
-        client_tax_assignments: {
-          include: {
-            tax_models_config: true
-          }
-        }
+        client_tax_models: true
       }
     });
     return client ? mapPrismaClient(client) : void 0;
@@ -2309,11 +2277,7 @@ var PrismaStorage = class {
             }
           }
         },
-        client_tax_assignments: {
-          include: {
-            tax_models_config: true
-          }
-        }
+        client_tax_models: true
       }
     });
     return mapPrismaClient(client);
@@ -2345,11 +2309,7 @@ var PrismaStorage = class {
               }
             }
           },
-          client_tax_assignments: {
-            include: {
-              tax_models_config: true
-            }
-          }
+          client_tax_models: true
         }
       });
       return mapPrismaClient(client);
@@ -2462,10 +2422,10 @@ var PrismaStorage = class {
     });
   }
   async getAssignmentsByTaxModel(taxModelCode) {
-    const assignments = await prisma.client_tax_assignments.findMany({
+    const models = await prisma.client_tax_models.findMany({
       where: {
-        taxModelCode,
-        activeFlag: true
+        model_number: taxModelCode,
+        is_active: true
       },
       include: {
         clients: {
@@ -2477,99 +2437,191 @@ var PrismaStorage = class {
         }
       }
     });
-    return assignments;
+    return models.map((m) => ({
+      id: m.id,
+      clientId: m.client_id,
+      taxModelCode: m.model_number,
+      periodicity: this.periodTypeToSpanish(m.period_type),
+      startDate: m.start_date,
+      endDate: m.end_date,
+      activeFlag: m.is_active,
+      clients: m.clients,
+      effectiveActive: m.is_active && (!m.end_date || m.end_date > /* @__PURE__ */ new Date())
+    }));
+  }
+  periodTypeToSpanish(periodType) {
+    const map = {
+      "MONTHLY": "MENSUAL",
+      "QUARTERLY": "TRIMESTRAL",
+      "ANNUAL": "ANUAL",
+      "SPECIAL": "ESPECIAL_FRACCIONADO"
+    };
+    return map[periodType] || periodType;
+  }
+  spanishToEnglish(periodicidad) {
+    const map = {
+      "MENSUAL": "MONTHLY",
+      "TRIMESTRAL": "QUARTERLY",
+      "ANUAL": "ANNUAL",
+      "ESPECIAL_FRACCIONADO": "SPECIAL"
+    };
+    return map[periodicidad] || periodicidad;
   }
   async findClientTaxAssignmentByCode(clientId, taxModelCode) {
-    const assignment = await prisma.client_tax_assignments.findFirst({
+    const model = await prisma.client_tax_models.findFirst({
       where: {
-        clientId,
-        taxModelCode
-      },
-      include: {
-        tax_models_config: true
+        client_id: clientId,
+        model_number: taxModelCode
       }
     });
-    return assignment ? mapPrismaClientTaxAssignment(assignment) : null;
+    if (!model) return null;
+    return {
+      id: model.id,
+      clientId: model.client_id,
+      taxModelCode: model.model_number,
+      periodicity: this.periodTypeToSpanish(model.period_type),
+      startDate: model.start_date,
+      endDate: model.end_date,
+      activeFlag: model.is_active,
+      notes: model.notes,
+      createdAt: model.created_at,
+      updatedAt: model.updated_at,
+      effectiveActive: model.is_active && (!model.end_date || model.end_date > /* @__PURE__ */ new Date())
+    };
   }
   async getClientTaxAssignments(clientId) {
-    const assignments = await prisma.client_tax_assignments.findMany({
-      where: { clientId },
-      orderBy: [{ startDate: "desc" }, { taxModelCode: "asc" }],
-      include: {
-        tax_models_config: true
-      }
+    const models = await prisma.client_tax_models.findMany({
+      where: { client_id: clientId },
+      orderBy: [{ start_date: "desc" }, { model_number: "asc" }]
     });
-    return assignments.map(mapPrismaClientTaxAssignment);
+    return models.map((m) => ({
+      id: m.id,
+      clientId: m.client_id,
+      taxModelCode: m.model_number,
+      periodicity: this.periodTypeToSpanish(m.period_type),
+      startDate: m.start_date,
+      endDate: m.end_date,
+      activeFlag: m.is_active,
+      notes: m.notes,
+      createdAt: m.created_at,
+      updatedAt: m.updated_at,
+      effectiveActive: m.is_active && (!m.end_date || m.end_date > /* @__PURE__ */ new Date())
+    }));
   }
   async getClientTaxAssignment(id) {
-    const assignment = await prisma.client_tax_assignments.findUnique({
-      where: { id },
-      include: {
-        tax_models_config: true
-      }
+    const model = await prisma.client_tax_models.findUnique({
+      where: { id }
     });
-    return assignment ? mapPrismaClientTaxAssignment(assignment) : null;
+    if (!model) return null;
+    return {
+      id: model.id,
+      clientId: model.client_id,
+      taxModelCode: model.model_number,
+      periodicity: this.periodTypeToSpanish(model.period_type),
+      startDate: model.start_date,
+      endDate: model.end_date,
+      activeFlag: model.is_active,
+      notes: model.notes,
+      createdAt: model.created_at,
+      updatedAt: model.updated_at,
+      effectiveActive: model.is_active && (!model.end_date || model.end_date > /* @__PURE__ */ new Date())
+    };
   }
   buildTaxAssignmentUpdateData(data) {
     const payload = {};
-    if (data.taxModelCode !== void 0) payload.taxModelCode = data.taxModelCode;
-    if (data.periodicity !== void 0) payload.periodicidad = data.periodicity;
-    if (data.startDate !== void 0) payload.startDate = data.startDate;
-    if (data.endDate !== void 0) payload.endDate = data.endDate;
-    if (data.activeFlag !== void 0) payload.activeFlag = data.activeFlag;
+    if (data.taxModelCode !== void 0) payload.model_number = data.taxModelCode;
+    if (data.periodicity !== void 0) payload.period_type = this.spanishToEnglish(data.periodicity);
+    if (data.startDate !== void 0) payload.start_date = data.startDate;
+    if (data.endDate !== void 0) payload.end_date = data.endDate;
+    if (data.activeFlag !== void 0) payload.is_active = data.activeFlag;
     if (data.notes !== void 0) payload.notes = data.notes;
     return payload;
   }
   async createClientTaxAssignment(clientId, data) {
-    const assignment = await prisma.client_tax_assignments.create({
+    const model = await prisma.client_tax_models.create({
       data: {
         id: randomUUID(),
-        clientId,
-        taxModelCode: data.taxModelCode,
-        periodicidad: data.periodicity,
-        startDate: data.startDate,
-        endDate: data.endDate ?? null,
-        activeFlag: data.activeFlag ?? true,
-        notes: data.notes ?? null,
-        updatedAt: /* @__PURE__ */ new Date()
-      },
-      include: {
-        tax_models_config: true
+        client_id: clientId,
+        model_number: data.taxModelCode,
+        period_type: this.spanishToEnglish(data.periodicity),
+        start_date: data.startDate,
+        end_date: data.endDate || null,
+        is_active: data.activeFlag !== void 0 ? data.activeFlag : true,
+        notes: data.notes || null
       }
     });
-    return mapPrismaClientTaxAssignment(assignment);
+    return {
+      id: model.id,
+      clientId: model.client_id,
+      taxModelCode: model.model_number,
+      periodicity: this.periodTypeToSpanish(model.period_type),
+      startDate: model.start_date,
+      endDate: model.end_date,
+      activeFlag: model.is_active,
+      notes: model.notes,
+      createdAt: model.created_at,
+      updatedAt: model.updated_at,
+      effectiveActive: model.is_active && (!model.end_date || model.end_date > /* @__PURE__ */ new Date())
+    };
   }
   async updateClientTaxAssignment(id, data) {
-    const assignment = await prisma.client_tax_assignments.update({
+    const model = await prisma.client_tax_models.update({
       where: { id },
-      data: this.buildTaxAssignmentUpdateData(data),
-      include: {
-        tax_models_config: true
-      }
+      data: this.buildTaxAssignmentUpdateData(data)
     });
-    return mapPrismaClientTaxAssignment(assignment);
+    return {
+      id: model.id,
+      clientId: model.client_id,
+      taxModelCode: model.model_number,
+      periodicity: this.periodTypeToSpanish(model.period_type),
+      startDate: model.start_date,
+      endDate: model.end_date,
+      activeFlag: model.is_active,
+      notes: model.notes,
+      createdAt: model.created_at,
+      updatedAt: model.updated_at,
+      effectiveActive: model.is_active && (!model.end_date || model.end_date > /* @__PURE__ */ new Date())
+    };
   }
   async deleteClientTaxAssignment(id) {
-    const assignment = await prisma.client_tax_assignments.delete({
-      where: { id },
-      include: {
-        tax_models_config: true
-      }
+    const model = await prisma.client_tax_models.delete({
+      where: { id }
     });
-    return mapPrismaClientTaxAssignment(assignment);
+    return {
+      id: model.id,
+      clientId: model.client_id,
+      taxModelCode: model.model_number,
+      periodicity: this.periodTypeToSpanish(model.period_type),
+      startDate: model.start_date,
+      endDate: model.end_date,
+      activeFlag: model.is_active,
+      notes: model.notes,
+      createdAt: model.created_at,
+      updatedAt: model.updated_at,
+      effectiveActive: false
+    };
   }
   async softDeactivateClientTaxAssignment(id, endDate) {
-    const assignment = await prisma.client_tax_assignments.update({
+    const model = await prisma.client_tax_models.update({
       where: { id },
       data: {
-        endDate,
-        activeFlag: false
-      },
-      include: {
-        tax_models_config: true
+        end_date: endDate,
+        is_active: false
       }
     });
-    return mapPrismaClientTaxAssignment(assignment);
+    return {
+      id: model.id,
+      clientId: model.client_id,
+      taxModelCode: model.model_number,
+      periodicity: this.periodTypeToSpanish(model.period_type),
+      startDate: model.start_date,
+      endDate: model.end_date,
+      activeFlag: model.is_active,
+      notes: model.notes,
+      createdAt: model.created_at,
+      updatedAt: model.updated_at,
+      effectiveActive: false
+    };
   }
   async hasAssignmentHistoricFilings(clientId, taxModelCode) {
     const count = await prisma.client_tax_filings.count({
@@ -2582,16 +2634,16 @@ var PrismaStorage = class {
   }
   async bulkRemoveClientTaxAssignments(clientId, options) {
     const codesFilter = (options?.codes || []).map((c) => String(c).toUpperCase());
-    const whereAssignments = {
-      clientId,
-      ...codesFilter.length > 0 ? { taxModelCode: { in: codesFilter } } : {}
+    const whereModels = {
+      client_id: clientId,
+      ...codesFilter.length > 0 ? { model_number: { in: codesFilter } } : {}
     };
-    const assignments = await prisma.client_tax_assignments.findMany({
-      where: whereAssignments,
-      select: { id: true, taxModelCode: true }
+    const models = await prisma.client_tax_models.findMany({
+      where: whereModels,
+      select: { id: true, model_number: true }
     });
-    if (assignments.length === 0) return { deleted: 0, deactivated: 0 };
-    const codes = Array.from(new Set(assignments.map((a) => String(a.taxModelCode))));
+    if (models.length === 0) return { deleted: 0, deactivated: 0 };
+    const codes = Array.from(new Set(models.map((m) => String(m.model_number))));
     const filings = await prisma.client_tax_filings.findMany({
       where: { clientId, taxModelCode: { in: codes } },
       select: { taxModelCode: true }
@@ -2603,9 +2655,9 @@ var PrismaStorage = class {
     let deleted = 0;
     await prisma.$transaction(async (tx) => {
       if (toDeactivate.length > 0) {
-        const res = await tx.client_tax_assignments.updateMany({
-          where: { clientId, taxModelCode: { in: toDeactivate } },
-          data: { endDate: /* @__PURE__ */ new Date(), activeFlag: false }
+        const res = await tx.client_tax_models.updateMany({
+          where: { client_id: clientId, model_number: { in: toDeactivate } },
+          data: { end_date: /* @__PURE__ */ new Date(), is_active: false }
         });
         deactivated += res.count;
       }
@@ -2613,8 +2665,8 @@ var PrismaStorage = class {
         if (options?.hard) {
           await tx.client_tax_filings.deleteMany({ where: { clientId, taxModelCode: { in: toDelete } } });
         }
-        const res = await tx.client_tax_assignments.deleteMany({
-          where: { clientId, taxModelCode: { in: toDelete } }
+        const res = await tx.client_tax_models.deleteMany({
+          where: { client_id: clientId, model_number: { in: toDelete } }
         });
         deleted += res.count;
       }
@@ -2625,30 +2677,30 @@ var PrismaStorage = class {
     if (!Array.isArray(assignmentIds) || assignmentIds.length === 0) {
       return { deleted: 0, deactivated: 0 };
     }
-    const assignments = await prisma.client_tax_assignments.findMany({
-      where: { id: { in: assignmentIds }, clientId },
-      select: { id: true, taxModelCode: true }
+    const models = await prisma.client_tax_models.findMany({
+      where: { id: { in: assignmentIds }, client_id: clientId },
+      select: { id: true, model_number: true }
     });
-    if (assignments.length === 0) return { deleted: 0, deactivated: 0 };
+    if (models.length === 0) return { deleted: 0, deactivated: 0 };
     let deleted = 0;
     let deactivated = 0;
     await prisma.$transaction(async (tx) => {
       if (options?.hard) {
-        const codeSet = new Set(assignments.map((a) => String(a.taxModelCode)));
+        const codeSet = new Set(models.map((m) => String(m.model_number)));
         await tx.client_tax_filings.deleteMany({ where: { clientId, taxModelCode: { in: Array.from(codeSet) } } });
       }
-      for (const a of assignments) {
+      for (const m of models) {
         const hasHistory = options?.hard ? 0 : await tx.client_tax_filings.count({
-          where: { clientId, taxModelCode: a.taxModelCode }
+          where: { clientId, taxModelCode: m.model_number }
         });
         if (hasHistory > 0) {
-          const res = await tx.client_tax_assignments.update({
-            where: { id: a.id },
-            data: { endDate: /* @__PURE__ */ new Date(), activeFlag: false }
+          const res = await tx.client_tax_models.update({
+            where: { id: m.id },
+            data: { end_date: /* @__PURE__ */ new Date(), is_active: false }
           });
           if (res) deactivated += 1;
         } else {
-          const res = await tx.client_tax_assignments.delete({ where: { id: a.id } });
+          const res = await tx.client_tax_models.delete({ where: { id: m.id } });
           if (res) deleted += 1;
         }
       }
@@ -2656,16 +2708,16 @@ var PrismaStorage = class {
     return { deleted, deactivated };
   }
   async getTaxAssignmentHistory(assignmentId) {
-    const assignment = await prisma.client_tax_assignments.findUnique({
+    const model = await prisma.client_tax_models.findUnique({
       where: { id: assignmentId }
     });
-    if (!assignment) {
+    if (!model) {
       return [];
     }
     const filings = await prisma.client_tax_filings.findMany({
       where: {
-        clientId: assignment.clientId,
-        taxModelCode: assignment.taxModelCode
+        clientId: model.client_id,
+        taxModelCode: model.model_number
       },
       include: {
         fiscal_periods: true
@@ -2691,8 +2743,7 @@ var PrismaStorage = class {
     }));
   }
   async getAllClientTax() {
-    const records = await prisma.client_tax.findMany();
-    return records.map(mapPrismaClientTax);
+    return [];
   }
   async getTaxPeriod(id) {
     const period = await prisma.tax_periods.findUnique({ where: { id } });
@@ -2775,9 +2826,9 @@ var PrismaStorage = class {
   }
   async generateFilingsForPeriods(client, periods) {
     if (periods.length === 0) return;
-    const assignments = await client.client_tax_assignments.findMany({
+    const models = await client.client_tax_models.findMany({
       where: {
-        activeFlag: true,
+        is_active: true,
         clients: { isActive: true }
       },
       include: {
@@ -2790,23 +2841,23 @@ var PrismaStorage = class {
         }
       }
     });
-    if (assignments.length === 0) return;
+    if (models.length === 0) return;
     const configMap = await this.getTaxModelConfigMap(client);
     for (const period of periods) {
-      for (const assignment of assignments) {
-        if (!this.periodMatchesAssignment(period, assignment, configMap)) continue;
+      for (const model of models) {
+        if (!this.periodMatchesModel(period, model, configMap)) continue;
         await client.client_tax_filings.upsert({
           where: {
             clientId_taxModelCode_periodId: {
-              clientId: assignment.clientId,
-              taxModelCode: assignment.taxModelCode,
+              clientId: model.client_id,
+              taxModelCode: model.model_number,
               periodId: period.id
             }
           },
           create: {
             id: randomUUID(),
-            clientId: assignment.clientId,
-            taxModelCode: assignment.taxModelCode,
+            clientId: model.client_id,
+            taxModelCode: model.model_number,
             periodId: period.id,
             status: FilingStatus.NOT_STARTED
           },
@@ -2815,23 +2866,24 @@ var PrismaStorage = class {
       }
     }
   }
-  periodMatchesAssignment(period, assignment, configMap) {
-    if (!assignment.activeFlag) return false;
-    const code = String(assignment.taxModelCode ?? "").toUpperCase();
-    const periodicity = String(assignment.periodicidad ?? "").toUpperCase();
+  periodMatchesModel(period, model, configMap) {
+    if (!model.is_active) return false;
+    const code = String(model.model_number ?? "").toUpperCase();
+    const periodType = String(model.period_type ?? "").toUpperCase();
+    const periodicity = this.periodTypeToSpanish(periodType);
     const config = configMap.get(code);
     const allowedPeriods = config?.allowedPeriods?.map((p) => p.toUpperCase()) ?? [];
     const matchesPeriodicity = (...targets) => targets.some(
       (target) => periodicity === target || allowedPeriods.includes(target)
     );
-    const assignmentStart = assignment.startDate ? new Date(assignment.startDate) : null;
-    const assignmentEnd = assignment.endDate ? new Date(assignment.endDate) : null;
+    const modelStart = model.start_date ? new Date(model.start_date) : null;
+    const modelEnd = model.end_date ? new Date(model.end_date) : null;
     const periodStart = period.startsAt ? new Date(period.startsAt) : null;
     const periodEnd = period.endsAt ? new Date(period.endsAt) : null;
-    if (assignmentStart && periodEnd && assignmentStart > periodEnd) {
+    if (modelStart && periodEnd && modelStart > periodEnd) {
       return false;
     }
-    if (assignmentEnd && periodStart && assignmentEnd < periodStart) {
+    if (modelEnd && periodStart && modelEnd < periodStart) {
       return false;
     }
     switch (period.kind) {
@@ -2989,7 +3041,7 @@ var PrismaStorage = class {
     return { year, generated: periods.length };
   }
   /**
-   * Migra obligaciones activas (obligaciones_fiscales) a asignaciones (client_tax_assignments)
+   * Migra obligaciones activas (obligaciones_fiscales) a modelos fiscales (client_tax_models)
    * en caso de que no exista aún la tupla (cliente + modelo).
    */
   async migrateObligationsToAssignments() {
@@ -3000,22 +3052,21 @@ var PrismaStorage = class {
     for (const ob of obligaciones) {
       const code = null;
       if (!code) continue;
-      const existing = await prisma.client_tax_assignments.findFirst({
-        where: { clientId: ob.cliente_id, taxModelCode: code }
+      const existing = await prisma.client_tax_models.findFirst({
+        where: { client_id: ob.cliente_id, model_number: code }
       });
       if (existing) continue;
       try {
-        await prisma.client_tax_assignments.create({
+        await prisma.client_tax_models.create({
           data: {
             id: randomUUID(),
-            clientId: ob.cliente_id,
-            taxModelCode: code,
-            periodicidad: ob.periodicidad ?? (code === "303" ? "TRIMESTRAL" : "ANUAL"),
-            startDate: ob.fecha_inicio ?? ob.fecha_asignacion ?? /* @__PURE__ */ new Date(),
-            endDate: ob.fecha_fin ?? null,
-            activeFlag: ob.activo ?? true,
-            notes: ob.observaciones ?? null,
-            updatedAt: /* @__PURE__ */ new Date()
+            client_id: ob.cliente_id,
+            model_number: code,
+            period_type: this.spanishToEnglish(ob.periodicidad ?? (code === "303" ? "TRIMESTRAL" : "ANUAL")),
+            start_date: ob.fecha_inicio ?? ob.fecha_asignacion ?? /* @__PURE__ */ new Date(),
+            end_date: ob.fecha_fin ?? null,
+            is_active: ob.activo ?? true,
+            notes: ob.observaciones ?? null
           }
         });
       } catch (e) {
@@ -3039,20 +3090,19 @@ var PrismaStorage = class {
         }
       }
       for (const code of codes) {
-        const exists = await prisma.client_tax_assignments.findFirst({ where: { clientId: c.id, taxModelCode: code } });
+        const exists = await prisma.client_tax_models.findFirst({ where: { client_id: c.id, model_number: code } });
         if (exists) continue;
         try {
-          await prisma.client_tax_assignments.create({
+          await prisma.client_tax_models.create({
             data: {
               id: randomUUID(),
-              clientId: c.id,
-              taxModelCode: code,
-              periodicidad: code === "303" ? "TRIMESTRAL" : "ANUAL",
-              startDate: c.fechaAlta ?? /* @__PURE__ */ new Date(),
-              endDate: null,
-              activeFlag: true,
-              notes: null,
-              updatedAt: /* @__PURE__ */ new Date()
+              client_id: c.id,
+              model_number: code,
+              period_type: this.spanishToEnglish(code === "303" ? "TRIMESTRAL" : "ANUAL"),
+              start_date: c.fechaAlta ?? /* @__PURE__ */ new Date(),
+              end_date: null,
+              is_active: true,
+              notes: null
             }
           });
         } catch {
@@ -3063,22 +3113,21 @@ var PrismaStorage = class {
   async ensureDefault303Assignments() {
     const clients = await prisma.clients.findMany({ where: { isActive: true }, select: { id: true, fechaAlta: true } });
     for (const c of clients) {
-      const count = await prisma.client_tax_assignments.count({ where: { clientId: c.id } });
+      const count = await prisma.client_tax_models.count({ where: { client_id: c.id } });
       if (count > 0) continue;
-      const exists303 = await prisma.client_tax_assignments.findFirst({ where: { clientId: c.id, taxModelCode: "303" } });
+      const exists303 = await prisma.client_tax_models.findFirst({ where: { client_id: c.id, model_number: "303" } });
       if (exists303) continue;
       try {
-        await prisma.client_tax_assignments.create({
+        await prisma.client_tax_models.create({
           data: {
             id: randomUUID(),
-            clientId: c.id,
-            taxModelCode: "303",
-            periodicidad: "TRIMESTRAL",
-            startDate: c.fechaAlta ?? /* @__PURE__ */ new Date(),
-            endDate: null,
-            activeFlag: true,
-            notes: "Asignaci\xF3n por defecto generada autom\xE1ticamente",
-            updatedAt: /* @__PURE__ */ new Date()
+            client_id: c.id,
+            model_number: "303",
+            period_type: "QUARTERLY",
+            start_date: c.fechaAlta ?? /* @__PURE__ */ new Date(),
+            end_date: null,
+            is_active: true,
+            notes: "Asignaci\xF3n por defecto generada autom\xE1ticamente"
           }
         });
       } catch {
@@ -3143,17 +3192,17 @@ var PrismaStorage = class {
     const codes = Array.from(new Set(filings.map((f) => f.taxModelCode)));
     let byKey = /* @__PURE__ */ new Map();
     if (clientIds.length && codes.length) {
-      const assignments = await prisma.client_tax_assignments.findMany({
+      const models = await prisma.client_tax_models.findMany({
         where: {
-          clientId: { in: clientIds },
-          taxModelCode: { in: codes }
+          client_id: { in: clientIds },
+          model_number: { in: codes }
         },
-        select: { clientId: true, taxModelCode: true, startDate: true, endDate: true, activeFlag: true }
+        select: { client_id: true, model_number: true, start_date: true, end_date: true, is_active: true, period_type: true }
       });
-      for (const a of assignments) {
-        const key = `${a.clientId}:${a.taxModelCode}`;
+      for (const m of models) {
+        const key = `${m.client_id}:${m.model_number}`;
         if (!byKey.has(key)) byKey.set(key, []);
-        byKey.get(key).push(a);
+        byKey.get(key).push(m);
       }
     }
     const currentYear = filters.year ? typeof filters.year === "string" ? parseInt(filters.year) : filters.year : (/* @__PURE__ */ new Date()).getFullYear();
@@ -3179,18 +3228,19 @@ var PrismaStorage = class {
         openModelPeriods.get(entry.modelCode).add(entry.period);
       }
     }
-    const assignmentsWithPeriodicity = await prisma.client_tax_assignments.findMany({
+    const modelsWithPeriodicity = await prisma.client_tax_models.findMany({
       where: {
-        clientId: { in: clientIds },
-        taxModelCode: { in: codes },
-        activeFlag: true
+        client_id: { in: clientIds },
+        model_number: { in: codes },
+        is_active: true
       },
-      select: { clientId: true, taxModelCode: true, periodicidad: true }
+      select: { client_id: true, model_number: true, period_type: true }
     });
     const clientModelPeriodicity = /* @__PURE__ */ new Map();
-    for (const a of assignmentsWithPeriodicity) {
-      const key = `${a.clientId}:${a.taxModelCode}`;
-      clientModelPeriodicity.set(key, a.periodicidad);
+    for (const m of modelsWithPeriodicity) {
+      const key = `${m.client_id}:${m.model_number}`;
+      const periodicidadSpanish = this.periodTypeToSpanish(m.period_type);
+      clientModelPeriodicity.set(key, periodicidadSpanish);
     }
     const visible = filings.filter((f) => {
       if (!f.fiscal_periods) return false;
@@ -3199,13 +3249,13 @@ var PrismaStorage = class {
       if (!arr || arr.length === 0) return false;
       const ps = f.fiscal_periods.starts_at;
       const pe = f.fiscal_periods.ends_at;
-      const hasActiveAssignment = arr.some((a) => {
-        if (!a.activeFlag) return false;
-        const startOk = a.startDate <= pe;
-        const endOk = !a.endDate || a.endDate >= ps;
+      const hasActiveModel = arr.some((m) => {
+        if (!m.is_active) return false;
+        const startOk = m.start_date <= pe;
+        const endOk = !m.end_date || m.end_date >= ps;
         return startOk && endOk;
       });
-      if (!hasActiveAssignment) return false;
+      if (!hasActiveModel) return false;
       const periodicity = clientModelPeriodicity.get(key);
       if (!periodicity) return false;
       const openPeriods = openModelPeriods.get(f.taxModelCode);
@@ -3415,9 +3465,7 @@ var PrismaStorage = class {
             email: true
           }
         },
-        client_tax_assignments: {
-          include: {}
-        }
+        client_tax_models: true
       }
     });
     const currentYear = (/* @__PURE__ */ new Date()).getFullYear();
@@ -3488,24 +3536,26 @@ var PrismaStorage = class {
       for (const code of TAX_CONTROL_MODELS) {
         cells[code] = { active: false };
       }
-      for (const assignment of client.client_tax_assignments) {
-        const code = assignment.taxModelCode;
+      const taxModels = client.client_tax_models || [];
+      for (const taxModel of taxModels) {
+        const code = taxModel.model_number;
         if (!TAX_CONTROL_MODELS.includes(code)) continue;
         if (model && code !== String(model).toUpperCase()) continue;
-        if (periodicity && String(assignment.periodicidad).toUpperCase() !== String(periodicity).toUpperCase()) continue;
-        const startDate = assignment.startDate ? new Date(assignment.startDate) : null;
-        const endDate = assignment.endDate ? new Date(assignment.endDate) : null;
-        const effectiveActive = Boolean(assignment.activeFlag) && (!startDate || startDate <= endOfYear) && (!endDate || endDate >= startOfYear);
+        const periodicidadSpanish = this.periodTypeToSpanish(taxModel.period_type);
+        if (periodicity && periodicidadSpanish !== String(periodicity).toUpperCase()) continue;
+        const startDate = taxModel.start_date ? new Date(taxModel.start_date) : null;
+        const endDate = taxModel.end_date ? new Date(taxModel.end_date) : null;
+        const effectiveActive = Boolean(taxModel.is_active) && (!startDate || startDate <= endOfYear) && (!endDate || endDate >= startOfYear);
         const filingEntry = filingsMap.get(`${client.id}_${code}`);
         const filing = filingEntry?.filing;
         const normalizedStatus = normalizeStatus(filing?.status, effectiveActive);
         cells[code] = {
-          assignmentId: assignment.id,
+          assignmentId: taxModel.id,
           active: effectiveActive,
-          periodicity: assignment.periodicidad,
-          startDate: assignment.startDate,
-          endDate: assignment.endDate,
-          activeFlag: assignment.activeFlag,
+          periodicity: periodicidadSpanish,
+          startDate: taxModel.start_date,
+          endDate: taxModel.end_date,
+          activeFlag: taxModel.is_active,
           status: normalizedStatus,
           statusUpdatedAt: filing?.presentedAt ?? filing?.fiscal_periods?.ends_at ?? null,
           filingId: filing?.id ?? null,
@@ -4626,10 +4676,10 @@ var PrismaStorage = class {
 var prismaStorage = new PrismaStorage();
 
 // server/routes.ts
-import { PrismaClient as PrismaClient17 } from "@prisma/client";
+import { PrismaClient as PrismaClient20 } from "@prisma/client";
 import bcrypt from "bcrypt";
 import jwt3 from "jsonwebtoken";
-import { randomUUID as randomUUID8 } from "crypto";
+import { randomUUID as randomUUID9 } from "crypto";
 
 // server/utils/validators.ts
 import { z } from "zod";
@@ -11783,7 +11833,9 @@ var DocumentsService = class {
    * Crear documento
    */
   async createDocument(data) {
-    const client = await prisma_client_default.clients.findUnique({ where: { id: data.clientId } });
+    const client = await prisma_client_default.clients.findUnique({
+      where: { id: data.clientId }
+    });
     if (!client) throw new Error("Cliente no encontrado");
     const docName = data.type === "DATA_PROTECTION" ? `Protecci\xF3n de Datos - ${client.razonSocial}` : `Domiciliaci\xF3n Bancaria - ${client.razonSocial}`;
     return await prisma_client_default.documents.create({
@@ -11801,7 +11853,7 @@ var DocumentsService = class {
       include: {
         clients: true,
         template: true,
-        creator: { select: { id: true, username: true, email: true } }
+        users: { select: { id: true, username: true, email: true } }
       }
     });
   }
@@ -11818,7 +11870,7 @@ var DocumentsService = class {
       include: {
         clients: true,
         template: true,
-        creator: { select: { id: true, username: true, email: true } }
+        users: { select: { id: true, username: true, email: true } }
       },
       orderBy: { created_at: "desc" }
     });
@@ -11832,7 +11884,7 @@ var DocumentsService = class {
       include: {
         clients: true,
         template: true,
-        creator: { select: { id: true, username: true, email: true } },
+        users: { select: { id: true, username: true, email: true } },
         versions: true
       }
     });
@@ -11859,9 +11911,8 @@ var DocumentsService = class {
         status: "ACEPTADO",
         signature_status: "FIRMADO",
         signature_date: /* @__PURE__ */ new Date(),
-        signed_file_path: signedFilePath,
-        signature_type: "manual",
-        signed_by_name: userId
+        file_path: signedFilePath,
+        signed_by: userId
       },
       include: { clients: true }
     });
@@ -11892,11 +11943,27 @@ var DocumentsService = class {
     });
   }
   async getTemplateById(id) {
-    const template = await prisma_client_default.document_templates.findUnique({ where: { id } });
+    const template = await prisma_client_default.document_templates.findUnique({
+      where: { id }
+    });
     if (!template) throw new Error("Plantilla no encontrada");
     return template;
   }
   async updateTemplate(id, data) {
+    if (data.is_active === true) {
+      const template = await prisma_client_default.document_templates.findUnique({
+        where: { id }
+      });
+      if (template && template.type === "RECEIPT") {
+        await prisma_client_default.document_templates.updateMany({
+          where: {
+            type: "RECEIPT",
+            id: { not: id }
+          },
+          data: { is_active: false }
+        });
+      }
+    }
     return await prisma_client_default.document_templates.update({
       where: { id },
       data: { ...data, updated_at: /* @__PURE__ */ new Date() }
@@ -12681,6 +12748,1427 @@ router9.get("/current-commit", async (req, res) => {
 });
 var github_updates_routes_default = router9;
 
+// server/routes/tax-calendar.routes.ts
+import { Router as Router3 } from "express";
+
+// server/services/tax-calendar.service.ts
+import { PrismaClient as PrismaClient15 } from "@prisma/client";
+import { randomUUID as randomUUID6 } from "crypto";
+var prisma15 = new PrismaClient15();
+var TaxCalendarService = class {
+  /**
+   * Obtener todos los periodos del calendario fiscal
+   */
+  async getAllPeriods(filters) {
+    const where = {};
+    if (filters?.year) where.year = filters.year;
+    if (filters?.modelCode) where.modelCode = filters.modelCode;
+    if (filters?.status) where.status = filters.status;
+    return await prisma15.tax_calendar.findMany({
+      where,
+      orderBy: [{ year: "desc" }, { modelCode: "asc" }, { period: "asc" }]
+    });
+  }
+  /**
+   * Obtener periodos ABIERTOS (fecha actual entre startDate y endDate)
+   * Estos son los periodos en los que se deben generar obligaciones automáticamente
+   */
+  async getOpenPeriods(modelCode) {
+    const today2 = /* @__PURE__ */ new Date();
+    const where = {
+      startDate: { lte: today2 },
+      endDate: { gte: today2 },
+      active: true
+    };
+    if (modelCode) {
+      where.modelCode = modelCode;
+    }
+    return await prisma15.tax_calendar.findMany({
+      where,
+      orderBy: [{ startDate: "asc" }]
+    });
+  }
+  /**
+   * Obtener un periodo por ID
+   */
+  async getPeriodById(id) {
+    return await prisma15.tax_calendar.findUnique({
+      where: { id }
+    });
+  }
+  /**
+   * Crear un nuevo periodo en el calendario fiscal
+   */
+  async createPeriod(data) {
+    return await prisma15.tax_calendar.create({
+      data: {
+        id: randomUUID6(),
+        ...data,
+        status: data.status || "PENDIENTE",
+        active: true,
+        locked: false,
+        createdAt: /* @__PURE__ */ new Date(),
+        updatedAt: /* @__PURE__ */ new Date()
+      }
+    });
+  }
+  /**
+   * Actualizar un periodo existente
+   */
+  async updatePeriod(id, data) {
+    return await prisma15.tax_calendar.update({
+      where: { id },
+      data: {
+        ...data,
+        updatedAt: /* @__PURE__ */ new Date()
+      }
+    });
+  }
+  /**
+   * Cambiar el estado de un periodo (PENDIENTE -> ABIERTO -> CERRADO)
+   * Cuando se abre un periodo, se deben generar automáticamente las obligaciones
+   */
+  async updatePeriodStatus(id, status) {
+    return await prisma15.tax_calendar.update({
+      where: { id },
+      data: {
+        status,
+        updatedAt: /* @__PURE__ */ new Date()
+      }
+    });
+  }
+  /**
+   * Eliminar un periodo (soft delete - marca como inactivo)
+   */
+  async deletePeriod(id) {
+    return await prisma15.tax_calendar.update({
+      where: { id },
+      data: {
+        active: false,
+        updatedAt: /* @__PURE__ */ new Date()
+      }
+    });
+  }
+  /**
+   * Obtener periodos por año
+   */
+  async getPeriodsByYear(year) {
+    return await prisma15.tax_calendar.findMany({
+      where: { year },
+      orderBy: [{ modelCode: "asc" }, { period: "asc" }]
+    });
+  }
+  /**
+   * Obtener periodos por modelo
+   */
+  async getPeriodsByModel(modelCode) {
+    return await prisma15.tax_calendar.findMany({
+      where: { modelCode },
+      orderBy: [{ year: "desc" }, { period: "asc" }]
+    });
+  }
+  /**
+   * Verificar si existe un periodo
+   */
+  async periodExists(modelCode, period, year) {
+    const existing = await prisma15.tax_calendar.findFirst({
+      where: {
+        modelCode,
+        period,
+        year
+      }
+    });
+    return !!existing;
+  }
+};
+var tax_calendar_service_default = new TaxCalendarService();
+
+// server/routes/tax-calendar.routes.ts
+var router10 = Router3();
+router10.use(authenticateToken);
+router10.get("/", async (req, res) => {
+  try {
+    const { year, modelCode, status } = req.query;
+    const filters = {};
+    if (year) filters.year = parseInt(year);
+    if (modelCode) filters.modelCode = modelCode;
+    if (status) filters.status = status;
+    const periods = await tax_calendar_service_default.getAllPeriods(filters);
+    res.json({
+      success: true,
+      data: periods,
+      count: periods.length
+    });
+  } catch (error) {
+    console.error("Error obteniendo periodos:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error obteniendo periodos del calendario fiscal",
+      error: error.message
+    });
+  }
+});
+router10.get("/open", async (req, res) => {
+  try {
+    const { modelCode } = req.query;
+    const openPeriods = await tax_calendar_service_default.getOpenPeriods(
+      modelCode
+    );
+    res.json({
+      success: true,
+      data: openPeriods,
+      count: openPeriods.length
+    });
+  } catch (error) {
+    console.error("Error obteniendo periodos abiertos:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error obteniendo periodos abiertos",
+      error: error.message
+    });
+  }
+});
+router10.get("/year/:year", async (req, res) => {
+  try {
+    const { year } = req.params;
+    const periods = await tax_calendar_service_default.getPeriodsByYear(parseInt(year));
+    res.json({
+      success: true,
+      data: periods,
+      count: periods.length
+    });
+  } catch (error) {
+    console.error("Error obteniendo periodos por a\xF1o:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error obteniendo periodos por a\xF1o",
+      error: error.message
+    });
+  }
+});
+router10.get("/model/:modelCode", async (req, res) => {
+  try {
+    const { modelCode } = req.params;
+    const periods = await tax_calendar_service_default.getPeriodsByModel(modelCode);
+    res.json({
+      success: true,
+      data: periods,
+      count: periods.length
+    });
+  } catch (error) {
+    console.error("Error obteniendo periodos por modelo:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error obteniendo periodos por modelo",
+      error: error.message
+    });
+  }
+});
+router10.get("/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const period = await tax_calendar_service_default.getPeriodById(id);
+    if (!period) {
+      return res.status(404).json({
+        success: false,
+        message: "Periodo no encontrado"
+      });
+    }
+    res.json({
+      success: true,
+      data: period
+    });
+  } catch (error) {
+    console.error("Error obteniendo periodo:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error obteniendo periodo",
+      error: error.message
+    });
+  }
+});
+router10.post("/", async (req, res) => {
+  try {
+    const { modelCode, period, year, startDate, endDate, status, days_to_start, days_to_end } = req.body;
+    if (!modelCode || !period || !year || !startDate || !endDate) {
+      return res.status(400).json({
+        success: false,
+        message: "Faltan campos obligatorios: modelCode, period, year, startDate, endDate"
+      });
+    }
+    const exists = await tax_calendar_service_default.periodExists(modelCode, period, year);
+    if (exists) {
+      return res.status(409).json({
+        success: false,
+        message: `Ya existe un periodo ${period} del modelo ${modelCode} para el a\xF1o ${year}`
+      });
+    }
+    const newPeriod = await tax_calendar_service_default.createPeriod({
+      modelCode,
+      period,
+      year: parseInt(year),
+      startDate: new Date(startDate),
+      endDate: new Date(endDate),
+      status,
+      days_to_start,
+      days_to_end
+    });
+    res.status(201).json({
+      success: true,
+      message: "Periodo creado exitosamente",
+      data: newPeriod
+    });
+  } catch (error) {
+    console.error("Error creando periodo:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error creando periodo",
+      error: error.message
+    });
+  }
+});
+router10.put("/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const data = req.body;
+    if (data.startDate) data.startDate = new Date(data.startDate);
+    if (data.endDate) data.endDate = new Date(data.endDate);
+    const updatedPeriod = await tax_calendar_service_default.updatePeriod(id, data);
+    res.json({
+      success: true,
+      message: "Periodo actualizado exitosamente",
+      data: updatedPeriod
+    });
+  } catch (error) {
+    console.error("Error actualizando periodo:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error actualizando periodo",
+      error: error.message
+    });
+  }
+});
+router10.put("/:id/status", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+    if (!["PENDIENTE", "ABIERTO", "CERRADO"].includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: "Estado inv\xE1lido. Debe ser PENDIENTE, ABIERTO o CERRADO"
+      });
+    }
+    const updatedPeriod = await tax_calendar_service_default.updatePeriodStatus(id, status);
+    res.json({
+      success: true,
+      message: `Periodo actualizado a ${status}`,
+      data: updatedPeriod
+    });
+  } catch (error) {
+    console.error("Error actualizando estado del periodo:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error actualizando estado del periodo",
+      error: error.message
+    });
+  }
+});
+router10.delete("/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    await tax_calendar_service_default.deletePeriod(id);
+    res.json({
+      success: true,
+      message: "Periodo eliminado exitosamente"
+    });
+  } catch (error) {
+    console.error("Error eliminando periodo:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error eliminando periodo",
+      error: error.message
+    });
+  }
+});
+var tax_calendar_routes_default = router10;
+
+// server/routes/client-tax.routes.ts
+import { Router as Router4 } from "express";
+
+// server/services/client-tax.service.ts
+import { PrismaClient as PrismaClient16 } from "@prisma/client";
+var prisma16 = new PrismaClient16();
+var ClientTaxService = class {
+  /**
+   * Obtener todos los modelos fiscales de un cliente
+   */
+  async getClientTaxModels(clientId) {
+    return await prisma16.client_tax_models.findMany({
+      where: { client_id: clientId },
+      orderBy: { model_number: "asc" }
+    });
+  }
+  /**
+   * Obtener modelos activos de un cliente
+   */
+  async getActiveClientTaxModels(clientId) {
+    return await prisma16.client_tax_models.findMany({
+      where: {
+        client_id: clientId,
+        is_active: true,
+        OR: [
+          { end_date: null },
+          // Sin fecha de fin (indefinido)
+          { end_date: { gte: /* @__PURE__ */ new Date() } }
+          // Fecha de fin mayor o igual a hoy
+        ]
+      },
+      orderBy: { model_number: "asc" }
+    });
+  }
+  /**
+   * Obtener un modelo fiscal específico de un cliente
+   */
+  async getClientTaxModel(id) {
+    return await prisma16.client_tax_models.findUnique({
+      where: { id },
+      include: {
+        clients: {
+          select: {
+            id: true,
+            razonSocial: true,
+            nifCif: true
+          }
+        }
+      }
+    });
+  }
+  /**
+   * Dar de alta un modelo fiscal para un cliente
+   * IMPORTANTE: Al dar de alta un modelo, genera automáticamente obligaciones
+   * para todos los periodos ABIERTOS de ese modelo
+   */
+  async createClientTaxModel(data) {
+    const existing = await prisma16.client_tax_models.findFirst({
+      where: {
+        client_id: data.client_id,
+        model_number: data.model_number
+      }
+    });
+    if (existing) {
+      throw new Error(
+        `El modelo ${data.model_number} ya est\xE1 dado de alta para este cliente`
+      );
+    }
+    const newModel = await prisma16.client_tax_models.create({
+      data: {
+        ...data,
+        is_active: true,
+        created_at: /* @__PURE__ */ new Date(),
+        updated_at: /* @__PURE__ */ new Date()
+      }
+    });
+    const openPeriods = await prisma16.tax_calendar.findMany({
+      where: {
+        modelCode: data.model_number,
+        status: "ABIERTO",
+        active: true
+      }
+    });
+    for (const period of openPeriods) {
+      const existingObligation = await prisma16.client_tax_obligations.findFirst({
+        where: {
+          client_id: data.client_id,
+          tax_calendar_id: period.id
+        }
+      });
+      if (!existingObligation) {
+        await prisma16.client_tax_obligations.create({
+          data: {
+            client_id: data.client_id,
+            tax_calendar_id: period.id,
+            model_number: period.modelCode,
+            period: period.period,
+            year: period.year,
+            due_date: period.endDate,
+            status: "PENDING",
+            created_at: /* @__PURE__ */ new Date(),
+            updated_at: /* @__PURE__ */ new Date()
+          }
+        });
+      }
+    }
+    return newModel;
+  }
+  /**
+   * Actualizar un modelo fiscal de un cliente
+   */
+  async updateClientTaxModel(id, data) {
+    return await prisma16.client_tax_models.update({
+      where: { id },
+      data: {
+        ...data,
+        updated_at: /* @__PURE__ */ new Date()
+      }
+    });
+  }
+  /**
+   * Activar/Desactivar un modelo fiscal
+   * IMPORTANTE: Al activar un modelo, genera automáticamente obligaciones
+   * para todos los periodos ABIERTOS de ese modelo
+   */
+  async toggleClientTaxModel(id, is_active) {
+    const model = await prisma16.client_tax_models.findUnique({
+      where: { id }
+    });
+    if (!model) {
+      throw new Error("Modelo fiscal no encontrado");
+    }
+    const updatedModel = await prisma16.client_tax_models.update({
+      where: { id },
+      data: {
+        is_active,
+        updated_at: /* @__PURE__ */ new Date()
+      }
+    });
+    if (is_active && !model.is_active) {
+      const openPeriods = await prisma16.tax_calendar.findMany({
+        where: {
+          modelCode: model.model_number,
+          status: "ABIERTO",
+          active: true
+        }
+      });
+      for (const period of openPeriods) {
+        const existingObligation = await prisma16.client_tax_obligations.findFirst({
+          where: {
+            client_id: model.client_id,
+            tax_calendar_id: period.id
+          }
+        });
+        if (!existingObligation) {
+          await prisma16.client_tax_obligations.create({
+            data: {
+              client_id: model.client_id,
+              tax_calendar_id: period.id,
+              model_number: period.modelCode,
+              period: period.period,
+              year: period.year,
+              due_date: period.endDate,
+              status: "PENDING",
+              created_at: /* @__PURE__ */ new Date(),
+              updated_at: /* @__PURE__ */ new Date()
+            }
+          });
+        }
+      }
+    }
+    return updatedModel;
+  }
+  /**
+   * Eliminar un modelo fiscal de un cliente
+   */
+  async deleteClientTaxModel(id) {
+    return await prisma16.client_tax_models.delete({
+      where: { id }
+    });
+  }
+  /**
+   * Obtener todos los clientes que tienen un modelo específico activo
+   * Esta función es crucial para la generación automática de obligaciones
+   */
+  async getClientsWithActiveModel(modelNumber) {
+    const now = /* @__PURE__ */ new Date();
+    return await prisma16.client_tax_models.findMany({
+      where: {
+        model_number: modelNumber,
+        is_active: true,
+        start_date: { lte: now },
+        // Ya ha empezado
+        OR: [
+          { end_date: null },
+          // Sin fecha de fin
+          { end_date: { gte: now } }
+          // Aún no ha terminado
+        ]
+      },
+      include: {
+        clients: {
+          select: {
+            id: true,
+            razonSocial: true,
+            nifCif: true,
+            email: true,
+            responsableAsignado: true,
+            tipo: true
+          }
+        }
+      }
+    });
+  }
+  /**
+   * Verificar si un cliente tiene un modelo activo
+   */
+  async clientHasActiveModel(clientId, modelNumber) {
+    const now = /* @__PURE__ */ new Date();
+    const model = await prisma16.client_tax_models.findFirst({
+      where: {
+        client_id: clientId,
+        model_number: modelNumber,
+        is_active: true,
+        start_date: { lte: now },
+        OR: [{ end_date: null }, { end_date: { gte: now } }]
+      }
+    });
+    return !!model;
+  }
+  /**
+   * Obtener estadísticas de modelos por cliente
+   */
+  async getClientTaxStats(clientId) {
+    const total = await prisma16.client_tax_models.count({
+      where: { client_id: clientId }
+    });
+    const active = await prisma16.client_tax_models.count({
+      where: {
+        client_id: clientId,
+        is_active: true
+      }
+    });
+    const models = await prisma16.client_tax_models.findMany({
+      where: { client_id: clientId },
+      select: { model_number: true, period_type: true, is_active: true }
+    });
+    return {
+      total,
+      active,
+      inactive: total - active,
+      models
+    };
+  }
+};
+var client_tax_service_default = new ClientTaxService();
+
+// server/routes/client-tax.routes.ts
+var router11 = Router4();
+router11.use(authenticateToken);
+router11.get("/:clientId/tax-models", async (req, res) => {
+  try {
+    const { clientId } = req.params;
+    const { activeOnly } = req.query;
+    let models;
+    if (activeOnly === "true") {
+      models = await client_tax_service_default.getActiveClientTaxModels(clientId);
+    } else {
+      models = await client_tax_service_default.getClientTaxModels(clientId);
+    }
+    res.json({
+      success: true,
+      data: models,
+      count: models.length
+    });
+  } catch (error) {
+    console.error("Error obteniendo modelos del cliente:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error obteniendo modelos fiscales del cliente",
+      error: error.message
+    });
+  }
+});
+router11.get("/:clientId/tax-models/stats", async (req, res) => {
+  try {
+    const { clientId } = req.params;
+    const stats = await client_tax_service_default.getClientTaxStats(clientId);
+    res.json({
+      success: true,
+      data: stats
+    });
+  } catch (error) {
+    console.error("Error obteniendo estad\xEDsticas:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error obteniendo estad\xEDsticas",
+      error: error.message
+    });
+  }
+});
+router11.get("/tax-models/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const model = await client_tax_service_default.getClientTaxModel(id);
+    if (!model) {
+      return res.status(404).json({
+        success: false,
+        message: "Modelo fiscal no encontrado"
+      });
+    }
+    res.json({
+      success: true,
+      data: model
+    });
+  } catch (error) {
+    console.error("Error obteniendo modelo fiscal:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error obteniendo modelo fiscal",
+      error: error.message
+    });
+  }
+});
+router11.post("/:clientId/tax-models", async (req, res) => {
+  try {
+    const { clientId } = req.params;
+    const { model_number, period_type, start_date, end_date, notes } = req.body;
+    if (!model_number || !period_type || !start_date) {
+      return res.status(400).json({
+        success: false,
+        message: "Faltan campos obligatorios: model_number, period_type, start_date"
+      });
+    }
+    if (!["MONTHLY", "QUARTERLY", "ANNUAL"].includes(period_type)) {
+      return res.status(400).json({
+        success: false,
+        message: "period_type debe ser MONTHLY, QUARTERLY o ANNUAL"
+      });
+    }
+    const newModel = await client_tax_service_default.createClientTaxModel({
+      client_id: clientId,
+      model_number,
+      period_type,
+      start_date: new Date(start_date),
+      end_date: end_date ? new Date(end_date) : void 0,
+      notes
+    });
+    res.status(201).json({
+      success: true,
+      message: "Modelo fiscal dado de alta exitosamente",
+      data: newModel
+    });
+  } catch (error) {
+    console.error("Error creando modelo fiscal:", error);
+    if (error.message.includes("ya est\xE1 dado de alta")) {
+      return res.status(409).json({
+        success: false,
+        message: error.message
+      });
+    }
+    res.status(500).json({
+      success: false,
+      message: "Error dando de alta modelo fiscal",
+      error: error.message
+    });
+  }
+});
+router11.put("/tax-models/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const data = req.body;
+    if (data.start_date) data.start_date = new Date(data.start_date);
+    if (data.end_date) data.end_date = new Date(data.end_date);
+    const updatedModel = await client_tax_service_default.updateClientTaxModel(id, data);
+    res.json({
+      success: true,
+      message: "Modelo fiscal actualizado exitosamente",
+      data: updatedModel
+    });
+  } catch (error) {
+    console.error("Error actualizando modelo fiscal:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error actualizando modelo fiscal",
+      error: error.message
+    });
+  }
+});
+router11.put("/tax-models/:id/toggle", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { is_active } = req.body;
+    if (typeof is_active !== "boolean") {
+      return res.status(400).json({
+        success: false,
+        message: "El campo is_active debe ser booleano"
+      });
+    }
+    const updatedModel = await client_tax_service_default.toggleClientTaxModel(id, is_active);
+    res.json({
+      success: true,
+      message: `Modelo fiscal ${is_active ? "activado" : "desactivado"} exitosamente`,
+      data: updatedModel
+    });
+  } catch (error) {
+    console.error("Error cambiando estado del modelo:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error cambiando estado del modelo",
+      error: error.message
+    });
+  }
+});
+router11.delete("/tax-models/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    await client_tax_service_default.deleteClientTaxModel(id);
+    res.json({
+      success: true,
+      message: "Modelo fiscal eliminado exitosamente"
+    });
+  } catch (error) {
+    console.error("Error eliminando modelo fiscal:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error eliminando modelo fiscal",
+      error: error.message
+    });
+  }
+});
+router11.get("/tax-models/by-model/:modelNumber", async (req, res) => {
+  try {
+    const { modelNumber } = req.params;
+    const clientsWithModel = await client_tax_service_default.getClientsWithActiveModel(modelNumber);
+    res.json({
+      success: true,
+      data: clientsWithModel,
+      count: clientsWithModel.length
+    });
+  } catch (error) {
+    console.error("Error obteniendo clientes con modelo:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error obteniendo clientes con modelo activo",
+      error: error.message
+    });
+  }
+});
+var client_tax_routes_default = router11;
+
+// server/routes/tax-obligations.routes.ts
+import { Router as Router5 } from "express";
+
+// server/services/tax-obligations.service.ts
+import { PrismaClient as PrismaClient17 } from "@prisma/client";
+var prisma17 = new PrismaClient17();
+var TaxObligationsService = class {
+  /**
+   * FUNCIÓN PRINCIPAL: Generar obligaciones automáticamente
+   * 
+   * Esta función:
+   * 1. Obtiene todos los periodos ABIERTOS del calendario AEAT
+   * 2. Para cada periodo, busca los clientes que tengan ese modelo activo
+   * 3. Crea obligaciones automáticamente si no existen
+   */
+  async generateAutomaticObligations() {
+    try {
+      const openPeriods = await tax_calendar_service_default.getOpenPeriods();
+      if (openPeriods.length === 0) {
+        return {
+          success: true,
+          message: "No hay periodos abiertos en el calendario AEAT",
+          generated: 0
+        };
+      }
+      let totalGenerated = 0;
+      const details = [];
+      for (const period of openPeriods) {
+        const result = await this.generateObligationsForPeriod(period.id);
+        totalGenerated += result.generated;
+        details.push({
+          period: `${period.modelCode} - ${period.period} ${period.year}`,
+          generated: result.generated,
+          skipped: result.skipped
+        });
+      }
+      return {
+        success: true,
+        message: `Generadas ${totalGenerated} obligaciones autom\xE1ticamente`,
+        generated: totalGenerated,
+        details
+      };
+    } catch (error) {
+      console.error("Error generando obligaciones autom\xE1ticas:", error);
+      throw new Error(`Error generando obligaciones: ${error.message}`);
+    }
+  }
+  /**
+   * Generar obligaciones para un periodo específico
+   */
+  async generateObligationsForPeriod(taxCalendarId) {
+    const period = await tax_calendar_service_default.getPeriodById(taxCalendarId);
+    if (!period) {
+      throw new Error("Periodo no encontrado");
+    }
+    const today2 = /* @__PURE__ */ new Date();
+    if (period.startDate > today2 || period.endDate < today2) {
+      return {
+        generated: 0,
+        skipped: 0,
+        message: "El periodo no est\xE1 abierto (fuera del rango de fechas)"
+      };
+    }
+    const taxModel = await prisma17.tax_models_config.findFirst({
+      where: { code: period.modelCode }
+    });
+    if (!taxModel) {
+      throw new Error(`Modelo ${period.modelCode} no encontrado en tax_models_config`);
+    }
+    const clientsWithModel = await client_tax_service_default.getClientsWithActiveModel(
+      period.modelCode
+    );
+    let generated = 0;
+    let skipped = 0;
+    for (const clientTaxModel of clientsWithModel) {
+      const client = clientTaxModel.clients;
+      let allowedCategories = [];
+      try {
+        allowedCategories = JSON.parse(taxModel.allowedTypes);
+      } catch (e) {
+        console.error("Error parsing allowedTypes:", e);
+      }
+      if (client.tipo && allowedCategories.length > 0 && !allowedCategories.includes(client.tipo)) {
+        skipped++;
+        continue;
+      }
+      if (clientTaxModel.period_type && period.periodType && clientTaxModel.period_type !== period.periodType) {
+        skipped++;
+        continue;
+      }
+      const existingObligation = await prisma17.client_tax_obligations.findFirst({
+        where: {
+          client_id: client.id,
+          tax_calendar_id: period.id
+        }
+      });
+      if (existingObligation) {
+        skipped++;
+        continue;
+      }
+      await prisma17.client_tax_obligations.create({
+        data: {
+          client_id: client.id,
+          tax_calendar_id: period.id,
+          model_number: period.modelCode,
+          period: period.period,
+          year: period.year,
+          due_date: period.endDate,
+          status: "PENDING",
+          created_at: /* @__PURE__ */ new Date(),
+          updated_at: /* @__PURE__ */ new Date()
+        }
+      });
+      generated++;
+    }
+    return {
+      generated,
+      skipped,
+      message: `Generadas ${generated} obligaciones, ${skipped} ya exist\xEDan o no cumplieron validaciones`
+    };
+  }
+  /**
+   * Generar obligaciones para un cliente específico
+   * Busca todos los modelos activos del cliente y genera obligaciones
+   * para los periodos ABIERTOS de esos modelos
+   */
+  async generateObligationsForClient(clientId) {
+    try {
+      const clientModels = await client_tax_service_default.getActiveClientTaxModels(clientId);
+      if (clientModels.length === 0) {
+        return {
+          success: true,
+          message: "El cliente no tiene modelos fiscales activos",
+          generated: 0
+        };
+      }
+      let totalGenerated = 0;
+      const details = [];
+      for (const model of clientModels) {
+        const today2 = /* @__PURE__ */ new Date();
+        const openPeriods = await prisma17.tax_calendar.findMany({
+          where: {
+            modelCode: model.model_number,
+            startDate: { lte: today2 },
+            endDate: { gte: today2 },
+            active: true
+          }
+        });
+        let generatedForModel = 0;
+        for (const period of openPeriods) {
+          const existingObligation = await prisma17.client_tax_obligations.findFirst({
+            where: {
+              client_id: clientId,
+              tax_calendar_id: period.id
+            }
+          });
+          if (!existingObligation) {
+            await prisma17.client_tax_obligations.create({
+              data: {
+                client_id: clientId,
+                tax_calendar_id: period.id,
+                model_number: period.modelCode,
+                period: period.period,
+                year: period.year,
+                due_date: period.endDate,
+                status: "PENDING",
+                created_at: /* @__PURE__ */ new Date(),
+                updated_at: /* @__PURE__ */ new Date()
+              }
+            });
+            generatedForModel++;
+            totalGenerated++;
+          }
+        }
+        if (generatedForModel > 0) {
+          details.push({
+            model: model.model_number,
+            generated: generatedForModel
+          });
+        }
+      }
+      return {
+        success: true,
+        message: `Generadas ${totalGenerated} obligaciones para el cliente`,
+        generated: totalGenerated,
+        details
+      };
+    } catch (error) {
+      console.error("Error generando obligaciones del cliente:", error);
+      throw new Error(`Error generando obligaciones del cliente: ${error.message}`);
+    }
+  }
+  /**
+   * Obtener todas las obligaciones con filtros
+   */
+  async getObligations(filters) {
+    const where = {};
+    if (filters?.clientId) where.client_id = filters.clientId;
+    if (filters?.status) where.status = filters.status;
+    if (filters?.modelNumber) where.model_number = filters.modelNumber;
+    if (filters?.year) where.year = filters.year;
+    if (filters?.dueDateFrom || filters?.dueDateTo) {
+      where.due_date = {};
+      if (filters.dueDateFrom) where.due_date.gte = filters.dueDateFrom;
+      if (filters.dueDateTo) where.due_date.lte = filters.dueDateTo;
+    }
+    return await prisma17.client_tax_obligations.findMany({
+      where,
+      include: {
+        clients: {
+          select: {
+            id: true,
+            razonSocial: true,
+            nifCif: true
+          }
+        },
+        tax_calendar: {
+          select: {
+            id: true,
+            modelCode: true,
+            period: true,
+            year: true,
+            startDate: true,
+            endDate: true,
+            status: true
+          }
+        },
+        completed_by_user: {
+          select: {
+            id: true,
+            username: true,
+            email: true
+          }
+        }
+      },
+      orderBy: [{ due_date: "asc" }, { model_number: "asc" }]
+    });
+  }
+  /**
+   * Obtener obligaciones de periodos ABIERTOS
+   * Esta es la función clave para mostrar las tarjetas automáticamente
+   */
+  async getObligationsFromOpenPeriods(clientId) {
+    const today2 = /* @__PURE__ */ new Date();
+    const where = {
+      tax_calendar: {
+        startDate: { lte: today2 },
+        endDate: { gte: today2 },
+        active: true
+      }
+    };
+    if (clientId) {
+      where.client_id = clientId;
+    }
+    const obligations = await prisma17.client_tax_obligations.findMany({
+      where,
+      include: {
+        clients: {
+          select: {
+            id: true,
+            razonSocial: true,
+            nifCif: true,
+            tipo: true
+          }
+        },
+        tax_calendar: {
+          select: {
+            id: true,
+            modelCode: true,
+            period: true,
+            year: true,
+            startDate: true,
+            endDate: true,
+            status: true
+          }
+        }
+      },
+      orderBy: [{ due_date: "asc" }]
+    });
+    return obligations.map((obligation) => {
+      const daysUntilStart = Math.ceil(
+        (obligation.tax_calendar.startDate.getTime() - today2.getTime()) / (1e3 * 60 * 60 * 24)
+      );
+      const daysUntilEnd = Math.ceil(
+        (obligation.tax_calendar.endDate.getTime() - today2.getTime()) / (1e3 * 60 * 60 * 24)
+      );
+      let statusMessage = "";
+      if (daysUntilStart > 0) {
+        statusMessage = `Empieza en ${daysUntilStart} d\xEDa${daysUntilStart !== 1 ? "s" : ""}`;
+      } else if (daysUntilEnd > 0) {
+        statusMessage = `Finaliza en ${daysUntilEnd} d\xEDa${daysUntilEnd !== 1 ? "s" : ""}`;
+      } else {
+        statusMessage = "Finaliza hoy";
+      }
+      return {
+        ...obligation,
+        daysUntilStart,
+        daysUntilEnd,
+        statusMessage
+      };
+    });
+  }
+  /**
+   * Obtener una obligación por ID
+   */
+  async getObligationById(id) {
+    return await prisma17.client_tax_obligations.findUnique({
+      where: { id },
+      include: {
+        clients: true,
+        tax_calendar: true,
+        completed_by_user: true
+      }
+    });
+  }
+  /**
+   * Actualizar una obligación
+   */
+  async updateObligation(id, data) {
+    return await prisma17.client_tax_obligations.update({
+      where: { id },
+      data: {
+        ...data,
+        updated_at: /* @__PURE__ */ new Date()
+      }
+    });
+  }
+  /**
+   * Marcar una obligación como completada
+   */
+  async completeObligation(id, userId, amount) {
+    return await prisma17.client_tax_obligations.update({
+      where: { id },
+      data: {
+        status: "COMPLETED",
+        completed_at: /* @__PURE__ */ new Date(),
+        completed_by: userId,
+        amount: amount || void 0,
+        updated_at: /* @__PURE__ */ new Date()
+      }
+    });
+  }
+  /**
+   * Marcar obligaciones como vencidas (OVERDUE)
+   * Esta función debe ejecutarse diariamente por un cron job
+   */
+  async markOverdueObligations() {
+    const now = /* @__PURE__ */ new Date();
+    const result = await prisma17.client_tax_obligations.updateMany({
+      where: {
+        status: "PENDING",
+        due_date: { lt: now }
+      },
+      data: {
+        status: "OVERDUE",
+        updated_at: now
+      }
+    });
+    return {
+      success: true,
+      updated: result.count,
+      message: `${result.count} obligaciones marcadas como vencidas`
+    };
+  }
+  /**
+   * Obtener estadísticas de obligaciones
+   */
+  async getObligationStats(clientId) {
+    const where = clientId ? { client_id: clientId } : {};
+    const [total, pending, inProgress, completed, overdue] = await Promise.all([
+      prisma17.client_tax_obligations.count({ where }),
+      prisma17.client_tax_obligations.count({
+        where: { ...where, status: "PENDING" }
+      }),
+      prisma17.client_tax_obligations.count({
+        where: { ...where, status: "IN_PROGRESS" }
+      }),
+      prisma17.client_tax_obligations.count({
+        where: { ...where, status: "COMPLETED" }
+      }),
+      prisma17.client_tax_obligations.count({
+        where: { ...where, status: "OVERDUE" }
+      })
+    ]);
+    return {
+      total,
+      pending,
+      inProgress,
+      completed,
+      overdue
+    };
+  }
+  /**
+   * Eliminar una obligación
+   */
+  async deleteObligation(id) {
+    return await prisma17.client_tax_obligations.delete({
+      where: { id }
+    });
+  }
+};
+var tax_obligations_service_default = new TaxObligationsService();
+
+// server/routes/tax-obligations.routes.ts
+var router12 = Router5();
+router12.use(authenticateToken);
+router12.get("/", async (req, res) => {
+  try {
+    const { clientId, status, modelNumber, year, dueDateFrom, dueDateTo } = req.query;
+    const filters = {};
+    if (clientId) filters.clientId = clientId;
+    if (status) filters.status = status;
+    if (modelNumber) filters.modelNumber = modelNumber;
+    if (year) filters.year = parseInt(year);
+    if (dueDateFrom) filters.dueDateFrom = new Date(dueDateFrom);
+    if (dueDateTo) filters.dueDateTo = new Date(dueDateTo);
+    const obligations = await tax_obligations_service_default.getObligations(filters);
+    res.json({
+      success: true,
+      data: obligations,
+      count: obligations.length
+    });
+  } catch (error) {
+    console.error("Error obteniendo obligaciones:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error obteniendo obligaciones fiscales",
+      error: error.message
+    });
+  }
+});
+router12.get("/open-periods", async (req, res) => {
+  try {
+    const { clientId } = req.query;
+    const obligations = await tax_obligations_service_default.getObligationsFromOpenPeriods(
+      clientId
+    );
+    res.json({
+      success: true,
+      data: obligations,
+      count: obligations.length,
+      message: "Obligaciones de periodos abiertos"
+    });
+  } catch (error) {
+    console.error("Error obteniendo obligaciones de periodos abiertos:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error obteniendo obligaciones de periodos abiertos",
+      error: error.message
+    });
+  }
+});
+router12.get("/stats", async (req, res) => {
+  try {
+    const { clientId } = req.query;
+    const stats = await tax_obligations_service_default.getObligationStats(
+      clientId
+    );
+    res.json({
+      success: true,
+      data: stats
+    });
+  } catch (error) {
+    console.error("Error obteniendo estad\xEDsticas:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error obteniendo estad\xEDsticas",
+      error: error.message
+    });
+  }
+});
+router12.get("/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const obligation = await tax_obligations_service_default.getObligationById(id);
+    if (!obligation) {
+      return res.status(404).json({
+        success: false,
+        message: "Obligaci\xF3n no encontrada"
+      });
+    }
+    res.json({
+      success: true,
+      data: obligation
+    });
+  } catch (error) {
+    console.error("Error obteniendo obligaci\xF3n:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error obteniendo obligaci\xF3n",
+      error: error.message
+    });
+  }
+});
+router12.post("/generate-auto", async (req, res) => {
+  try {
+    const result = await tax_obligations_service_default.generateAutomaticObligations();
+    res.json({
+      success: true,
+      ...result
+    });
+  } catch (error) {
+    console.error("Error generando obligaciones autom\xE1ticas:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error generando obligaciones autom\xE1ticas",
+      error: error.message
+    });
+  }
+});
+router12.post("/generate-period/:taxCalendarId", async (req, res) => {
+  try {
+    const { taxCalendarId } = req.params;
+    const result = await tax_obligations_service_default.generateObligationsForPeriod(taxCalendarId);
+    res.json({
+      success: true,
+      ...result
+    });
+  } catch (error) {
+    console.error("Error generando obligaciones del periodo:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error generando obligaciones del periodo",
+      error: error.message
+    });
+  }
+});
+router12.post("/generate-client/:clientId", async (req, res) => {
+  try {
+    const { clientId } = req.params;
+    const result = await tax_obligations_service_default.generateObligationsForClient(clientId);
+    res.json({
+      success: true,
+      ...result
+    });
+  } catch (error) {
+    console.error("Error generando obligaciones del cliente:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error generando obligaciones del cliente",
+      error: error.message
+    });
+  }
+});
+router12.put("/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status, amount, notes } = req.body;
+    const updatedObligation = await tax_obligations_service_default.updateObligation(id, {
+      status,
+      amount: amount ? parseFloat(amount) : void 0,
+      notes
+    });
+    res.json({
+      success: true,
+      message: "Obligaci\xF3n actualizada exitosamente",
+      data: updatedObligation
+    });
+  } catch (error) {
+    console.error("Error actualizando obligaci\xF3n:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error actualizando obligaci\xF3n",
+      error: error.message
+    });
+  }
+});
+router12.put("/:id/complete", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { amount } = req.body;
+    const userId = req.user.id;
+    const completedObligation = await tax_obligations_service_default.completeObligation(
+      id,
+      userId,
+      amount ? parseFloat(amount) : void 0
+    );
+    res.json({
+      success: true,
+      message: "Obligaci\xF3n marcada como completada",
+      data: completedObligation
+    });
+  } catch (error) {
+    console.error("Error completando obligaci\xF3n:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error completando obligaci\xF3n",
+      error: error.message
+    });
+  }
+});
+router12.post("/mark-overdue", async (req, res) => {
+  try {
+    const result = await tax_obligations_service_default.markOverdueObligations();
+    res.json({
+      success: true,
+      ...result
+    });
+  } catch (error) {
+    console.error("Error marcando obligaciones vencidas:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error marcando obligaciones vencidas",
+      error: error.message
+    });
+  }
+});
+router12.delete("/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    await tax_obligations_service_default.deleteObligation(id);
+    res.json({
+      success: true,
+      message: "Obligaci\xF3n eliminada exitosamente"
+    });
+  } catch (error) {
+    console.error("Error eliminando obligaci\xF3n:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error eliminando obligaci\xF3n",
+      error: error.message
+    });
+  }
+});
+var tax_obligations_routes_default = router12;
+
 // server/services/version-service.ts
 import { readFile } from "fs/promises";
 import { join, dirname } from "path";
@@ -12779,7 +14267,7 @@ var getUpdateHistory = async (...args) => {
 };
 
 // server/services/storage-factory.ts
-import { PrismaClient as PrismaClient15 } from "@prisma/client";
+import { PrismaClient as PrismaClient18 } from "@prisma/client";
 
 // server/services/storage-provider.ts
 import fs7 from "fs/promises";
@@ -13196,7 +14684,7 @@ var SMBStorageProvider = class {
 // server/services/storage-factory.ts
 import crypto4 from "crypto";
 import path10 from "path";
-var prisma15 = new PrismaClient15();
+var prisma18 = new PrismaClient18();
 var ALGORITHM2 = "aes-256-gcm";
 function getEncryptionKey2() {
   const envKey = process.env.STORAGE_ENCRYPTION_KEY;
@@ -13242,7 +14730,7 @@ var StorageFactory = class {
   }
   // Obtener el provider de almacenamiento activo
   static async getActiveProvider() {
-    const activeConfig = await prisma15.storage_configs.findFirst({
+    const activeConfig = await prisma18.storage_configs.findFirst({
       where: { isActive: true }
     });
     if (!activeConfig || this.currentConfigId !== activeConfig.id || !this.instance) {
@@ -13253,7 +14741,7 @@ var StorageFactory = class {
   }
   // Obtener provider para una configuración específica por ID
   static async getProviderById(configId) {
-    const config = await prisma15.storage_configs.findUnique({
+    const config = await prisma18.storage_configs.findUnique({
       where: { id: configId }
     });
     if (!config) {
@@ -13305,7 +14793,7 @@ var StorageFactory = class {
   }
   // Probar conexión con una configuración específica guardada
   static async testConfiguration(configId) {
-    const config = await prisma15.storage_configs.findUnique({
+    const config = await prisma18.storage_configs.findUnique({
       where: { id: configId }
     });
     if (!config) {
@@ -13344,7 +14832,7 @@ var StorageFactory = class {
   }
   // Crear provider para una configuración específica (sin activarla)
   static async createProviderForConfig(configId) {
-    const config = await prisma15.storage_configs.findUnique({
+    const config = await prisma18.storage_configs.findUnique({
       where: { id: configId }
     });
     if (!config) {
@@ -13409,7 +14897,7 @@ async function processFile(file, provider) {
 
 // server/services/tax-calendar-import.ts
 import ExcelJS3 from "exceljs";
-import { randomUUID as randomUUID6 } from "crypto";
+import { randomUUID as randomUUID7 } from "crypto";
 init_prisma_client();
 async function processExcelImport(buffer, userId) {
   const result = {
@@ -13484,7 +14972,7 @@ async function processExcelImport(buffer, userId) {
         const derived = calculateDerivedFields(rowData.startDate, rowData.endDate);
         await prisma_client_default.tax_calendar.create({
           data: {
-            id: randomUUID6(),
+            id: randomUUID7(),
             modelCode: rowData.modelCode,
             period: rowData.period,
             year: rowData.year,
@@ -13852,12 +15340,12 @@ var budgetCalculationLimiter = rateLimit({
 });
 
 // server/epic-tasks-routes.ts
-import { PrismaClient as PrismaClient16 } from "@prisma/client";
+import { PrismaClient as PrismaClient19 } from "@prisma/client";
 import multer2 from "multer";
 import path12 from "path";
 import fs9 from "fs";
-import { randomUUID as randomUUID7 } from "crypto";
-var prisma16 = new PrismaClient16();
+import { randomUUID as randomUUID8 } from "crypto";
+var prisma19 = new PrismaClient19();
 var tasksUploadsDir = path12.join(process.cwd(), "uploads", "tasks", "attachments");
 if (!fs9.existsSync(tasksUploadsDir)) {
   fs9.mkdirSync(tasksUploadsDir, { recursive: true });
@@ -13880,7 +15368,7 @@ function registerEpicTasksRoutes(app2) {
   app2.get("/api/tasks/:taskId/comments", authenticateToken, async (req, res) => {
     try {
       const { taskId } = req.params;
-      const comments = await prisma16.task_comments.findMany({
+      const comments = await prisma19.task_comments.findMany({
         where: { taskId },
         include: {
           users: {
@@ -13906,13 +15394,13 @@ function registerEpicTasksRoutes(app2) {
       if (!contenido || contenido.trim() === "") {
         return res.status(400).json({ error: "El contenido del comentario es requerido" });
       }
-      const task = await prisma16.tasks.findUnique({ where: { id: taskId } });
+      const task = await prisma19.tasks.findUnique({ where: { id: taskId } });
       if (!task) {
         return res.status(404).json({ error: "Tarea no encontrada" });
       }
-      const comment = await prisma16.task_comments.create({
+      const comment = await prisma19.task_comments.create({
         data: {
-          id: randomUUID7(),
+          id: randomUUID8(),
           tasks: { connect: { id: taskId } },
           users: { connect: { id: req.user.id } },
           contenido,
@@ -13928,9 +15416,9 @@ function registerEpicTasksRoutes(app2) {
           }
         }
       });
-      await prisma16.task_activities.create({
+      await prisma19.task_activities.create({
         data: {
-          id: randomUUID7(),
+          id: randomUUID8(),
           taskId,
           userId: req.user.id,
           accion: "commented",
@@ -13948,7 +15436,7 @@ function registerEpicTasksRoutes(app2) {
     try {
       const { taskId, commentId } = req.params;
       const { contenido } = req.body;
-      const comment = await prisma16.task_comments.findUnique({
+      const comment = await prisma19.task_comments.findUnique({
         where: { id: commentId }
       });
       if (!comment) {
@@ -13957,7 +15445,7 @@ function registerEpicTasksRoutes(app2) {
       if (comment.userId !== req.user.id) {
         return res.status(403).json({ error: "No tienes permiso para editar este comentario" });
       }
-      const updated = await prisma16.task_comments.update({
+      const updated = await prisma19.task_comments.update({
         where: { id: commentId },
         data: {
           contenido,
@@ -13982,7 +15470,7 @@ function registerEpicTasksRoutes(app2) {
   app2.delete("/api/tasks/:taskId/comments/:commentId", authenticateToken, async (req, res) => {
     try {
       const { commentId } = req.params;
-      const comment = await prisma16.task_comments.findUnique({
+      const comment = await prisma19.task_comments.findUnique({
         where: { id: commentId }
       });
       if (!comment) {
@@ -13991,7 +15479,7 @@ function registerEpicTasksRoutes(app2) {
       if (comment.userId !== req.user.id && !req.user.permissions.includes("admin:settings")) {
         return res.status(403).json({ error: "No tienes permiso para eliminar este comentario" });
       }
-      await prisma16.task_comments.delete({
+      await prisma19.task_comments.delete({
         where: { id: commentId }
       });
       res.status(204).end();
@@ -14003,7 +15491,7 @@ function registerEpicTasksRoutes(app2) {
   app2.get("/api/tasks/:taskId/attachments", authenticateToken, async (req, res) => {
     try {
       const { taskId } = req.params;
-      const attachments = await prisma16.task_attachments.findMany({
+      const attachments = await prisma19.task_attachments.findMany({
         where: { taskId },
         include: {
           users: {
@@ -14027,13 +15515,13 @@ function registerEpicTasksRoutes(app2) {
       if (!req.file) {
         return res.status(400).json({ error: "No se proporcion\xF3 ning\xFAn archivo" });
       }
-      const task = await prisma16.tasks.findUnique({ where: { id: taskId } });
+      const task = await prisma19.tasks.findUnique({ where: { id: taskId } });
       if (!task) {
         return res.status(404).json({ error: "Tarea no encontrada" });
       }
-      const attachment = await prisma16.task_attachments.create({
+      const attachment = await prisma19.task_attachments.create({
         data: {
-          id: randomUUID7(),
+          id: randomUUID8(),
           tasks: { connect: { id: taskId } },
           users: { connect: { id: req.user.id } },
           fileName: req.file.filename,
@@ -14051,9 +15539,9 @@ function registerEpicTasksRoutes(app2) {
           }
         }
       });
-      await prisma16.task_activities.create({
+      await prisma19.task_activities.create({
         data: {
-          id: randomUUID7(),
+          id: randomUUID8(),
           taskId,
           userId: req.user.id,
           accion: "attachment_added",
@@ -14070,7 +15558,7 @@ function registerEpicTasksRoutes(app2) {
   app2.delete("/api/tasks/:taskId/attachments/:attachmentId", authenticateToken, async (req, res) => {
     try {
       const { attachmentId } = req.params;
-      const attachment = await prisma16.task_attachments.findUnique({
+      const attachment = await prisma19.task_attachments.findUnique({
         where: { id: attachmentId }
       });
       if (!attachment) {
@@ -14083,7 +15571,7 @@ function registerEpicTasksRoutes(app2) {
       if (fs9.existsSync(filePath)) {
         fs9.unlinkSync(filePath);
       }
-      await prisma16.task_attachments.delete({
+      await prisma19.task_attachments.delete({
         where: { id: attachmentId }
       });
       res.status(204).end();
@@ -14095,7 +15583,7 @@ function registerEpicTasksRoutes(app2) {
   app2.get("/api/tasks/:taskId/time-entries", authenticateToken, async (req, res) => {
     try {
       const { taskId } = req.params;
-      const entries = await prisma16.task_time_entries.findMany({
+      const entries = await prisma19.task_time_entries.findMany({
         where: { taskId },
         include: {
           users: {
@@ -14120,13 +15608,13 @@ function registerEpicTasksRoutes(app2) {
       if (!minutos || minutos <= 0) {
         return res.status(400).json({ error: "Los minutos deben ser mayores a 0" });
       }
-      const task = await prisma16.tasks.findUnique({ where: { id: taskId } });
+      const task = await prisma19.tasks.findUnique({ where: { id: taskId } });
       if (!task) {
         return res.status(404).json({ error: "Tarea no encontrada" });
       }
-      const entry = await prisma16.task_time_entries.create({
+      const entry = await prisma19.task_time_entries.create({
         data: {
-          id: randomUUID7(),
+          id: randomUUID8(),
           tasks: { connect: { id: taskId } },
           users: { connect: { id: req.user.id } },
           minutos,
@@ -14143,15 +15631,15 @@ function registerEpicTasksRoutes(app2) {
           }
         }
       });
-      await prisma16.tasks.update({
+      await prisma19.tasks.update({
         where: { id: taskId },
         data: {
           tiempo_invertido: task.tiempo_invertido + minutos
         }
       });
-      await prisma16.task_activities.create({
+      await prisma19.task_activities.create({
         data: {
-          id: randomUUID7(),
+          id: randomUUID8(),
           taskId,
           userId: req.user.id,
           accion: "time_logged",
@@ -14168,7 +15656,7 @@ function registerEpicTasksRoutes(app2) {
   app2.delete("/api/tasks/:taskId/time-entries/:entryId", authenticateToken, async (req, res) => {
     try {
       const { taskId, entryId } = req.params;
-      const entry = await prisma16.task_time_entries.findUnique({
+      const entry = await prisma19.task_time_entries.findUnique({
         where: { id: entryId }
       });
       if (!entry) {
@@ -14177,16 +15665,16 @@ function registerEpicTasksRoutes(app2) {
       if (entry.userId !== req.user.id) {
         return res.status(403).json({ error: "No tienes permiso para eliminar este registro" });
       }
-      const task = await prisma16.tasks.findUnique({ where: { id: taskId } });
+      const task = await prisma19.tasks.findUnique({ where: { id: taskId } });
       if (task) {
-        await prisma16.tasks.update({
+        await prisma19.tasks.update({
           where: { id: taskId },
           data: {
             tiempo_invertido: Math.max(0, task.tiempo_invertido - entry.minutos)
           }
         });
       }
-      await prisma16.task_time_entries.delete({
+      await prisma19.task_time_entries.delete({
         where: { id: entryId }
       });
       res.status(204).end();
@@ -14198,7 +15686,7 @@ function registerEpicTasksRoutes(app2) {
   app2.get("/api/tasks/:taskId/activities", authenticateToken, async (req, res) => {
     try {
       const { taskId } = req.params;
-      const activities = await prisma16.task_activities.findMany({
+      const activities = await prisma19.task_activities.findMany({
         where: { taskId },
         include: {
           users: {
@@ -14221,7 +15709,7 @@ function registerEpicTasksRoutes(app2) {
   app2.get("/api/tasks/:taskId/subtasks", authenticateToken, async (req, res) => {
     try {
       const { taskId } = req.params;
-      const subtasks = await prisma16.tasks.findMany({
+      const subtasks = await prisma19.tasks.findMany({
         where: { parent_task_id: taskId },
         include: {
           users: {
@@ -14243,11 +15731,11 @@ function registerEpicTasksRoutes(app2) {
     try {
       const { taskId } = req.params;
       const { estado, orden } = req.body;
-      const task = await prisma16.tasks.findUnique({ where: { id: taskId } });
+      const task = await prisma19.tasks.findUnique({ where: { id: taskId } });
       if (!task) {
         return res.status(404).json({ error: "Tarea no encontrada" });
       }
-      const updatedTask = await prisma16.tasks.update({
+      const updatedTask = await prisma19.tasks.update({
         where: { id: taskId },
         data: {
           ...estado !== void 0 && { estado },
@@ -14256,9 +15744,9 @@ function registerEpicTasksRoutes(app2) {
         }
       });
       if (estado && estado !== task.estado) {
-        await prisma16.task_activities.create({
+        await prisma19.task_activities.create({
           data: {
-            id: randomUUID7(),
+            id: randomUUID8(),
             taskId,
             userId: req.user.id,
             accion: "status_changed",
@@ -14284,23 +15772,23 @@ function registerEpicTasksRoutes(app2) {
         porPrioridad,
         porUsuario
       ] = await Promise.all([
-        prisma16.tasks.count({ where: { is_archived: false } }),
-        prisma16.tasks.count({ where: { estado: "PENDIENTE", is_archived: false } }),
-        prisma16.tasks.count({ where: { estado: "EN_PROGRESO", is_archived: false } }),
-        prisma16.tasks.count({ where: { estado: "COMPLETADA", is_archived: false } }),
-        prisma16.tasks.count({
+        prisma19.tasks.count({ where: { is_archived: false } }),
+        prisma19.tasks.count({ where: { estado: "PENDIENTE", is_archived: false } }),
+        prisma19.tasks.count({ where: { estado: "EN_PROGRESO", is_archived: false } }),
+        prisma19.tasks.count({ where: { estado: "COMPLETADA", is_archived: false } }),
+        prisma19.tasks.count({
           where: {
             fecha_vencimiento: { lt: /* @__PURE__ */ new Date() },
             estado: { not: "COMPLETADA" },
             is_archived: false
           }
         }),
-        prisma16.tasks.groupBy({
+        prisma19.tasks.groupBy({
           by: ["prioridad"],
           where: { is_archived: false },
           _count: true
         }),
-        prisma16.tasks.groupBy({
+        prisma19.tasks.groupBy({
           by: ["asignado_a"],
           where: { is_archived: false, asignado_a: { not: null } },
           _count: true
@@ -14336,7 +15824,7 @@ import nodemailer6 from "nodemailer";
 import { exec as exec2 } from "child_process";
 import { promisify as promisify2 } from "util";
 var execPromise = promisify2(exec2);
-var prisma17 = new PrismaClient17();
+var prisma20 = new PrismaClient20();
 if (!process.env.JWT_SECRET) {
   throw new Error("FATAL: JWT_SECRET no est\xE1 configurado. Este valor es OBLIGATORIO para la seguridad del sistema.");
 }
@@ -14567,7 +16055,7 @@ async function registerRoutes(app2, options) {
         }
         let defaultRoleId = roleId;
         if (!defaultRoleId) {
-          const defaultRole = await prisma17.roles.findUnique({
+          const defaultRole = await prisma20.roles.findUnique({
             where: { name: "Gestor" }
           });
           if (defaultRole) {
@@ -14644,7 +16132,7 @@ async function registerRoutes(app2, options) {
   });
   app2.get("/api/users", authenticateToken2, async (req, res) => {
     try {
-      const users = await prisma17.users.findMany({
+      const users = await prisma20.users.findMany({
         select: {
           id: true,
           username: true,
@@ -14746,7 +16234,7 @@ async function registerRoutes(app2, options) {
       try {
         const { id } = req.params;
         const currentUserId = req.user.id;
-        const currentUser = await prisma17.users.findUnique({
+        const currentUser = await prisma20.users.findUnique({
           where: { id: currentUserId },
           select: { is_owner: true }
         });
@@ -14756,7 +16244,7 @@ async function registerRoutes(app2, options) {
             code: "NOT_OWNER"
           });
         }
-        const targetUser = await prisma17.users.findUnique({
+        const targetUser = await prisma20.users.findUnique({
           where: { id }
         });
         if (!targetUser) {
@@ -14765,11 +16253,11 @@ async function registerRoutes(app2, options) {
         if (targetUser.id === currentUserId) {
           return res.status(400).json({ error: "No puedes transferir el rol a ti mismo" });
         }
-        await prisma17.users.update({
+        await prisma20.users.update({
           where: { id: currentUserId },
           data: { is_owner: false }
         });
-        const newOwner = await prisma17.users.update({
+        const newOwner = await prisma20.users.update({
           where: { id },
           data: { is_owner: true }
         });
@@ -14797,7 +16285,7 @@ async function registerRoutes(app2, options) {
       try {
         const { id } = req.params;
         const currentUserId = req.user.id;
-        const targetUser = await prisma17.users.findUnique({
+        const targetUser = await prisma20.users.findUnique({
           where: { id },
           select: { id: true, username: true, email: true, is_owner: true }
         });
@@ -14807,11 +16295,11 @@ async function registerRoutes(app2, options) {
         if (targetUser.is_owner) {
           return res.status(400).json({ error: "Este usuario ya es Owner" });
         }
-        await prisma17.users.updateMany({
+        await prisma20.users.updateMany({
           where: { is_owner: true },
           data: { is_owner: false }
         });
-        const newOwner = await prisma17.users.update({
+        const newOwner = await prisma20.users.update({
           where: { id },
           data: { is_owner: true }
         });
@@ -14842,7 +16330,7 @@ async function registerRoutes(app2, options) {
         if (!user) {
           return res.status(404).json({ error: "Usuario no encontrado" });
         }
-        const userToDelete = await prisma17.users.findUnique({
+        const userToDelete = await prisma20.users.findUnique({
           where: { id },
           select: { is_owner: true, username: true }
         });
@@ -14852,9 +16340,9 @@ async function registerRoutes(app2, options) {
             code: "CANNOT_DELETE_OWNER"
           });
         }
-        const manuals = await prisma17.manuals.count({ where: { autor_id: id } });
-        const activityLogs = await prisma17.activity_logs.count({ where: { usuarioId: id } });
-        const auditTrails = await prisma17.audit_trail.count({ where: { usuarioId: id } });
+        const manuals = await prisma20.manuals.count({ where: { autor_id: id } });
+        const activityLogs = await prisma20.activity_logs.count({ where: { usuarioId: id } });
+        const auditTrails = await prisma20.audit_trail.count({ where: { usuarioId: id } });
         if (manuals > 0) {
           return res.status(409).json({
             error: `No se puede eliminar: el usuario tiene ${manuals} manual(es) asignado(s) que se borrar\xEDan permanentemente. Reasigne los manuales a otro usuario primero.`
@@ -15045,19 +16533,19 @@ async function registerRoutes(app2, options) {
         if (!client) {
           return res.status(404).json({ error: "Cliente no encontrado" });
         }
-        const clientTaxes = await prisma17.client_tax.findMany({
+        const clientTaxModels = await prisma20.client_tax_models.findMany({
+          where: { client_id: id }
+        });
+        const filingCount = await prisma20.client_tax_filings.count({
           where: { clientId: id }
         });
-        const assignmentCount = await prisma17.client_tax_assignments.count({
-          where: { clientId: id }
-        });
-        if (clientTaxes.length > 0 || assignmentCount > 0) {
+        if (clientTaxModels.length > 0 || filingCount > 0) {
           const updated = await prismaStorage.updateClient(id, { isActive: false });
           await prismaStorage.createActivityLog({
             usuarioId: req.user.id,
             accion: `Desactiv\xF3 el cliente ${client.razonSocial}`,
             modulo: "clientes",
-            detalles: `Cliente con ${clientTaxes.length} impuestos y ${assignmentCount} asignaciones fiscales asociadas`
+            detalles: `Cliente con ${clientTaxModels.length} modelos fiscales y ${filingCount} presentaciones asociadas`
           });
           await createAudit(
             req.user.id,
@@ -15394,11 +16882,11 @@ async function registerRoutes(app2, options) {
         if (!client) {
           return res.status(404).json({ error: "Cliente no encontrado" });
         }
-        await prisma17.client_employees.deleteMany({
+        await prisma20.client_employees.deleteMany({
           where: { clientId: id }
         });
         if (employeeIds && Array.isArray(employeeIds) && employeeIds.length > 0) {
-          await prisma17.client_employees.createMany({
+          await prisma20.client_employees.createMany({
             data: employeeIds.map((userId) => ({
               clientId: id,
               userId,
@@ -15441,12 +16929,12 @@ async function registerRoutes(app2, options) {
           return res.status(404).json({ error: "Usuario no encontrado" });
         }
         if (isPrimary) {
-          await prisma17.client_employees.updateMany({
+          await prisma20.client_employees.updateMany({
             where: { clientId: id },
             data: { is_primary: false }
           });
         }
-        await prisma17.client_employees.upsert({
+        await prisma20.client_employees.upsert({
           where: {
             clientId_userId: {
               clientId: id,
@@ -15465,7 +16953,7 @@ async function registerRoutes(app2, options) {
         if (isPrimary) {
           await prismaStorage.updateClient(id, { responsableAsignado: userId });
         } else {
-          const primaryEmployee = await prisma17.client_employees.findFirst({
+          const primaryEmployee = await prisma20.client_employees.findFirst({
             where: { clientId: id, is_primary: true }
           });
           await prismaStorage.updateClient(id, {
@@ -15497,7 +16985,7 @@ async function registerRoutes(app2, options) {
           return res.status(404).json({ error: "Cliente no encontrado" });
         }
         const user = await prismaStorage.getUser(userId);
-        const employeeToDelete = await prisma17.client_employees.findUnique({
+        const employeeToDelete = await prisma20.client_employees.findUnique({
           where: {
             clientId_userId: {
               clientId: id,
@@ -15505,7 +16993,7 @@ async function registerRoutes(app2, options) {
             }
           }
         });
-        await prisma17.client_employees.delete({
+        await prisma20.client_employees.delete({
           where: {
             clientId_userId: {
               clientId: id,
@@ -15514,11 +17002,11 @@ async function registerRoutes(app2, options) {
           }
         });
         if (employeeToDelete?.is_primary) {
-          const remainingEmployee = await prisma17.client_employees.findFirst({
+          const remainingEmployee = await prisma20.client_employees.findFirst({
             where: { clientId: id }
           });
           if (remainingEmployee) {
-            await prisma17.client_employees.update({
+            await prisma20.client_employees.update({
               where: {
                 clientId_userId: {
                   clientId: id,
@@ -16122,7 +17610,7 @@ async function registerRoutes(app2, options) {
   );
   app2.get("/api/admin/online-count", authenticateToken2, async (req, res) => {
     try {
-      const count = await prisma17.sessions.count({
+      const count = await prisma20.sessions.count({
         where: { ended_at: null }
       });
       res.json({ count });
@@ -16139,6 +17627,9 @@ async function registerRoutes(app2, options) {
   app2.use("/api/budget-parameters", budget_parameters_default);
   app2.use("/api/budget-templates", budget_templates_default);
   app2.use("/api/documents", documents_routes_default);
+  app2.use("/api/tax-calendar", tax_calendar_routes_default);
+  app2.use("/api/client-tax", client_tax_routes_default);
+  app2.use("/api/tax-obligations", tax_obligations_routes_default);
   app2.use("/api/system/github", github_updates_routes_default);
   app2.get(
     "/api/admin/smtp-accounts",
@@ -16306,15 +17797,15 @@ async function registerRoutes(app2, options) {
     async (req, res) => {
       try {
         console.log("\u{1F680} Iniciando migraciones...");
-        const updatedUsers = await prisma17.users.updateMany({
+        const updatedUsers = await prisma20.users.updateMany({
           where: { username: "CarlosAdmin" },
           data: { is_owner: true }
         });
-        const adminUser = await prisma17.users.findFirst({
+        const adminUser = await prisma20.users.findFirst({
           where: { username: "CarlosAdmin" },
           select: { username: true, email: true, is_owner: true }
         });
-        const roles = await prisma17.roles.findMany({
+        const roles = await prisma20.roles.findMany({
           select: {
             id: true,
             name: true,
@@ -16346,7 +17837,7 @@ async function registerRoutes(app2, options) {
     checkPermission("admin:system"),
     async (req, res) => {
       try {
-        const config = await prisma17.storage_configs.findFirst({
+        const config = await prisma20.storage_configs.findFirst({
           where: { isActive: true },
           orderBy: { createdAt: "desc" }
         });
@@ -16391,13 +17882,13 @@ async function registerRoutes(app2, options) {
           }
         }
         const encryptedPassword = password ? encryptPassword2(password) : null;
-        await prisma17.storage_configs.updateMany({
+        await prisma20.storage_configs.updateMany({
           where: { isActive: true },
           data: { isActive: false }
         });
-        const config = await prisma17.storage_configs.create({
+        const config = await prisma20.storage_configs.create({
           data: {
-            id: randomUUID8(),
+            id: randomUUID9(),
             type,
             name: `${type} - ${(/* @__PURE__ */ new Date()).toISOString()}`,
             host,
@@ -16543,7 +18034,7 @@ async function registerRoutes(app2, options) {
     checkPermission("admin:settings"),
     async (req, res) => {
       try {
-        const configs = await prisma17.system_config.findMany({
+        const configs = await prisma20.system_config.findMany({
           orderBy: { key: "asc" }
         });
         res.json(configs);
@@ -16558,7 +18049,7 @@ async function registerRoutes(app2, options) {
     checkPermission("admin:settings"),
     async (req, res) => {
       try {
-        const config = await prisma17.system_config.findUnique({
+        const config = await prisma20.system_config.findUnique({
           where: { key: req.params.key }
         });
         if (!config) {
@@ -16580,7 +18071,7 @@ async function registerRoutes(app2, options) {
         if (value === void 0 || value === null) {
           return res.status(400).json({ error: "El valor de la configuraci\xF3n es requerido" });
         }
-        const existing = await prisma17.system_config.findUnique({
+        const existing = await prisma20.system_config.findUnique({
           where: { key: req.params.key }
         });
         if (!existing) {
@@ -16589,7 +18080,7 @@ async function registerRoutes(app2, options) {
         if (!existing.is_editable) {
           return res.status(403).json({ error: "Esta configuraci\xF3n no es editable" });
         }
-        const config = await prisma17.system_config.update({
+        const config = await prisma20.system_config.update({
           where: { key: req.params.key },
           data: { value: String(value) }
         });
@@ -16611,10 +18102,10 @@ async function registerRoutes(app2, options) {
     checkPermission("admin:settings"),
     async (req, res) => {
       try {
-        const repoConfig = await prisma17.system_config.findUnique({
+        const repoConfig = await prisma20.system_config.findUnique({
           where: { key: "github_repo_url" }
         });
-        const branchConfig = await prisma17.system_config.findUnique({
+        const branchConfig = await prisma20.system_config.findUnique({
           where: { key: "github_branch" }
         });
         res.json({
@@ -16664,10 +18155,10 @@ async function registerRoutes(app2, options) {
           }
         }
         if (repoUrl !== void 0) {
-          await prisma17.system_config.upsert({
+          await prisma20.system_config.upsert({
             where: { key: "github_repo_url" },
             create: {
-              id: randomUUID8(),
+              id: randomUUID9(),
               key: "github_repo_url",
               value: repoUrl,
               description: "URL del repositorio de GitHub para actualizaciones",
@@ -16678,10 +18169,10 @@ async function registerRoutes(app2, options) {
           });
         }
         if (branch !== void 0) {
-          await prisma17.system_config.upsert({
+          await prisma20.system_config.upsert({
             where: { key: "github_branch" },
             create: {
-              id: randomUUID8(),
+              id: randomUUID9(),
               key: "github_branch",
               value: branch,
               description: "Rama de GitHub para actualizaciones",
@@ -16715,7 +18206,7 @@ async function registerRoutes(app2, options) {
     async (req, res) => {
       try {
         const currentVersion = await getCurrentVersion();
-        const repoConfig = await prisma17.system_config.findUnique({
+        const repoConfig = await prisma20.system_config.findUnique({
           where: { key: "github_repo_url" }
         });
         if (!repoConfig?.value) {
@@ -16924,15 +18415,15 @@ async function registerRoutes(app2, options) {
         if (!name) {
           return res.status(400).json({ error: "El nombre del rol es requerido" });
         }
-        const existingRole = await prisma17.roles.findUnique({
+        const existingRole = await prisma20.roles.findUnique({
           where: { name }
         });
         if (existingRole) {
           return res.status(400).json({ error: "Ya existe un rol con ese nombre" });
         }
-        const role = await prisma17.roles.create({
+        const role = await prisma20.roles.create({
           data: {
-            id: randomUUID8(),
+            id: randomUUID9(),
             name,
             description: description || null,
             is_system: false,
@@ -16994,7 +18485,7 @@ async function registerRoutes(app2, options) {
           can_manage_roles,
           is_active
         } = req.body;
-        const existingRole = await prisma17.roles.findUnique({
+        const existingRole = await prisma20.roles.findUnique({
           where: { id }
         });
         if (!existingRole) {
@@ -17007,7 +18498,7 @@ async function registerRoutes(app2, options) {
           });
         }
         if (name && name !== existingRole.name) {
-          const duplicateRole = await prisma17.roles.findUnique({
+          const duplicateRole = await prisma20.roles.findUnique({
             where: { name }
           });
           if (duplicateRole) {
@@ -17026,7 +18517,7 @@ async function registerRoutes(app2, options) {
         if (can_delete_users !== void 0) additionalFields.can_delete_users = can_delete_users;
         if (can_manage_roles !== void 0) additionalFields.can_manage_roles = can_manage_roles;
         if (is_active !== void 0) additionalFields.is_active = is_active;
-        const role = await prisma17.roles.update({
+        const role = await prisma20.roles.update({
           where: { id },
           data: updateData,
           include: {
@@ -17067,7 +18558,7 @@ async function registerRoutes(app2, options) {
     async (req, res) => {
       try {
         const { id } = req.params;
-        const role = await prisma17.roles.findUnique({
+        const role = await prisma20.roles.findUnique({
           where: { id }
         });
         if (!role) {
@@ -17079,7 +18570,7 @@ async function registerRoutes(app2, options) {
             code: "SYSTEM_ROLE_PROTECTED"
           });
         }
-        const usersWithRole = await prisma17.users.count({
+        const usersWithRole = await prisma20.users.count({
           where: { roleId: id }
         });
         if (usersWithRole > 0) {
@@ -17088,10 +18579,10 @@ async function registerRoutes(app2, options) {
             code: "ROLE_IN_USE"
           });
         }
-        await prisma17.role_permissions.deleteMany({
+        await prisma20.role_permissions.deleteMany({
           where: { roleId: id }
         });
-        await prisma17.roles.delete({
+        await prisma20.roles.delete({
           where: { id }
         });
         await prismaStorage.createActivityLog({
@@ -17157,7 +18648,7 @@ async function registerRoutes(app2, options) {
         if (!Array.isArray(permissionIds)) {
           return res.status(400).json({ error: "permissionIds debe ser un array" });
         }
-        const role = await prisma17.roles.findUnique({
+        const role = await prisma20.roles.findUnique({
           where: { id }
         });
         if (!role) {
@@ -17169,21 +18660,21 @@ async function registerRoutes(app2, options) {
             code: "SYSTEM_ROLE_PROTECTED"
           });
         }
-        await prisma17.role_permissions.deleteMany({
+        await prisma20.role_permissions.deleteMany({
           where: { roleId: id }
         });
         const rolePermissions = await Promise.all(
           permissionIds.map(
-            (permissionId) => prisma17.role_permissions.create({
+            (permissionId) => prisma20.role_permissions.create({
               data: {
-                id: randomUUID8(),
+                id: randomUUID9(),
                 roleId: id,
                 permissionId
               }
             })
           )
         );
-        const updatedRole = await prisma17.roles.findUnique({
+        const updatedRole = await prisma20.roles.findUnique({
           where: { id },
           include: {
             role_permissions: {
@@ -17280,69 +18771,35 @@ async function registerRoutes(app2, options) {
   );
   app2.get("/api/tax-requirements", authenticateToken2, async (req, res) => {
     try {
-      const requirements = await prisma17.client_tax_requirements.findMany({
-        include: { clients: true }
-      });
-      res.json(requirements);
+      res.json([]);
     } catch (error) {
       res.status(500).json({ error: error.message });
     }
   });
   app2.post("/api/tax-requirements", authenticateToken2, checkPermission("taxes:create"), async (req, res) => {
     try {
-      const { clientId, taxModelCode, impuesto, required = true, note, colorTag, detalle } = req.body;
-      const requirement = await prisma17.client_tax_requirements.create({
-        data: {
-          id: randomUUID8(),
-          clientId,
-          taxModelCode: taxModelCode || null,
-          impuesto: impuesto || taxModelCode || "SIN_ESPECIFICAR",
-          detalle: detalle || null,
-          required,
-          note: note || null,
-          color_tag: colorTag || null
-        },
-        include: { clients: true }
-      });
-      res.json(requirement);
+      res.status(501).json({ error: "Tax requirements no longer supported" });
     } catch (error) {
       res.status(500).json({ error: error.message });
     }
   });
   app2.patch("/api/tax-requirements/:id/toggle", authenticateToken2, checkPermission("taxes:update"), async (req, res) => {
     try {
-      const { id } = req.params;
-      const current = await prisma17.client_tax_requirements.findUnique({ where: { id } });
-      if (!current) {
-        return res.status(404).json({ error: "Requisito no encontrado" });
-      }
-      const updated = await prisma17.client_tax_requirements.update({
-        where: { id },
-        data: { required: !current.required },
-        include: { clients: true }
-      });
-      res.json(updated);
+      res.status(501).json({ error: "Tax requirements no longer supported" });
     } catch (error) {
       res.status(500).json({ error: error.message });
     }
   });
   app2.patch("/api/tax-requirements/:id", authenticateToken2, checkPermission("taxes:update"), async (req, res) => {
     try {
-      const { id } = req.params;
-      const { note, color_tag: colorTag } = req.body;
-      const updated = await prisma17.client_tax_requirements.update({
-        where: { id },
-        data: { note, color_tag: colorTag },
-        include: { clients: true }
-      });
-      res.json(updated);
+      res.status(501).json({ error: "Tax requirements no longer supported" });
     } catch (error) {
       res.status(500).json({ error: error.message });
     }
   });
   app2.get("/api/fiscal-periods", authenticateToken2, async (req, res) => {
     try {
-      const periods = await prisma17.fiscal_periods.findMany({
+      const periods = await prisma20.fiscal_periods.findMany({
         orderBy: [{ year: "desc" }, { quarter: "asc" }]
       });
       res.json(periods);
@@ -17562,7 +19019,7 @@ async function registerRoutes(app2, options) {
         if (periodicity === "annual") where.period = "ANUAL";
         if (periodicity === "special") where.period = { in: ["M04", "M10", "M12"] };
         if (status && ["PENDIENTE", "ABIERTO", "CERRADO"].includes(status)) where.status = status;
-        const list = await prisma17.tax_calendar.findMany({ where, orderBy: [{ endDate: "asc" }] });
+        const list = await prisma20.tax_calendar.findMany({ where, orderBy: [{ endDate: "asc" }] });
         const rows = list.map((r) => ({
           id: r.id,
           modelCode: r.modelCode,
@@ -17719,7 +19176,7 @@ async function registerRoutes(app2, options) {
       try {
         const y = Number(req.params.year);
         if (!Number.isFinite(y)) return res.status(400).send("");
-        const rows = await prisma17.tax_calendar.findMany({ where: { year: y }, orderBy: [{ startDate: "asc" }] });
+        const rows = await prisma20.tax_calendar.findMany({ where: { year: y }, orderBy: [{ startDate: "asc" }] });
         const toICSDate = (d) => {
           const pad = (n) => String(n).padStart(2, "0");
           const yyyy = d.getUTCFullYear();
@@ -18077,21 +19534,21 @@ async function registerRoutes(app2, options) {
     async (req, res) => {
       try {
         const year = req.query.year ? Number(req.query.year) : (/* @__PURE__ */ new Date()).getFullYear();
-        const totalFilings = await prisma17.client_tax_filings.count();
-        const filingsWithPeriods = await prisma17.client_tax_filings.count({
+        const totalFilings = await prisma20.client_tax_filings.count();
+        const filingsWithPeriods = await prisma20.client_tax_filings.count({
           where: { fiscal_periods: { isNot: null } }
         });
-        const totalPeriods = await prisma17.fiscal_periods.count();
-        const periodsThisYear = await prisma17.fiscal_periods.count({ where: { year } });
-        const periods = await prisma17.fiscal_periods.findMany({
+        const totalPeriods = await prisma20.fiscal_periods.count();
+        const periodsThisYear = await prisma20.fiscal_periods.count({ where: { year } });
+        const periods = await prisma20.fiscal_periods.findMany({
           select: { year: true },
           distinct: ["year"],
           orderBy: { year: "desc" }
         });
-        const filingsThisYear = await prisma17.client_tax_filings.count({
+        const filingsThisYear = await prisma20.client_tax_filings.count({
           where: { fiscal_periods: { year } }
         });
-        const sampleFilings = await prisma17.client_tax_filings.findMany({
+        const sampleFilings = await prisma20.client_tax_filings.findMany({
           take: 3,
           include: {
             fiscal_periods: true,
@@ -18198,25 +19655,25 @@ async function registerRoutes(app2, options) {
     checkPermission("taxes:delete"),
     async (req, res) => {
       try {
-        const allFilings = await prisma17.client_tax_filings.findMany({
+        const allFilings = await prisma20.client_tax_filings.findMany({
           include: {
             fiscal_periods: true
           }
         });
-        const assignments = await prisma17.client_tax_assignments.findMany({
-          where: { activeFlag: true }
+        const activeModels = await prisma20.client_tax_models.findMany({
+          where: { is_active: true }
         });
-        const assignmentMap = /* @__PURE__ */ new Map();
-        assignments.forEach((a) => {
-          const key = `${a.clientId}:${a.taxModelCode}`;
-          if (!assignmentMap.has(key)) assignmentMap.set(key, []);
-          assignmentMap.get(key).push(a);
+        const modelMap = /* @__PURE__ */ new Map();
+        activeModels.forEach((m) => {
+          const key = `${m.client_id}:${m.model_number}`;
+          if (!modelMap.has(key)) modelMap.set(key, []);
+          modelMap.get(key).push(m);
         });
         const orphanIds = [];
         for (const filing of allFilings) {
           const key = `${filing.clientId}:${filing.taxModelCode}`;
-          const clientAssignments = assignmentMap.get(key);
-          if (!clientAssignments || clientAssignments.length === 0) {
+          const clientModels = modelMap.get(key);
+          if (!clientModels || clientModels.length === 0) {
             orphanIds.push(filing.id);
             continue;
           }
@@ -18227,17 +19684,17 @@ async function registerRoutes(app2, options) {
           }
           const ps = period.starts_at;
           const pe = period.ends_at;
-          const hasValidAssignment = clientAssignments.some((a) => {
-            const startOk = a.startDate <= pe;
-            const endOk = !a.endDate || a.endDate >= ps;
+          const hasValidModel = clientModels.some((m) => {
+            const startOk = m.start_date <= pe;
+            const endOk = !m.end_date || m.end_date >= ps;
             return startOk && endOk;
           });
-          if (!hasValidAssignment) {
+          if (!hasValidModel) {
             orphanIds.push(filing.id);
           }
         }
         if (orphanIds.length > 0) {
-          await prisma17.client_tax_filings.deleteMany({
+          await prisma20.client_tax_filings.deleteMany({
             where: { id: { in: orphanIds } }
           });
         }
@@ -18517,7 +19974,7 @@ async function registerRoutes(app2, options) {
     let lastHeartbeat = Date.now();
     heartbeatInterval = setInterval(async () => {
       try {
-        await prisma17.sessions.updateMany({
+        await prisma20.sessions.updateMany({
           where: { socket_id: socket.id, ended_at: null },
           data: { last_seen_at: /* @__PURE__ */ new Date() }
         });
@@ -18533,7 +19990,7 @@ async function registerRoutes(app2, options) {
     socket.on("heartbeat-response", async () => {
       lastHeartbeat = Date.now();
       try {
-        await prisma17.sessions.updateMany({
+        await prisma20.sessions.updateMany({
           where: { socket_id: socket.id, ended_at: null },
           data: { last_seen_at: /* @__PURE__ */ new Date() }
         });
@@ -18568,9 +20025,9 @@ async function registerRoutes(app2, options) {
         const ipHeader = socket.handshake.headers["x-forwarded-for"] || "";
         const ip = ipHeader ? ipHeader.split(",")[0].trim() : socket.handshake.address;
         const userAgent = String(socket.handshake.headers["user-agent"] || "");
-        await prisma17.sessions.create({
+        await prisma20.sessions.create({
           data: {
-            id: randomUUID8(),
+            id: randomUUID9(),
             userId: user.id,
             socket_id: socket.id,
             ip,
@@ -18605,7 +20062,7 @@ async function registerRoutes(app2, options) {
         });
         (async () => {
           try {
-            await prisma17.sessions.updateMany({
+            await prisma20.sessions.updateMany({
               where: { socket_id: socket.id, ended_at: null },
               data: { ended_at: /* @__PURE__ */ new Date(), last_seen_at: /* @__PURE__ */ new Date() }
             });
@@ -18658,13 +20115,44 @@ var vite_config_default = defineConfig({
   root: path14.resolve(import.meta.dirname, "client"),
   build: {
     outDir: path14.resolve(import.meta.dirname, "dist/public"),
-    emptyOutDir: true
+    emptyOutDir: true,
+    // Optimizaciones de build
+    target: "es2020",
+    // Target más moderno para mejor optimización
+    minify: "esbuild",
+    // esbuild es más rápido que terser
+    sourcemap: false,
+    // Desactivar sourcemaps en producción acelera el build
+    cssCodeSplit: true,
+    // Split CSS para mejor caching
+    chunkSizeWarningLimit: 1e3,
+    // Aumentar límite para reducir warnings
+    rollupOptions: {
+      output: {
+        // Optimizar chunking para mejor caching
+        manualChunks: {
+          "react-vendor": ["react", "react-dom", "react-router-dom"],
+          "ui-vendor": ["lucide-react", "@radix-ui/react-toast", "@radix-ui/react-dialog"]
+        }
+      }
+    },
+    // Optimizaciones de rendimiento
+    reportCompressedSize: false,
+    // No reportar tamaño comprimido (más rápido)
+    assetsInlineLimit: 4096
+    // Inline assets pequeños
   },
   server: {
     fs: {
       strict: true,
       deny: ["**/.*"]
     }
+  },
+  // Optimizaciones adicionales
+  esbuild: {
+    logOverride: { "this-is-undefined-in-esm": "silent" },
+    // Reducir warnings
+    treeShaking: true
   }
 });
 
@@ -18733,13 +20221,13 @@ import cors from "cors";
 
 // server/jobs.ts
 import cron from "node-cron";
-import { PrismaClient as PrismaClient18 } from "@prisma/client";
+import { PrismaClient as PrismaClient21 } from "@prisma/client";
 import nodemailer7 from "nodemailer";
 import { addDays, format } from "date-fns";
 import { es } from "date-fns/locale";
-var prisma18;
+var prisma21;
 function initializeJobs(client) {
-  prisma18 = client;
+  prisma21 = client;
 }
 var smtpPassword = process.env.SMTP_PASS || process.env.SMTP_PASSWORD;
 if (process.env.SMTP_USER && !smtpPassword) {
@@ -18786,7 +20274,7 @@ var taskRemindersJob = cron.createTask("0 9 * * *", async () => {
   try {
     const tomorrow = addDays(/* @__PURE__ */ new Date(), 1);
     const nextWeek = addDays(/* @__PURE__ */ new Date(), 7);
-    const upcomingTasks = await prisma18.tasks.findMany({
+    const upcomingTasks = await prisma21.tasks.findMany({
       where: {
         estado: { notIn: ["COMPLETADA"] },
         fecha_vencimiento: {
@@ -18845,7 +20333,7 @@ var taxRemindersJob = cron.createTask("0 8 * * *", async () => {
   try {
     const now = /* @__PURE__ */ new Date();
     const nextMonth = addDays(now, 30);
-    const clientes = await prisma18.clients.findMany({
+    const clientes = await prisma21.clients.findMany({
       include: {
         clientTaxes: {
           include: {
@@ -18905,18 +20393,18 @@ var taxRemindersJob = cron.createTask("0 8 * * *", async () => {
   }
 });
 var taxCalendarRefreshJob = cron.createTask("0 */6 * * *", async () => {
-  if (!prisma18) {
+  if (!prisma21) {
     console.warn("\u26A0\uFE0F  taxCalendarRefreshJob: Prisma no inicializado");
     return;
   }
   console.log("\u{1F5D3}\uFE0F  Ejecutando job: refresco calendario fiscal");
   try {
-    const entries = await prisma18.tax_calendar.findMany();
+    const entries = await prisma21.tax_calendar.findMany();
     let updated = 0;
     for (const entry of entries) {
       const derived = calculateDerivedFields(entry.startDate, entry.endDate);
       if (entry.status !== derived.status || entry.days_to_start !== derived.daysToStart || entry.days_to_end !== derived.daysToEnd) {
-        await prisma18.tax_calendar.update({
+        await prisma21.tax_calendar.update({
           where: { id: entry.id },
           data: {
             status: derived.status,
@@ -18933,7 +20421,7 @@ var taxCalendarRefreshJob = cron.createTask("0 */6 * * *", async () => {
   }
 });
 var fiscalPeriodsStatusJob = cron.createTask("0 */6 * * *", async () => {
-  if (!prisma18) {
+  if (!prisma21) {
     console.warn("\u26A0\uFE0F  fiscalPeriodsStatusJob: Prisma no inicializado");
     return;
   }
@@ -18941,7 +20429,7 @@ var fiscalPeriodsStatusJob = cron.createTask("0 */6 * * *", async () => {
   try {
     const now = /* @__PURE__ */ new Date();
     now.setHours(0, 0, 0, 0);
-    const periods = await prisma18.fiscal_periods.findMany({
+    const periods = await prisma21.fiscal_periods.findMany({
       select: {
         id: true,
         starts_at: true,
@@ -18969,7 +20457,7 @@ var fiscalPeriodsStatusJob = cron.createTask("0 */6 * * *", async () => {
         }
       }
       if (newStatus && newStatus !== period.status) {
-        await prisma18.fiscal_periods.update({
+        await prisma21.fiscal_periods.update({
           where: { id: period.id },
           data: { status: newStatus }
         });
@@ -19008,10 +20496,10 @@ var ensureTaxFilingsJob = cron.createTask("10 * * * *", async () => {
 var cleanupSessionsJob = cron.createTask("0 * * * *", async () => {
   console.log("\u{1F9F9} Ejecutando job: limpieza de sesiones");
   try {
-    const prisma19 = new PrismaClient18();
+    const prisma22 = new PrismaClient21();
     const sevenDaysAgo = /* @__PURE__ */ new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-    const closedSessionsResult = await prisma19.sessions.deleteMany({
+    const closedSessionsResult = await prisma22.sessions.deleteMany({
       where: {
         ended_at: {
           not: null,
@@ -19021,7 +20509,7 @@ var cleanupSessionsJob = cron.createTask("0 * * * *", async () => {
     });
     const twoHoursAgo = /* @__PURE__ */ new Date();
     twoHoursAgo.setHours(twoHoursAgo.getHours() - 2);
-    const inactiveSessionsResult = await prisma19.sessions.updateMany({
+    const inactiveSessionsResult = await prisma22.sessions.updateMany({
       where: {
         ended_at: null,
         last_seen_at: { lt: twoHoursAgo }
@@ -19031,7 +20519,7 @@ var cleanupSessionsJob = cron.createTask("0 * * * *", async () => {
       }
     });
     console.log(`\u2705 Sesiones limpias: ${closedSessionsResult.count} eliminadas, ${inactiveSessionsResult.count} marcadas como inactivas`);
-    await prisma19.$disconnect();
+    await prisma22.$disconnect();
   } catch (error) {
     console.error("\u274C Error en job de limpieza:", error);
   }
@@ -19058,7 +20546,7 @@ var backupDatabaseJob = cron.createTask("0 3 * * *", async () => {
   }
 });
 function startAllJobs() {
-  if (!prisma18) {
+  if (!prisma21) {
     throw new Error(
       "\u274C JOBS ERROR: Prisma client no inicializado.\n   Debe llamar a initializeJobs(prisma) antes de startAllJobs().\n   Ver server/index.ts para el orden correcto de inicializaci\xF3n."
     );
@@ -19089,7 +20577,7 @@ function startAllJobs() {
   console.log("\u2705 Todos los jobs activos");
 }
 function stopAllJobs() {
-  if (!prisma18) {
+  if (!prisma21) {
     throw new Error("Jobs no inicializados: debe llamar initializeJobs(prisma) primero");
   }
   taskRemindersJob.stop();
@@ -19212,7 +20700,7 @@ function validateSecurityConfig() {
 }
 
 // server/index.ts
-import { randomUUID as randomUUID9 } from "crypto";
+import { randomUUID as randomUUID10 } from "crypto";
 var SALT_ROUNDS2 = 10;
 var app = express9();
 validateSecurityConfig();
@@ -19441,7 +20929,7 @@ async function createInitialAdmin() {
     const hashedPassword = await bcrypt2.hash(adminPassword, SALT_ROUNDS2);
     const adminUser = await prisma_client_default.users.create({
       data: {
-        id: randomUUID9(),
+        id: randomUUID10(),
         username: adminUsername,
         email: adminEmail,
         password: hashedPassword,

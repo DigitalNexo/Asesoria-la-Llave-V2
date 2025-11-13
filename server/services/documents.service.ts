@@ -182,7 +182,7 @@ export class DocumentsService {
       include: {
         clients: true,
         template: true,
-        creator: { select: { id: true, username: true, email: true } },
+        users: { select: { id: true, username: true, email: true } },
       },
     });
   }
@@ -205,7 +205,7 @@ export class DocumentsService {
       include: {
         clients: true,
         template: true,
-        creator: { select: { id: true, username: true, email: true } },
+        users: { select: { id: true, username: true, email: true } },
       },
       orderBy: { created_at: "desc" },
     });
@@ -220,7 +220,7 @@ export class DocumentsService {
       include: {
         clients: true,
         template: true,
-        creator: { select: { id: true, username: true, email: true } },
+        users: { select: { id: true, username: true, email: true } },
         versions: true,
       },
     });
@@ -253,9 +253,8 @@ export class DocumentsService {
         status: "ACEPTADO",
         signature_status: "FIRMADO",
         signature_date: new Date(),
-        signed_file_path: signedFilePath,
-        signature_type: "manual",
-        signed_by_name: userId,
+        file_path: signedFilePath,
+        signed_by: userId,
       },
       include: { clients: true },
     });
